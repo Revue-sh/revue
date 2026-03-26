@@ -1,5 +1,5 @@
 # Revue.io — Product Requirements Document
-**Version:** 1.1  
+**Version:** 1.2  
 **Date:** March 2026  
 **Status:** Draft  
 **Owner:** Revue Team
@@ -766,18 +766,66 @@ A consolidated summary posted to the PR/MR:
 
 ---
 
-## Appendix C: Open Design Decisions (Needs Input)
+## Appendix C: Open Design Decisions
 
-These items were flagged during team review and require design decisions before implementation:
+### ✅ RESOLVED: Cleo's `auto` Routing Algorithm
 
-1. **Cleo's `auto` routing algorithm** — How exactly does Cleo decide which team and which agents to activate? Current thinking: keyword matching on diff content + file path pattern matching + diff size heuristics. Needs a formal decision matrix specifying weights and fallback behaviour.
+Cleo's routing is a direct evolution of the existing `evaluate_triggers()` implementation in the current GitLab service. The mechanism is proven and carries over unchanged. Only **team auto-selection** is new — agent selection within a team already works via keyword + file pattern triggers.
 
-2. **Token budget strategy** — Each agent receiving only its relevant diff slice is stated as a constraint, but the slicing logic needs design. How are overlapping concerns handled (e.g. a function that is both a security issue and a performance issue)?
+**Two-step decision:**
 
-3. **Diff caching** — If 3 commits are pushed rapidly, should Revue deduplicate runs? What's the invalidation key — commit SHA, diff hash, or both?
+**Step 1 — Team selection (new, currently hardcoded to `team-swift-ios`)**
+
+```
+Security override (highest priority — trumps everything):
+  Any of: auth, password, token, jwt, encrypt, decrypt, sql, secret, api_key
+  found in diff content  →  force team-security-focus
+
+Size heuristic (second priority):
+  Diff < 50 lines        →  team-quick (Maya only — fast, low cost)
+  Diff > 500 lines       →  team-full-review (all agents)
+
+Language detection (default — file extensions):
+  *.swift                →  team-swift-ios
+  *.kt / *.kts           →  team-kotlin-android
+  *.py                   →  team-python
+  *.ts / *.tsx           →  team-typescript
+  mixed / unknown        →  team-full-review
+
+Priority order: security override → size heuristic → language detection
+```
+
+The existing `shared_analysis` upfront AI call already produces `complexity`, `security_concerns`, and `performance_concerns` — this output is wired into Step 1 to inform team selection. No additional AI call needed.
+
+**Step 2 — Agent selection within team (already implemented)**
+
+The existing `evaluate_triggers()` function handles this exactly as-is:
+- `always: true` agents always run (e.g. Orchestrator, Maya)
+- Keyword scan across full diff content activates domain agents
+- File path pattern matching activates language-specific agents (e.g. Sora for `*.swift` with `async/await`)
+- Fallback to primary agents if no triggers match
+
+**Expanding from 3 to 7 agents:** The trigger system is purely data-driven (YAML team files). Adding Sage, Leo, and future agents (Finn, Dara, Arlo, Remy, Sora, Rex) requires only new agent definition files and updated team YAML — no code changes to the routing logic.
+
+---
+
+### ⏳ OPEN: Token Budget Strategy
+
+Each agent currently receives the full diff. The constraint states agents should receive only relevant diff slices. Slicing logic design needed:
+- How to handle overlapping concerns (e.g. a function is both a security risk and a performance issue)?
+- Does slicing happen at file level or hunk level?
+- **Interim decision:** Keep full diff per agent for MVP (matches current proven behaviour). Revisit in Phase 2 with real token cost data.
+
+### ⏳ OPEN: Diff Caching
+
+If 3 commits are pushed rapidly, Revue will run 3 full reviews on near-identical diffs. Caching strategy needed:
+- Invalidation key: commit SHA + config hash (catches both code changes and config changes)
+- TTL: 1 hour (covers rapid push scenarios)
+- Scope: per workspace, per repo, per branch
+- **Interim decision:** No caching in MVP. Instrument token costs in Phase 1, design caching in Phase 2 based on real data.
 
 ---
 
 *Market Analysis: see `market-analysis.md`*  
 *Implementation reference: see `context/ai-code-review-service/`*  
-*v1.1 — Updated following full team review (Cleo · Zara · Kai · Maya · Leo · Nova · Sage)*
+*v1.2 — Cleo routing algorithm resolved. Token budget + caching deferred to Phase 2.*
