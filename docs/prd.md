@@ -341,12 +341,12 @@ def create_ai_client(config: AIConfig) -> AIClient:
 
 | Agent | ID | Focus | Triggers |
 |-------|----|-------|---------|
-| **Orchestrator** | `orchestrator` | Diff analysis, agent routing, complexity assessment | Always runs |
-| **SecBot** | `security-analyst` | OWASP Top 10, auth, injection, secrets | auth/crypto/input keywords, sensitive file patterns |
-| **PerfBot** | `performance-expert` | Algorithm complexity, N+1, memory leaks, blocking I/O | query/loop/cache keywords |
-| **QualityBot** | `code-quality-expert` | SOLID, maintainability, naming, dead code | Always runs (secondary) |
-| **ArchBot** | `architecture-reviewer` | Coupling, patterns, design decisions | Large diffs, structural changes |
-| **Consolidator** | `consolidator` | Merge + deduplicate + prioritise findings | Always runs (final step) |
+| **Cleo** *(Orchestrator)* | `orchestrator` | Diff analysis, agent routing, complexity assessment | Always runs |
+| **Zara** *(Security)* | `security-analyst` | OWASP Top 10, auth, injection, secrets | auth/crypto/input keywords, sensitive file patterns |
+| **Kai** *(Performance)* | `performance-expert` | Algorithm complexity, N+1, memory leaks, blocking I/O | query/loop/cache keywords |
+| **Maya** *(Code Quality)* | `code-quality-expert` | SOLID, maintainability, naming, dead code | Always runs (secondary) |
+| **Leo** *(Architecture)* | `architecture-reviewer` | Coupling, patterns, design decisions | Large diffs, structural changes |
+| **Nova** *(Consolidator)* | `consolidator` | Merge + deduplicate + prioritise findings | Always runs (final step) |
 
 ### 7.2 Planned Agents (Phase 2+)
 
@@ -368,7 +368,7 @@ Agents are defined as Markdown files with YAML frontmatter — fully declarative
 
 ```yml
 agent:
-  name: SecBot
+  name: Zara
   id: security-analyst
   icon: 🔒
   version: "1.0.0"
@@ -420,11 +420,11 @@ Pre-configured teams for common review scenarios:
 
 | Team | Agents | Use Case |
 |------|--------|---------|
-| `team-swift-ios` | ConcurrencyBot, QualityBot, SecBot | Swift iOS changes |
-| `team-security-focus` | SecBot, QualityBot, (DependencyBot) | Auth/crypto/payment changes |
-| `team-performance` | PerfBot, ArchBot, QualityBot | Performance-critical paths |
+| `team-swift-ios` | Concurrency specialist, Maya, Zara | Swift iOS changes |
+| `team-security-focus` | Zara, Maya, (Dependency specialist) | Auth/crypto/payment changes |
+| `team-performance` | Kai, Leo, Maya | Performance-critical paths |
 | `team-full-review` | All agents | Complex features, large diffs |
-| `team-quick` | QualityBot only | Trivial/small changes |
+| `team-quick` | Maya only | Trivial/small changes |
 
 Teams are configured in YAML and selected automatically based on diff analysis or set explicitly:
 ```yaml
@@ -587,7 +587,7 @@ A consolidated summary posted to the PR/MR:
 - Clear separation of concerns in service layer
 
 ---
-*Agents: SecBot 🔒 · PerfBot ⚡ · QualityBot ✨ · ArchBot 🏗️*
+*Agents: Zara 🔒 · Kai ⚡ · Maya ✨ · Leo 🏗️*
 *AI: Claude Sonnet 4.5 · Team: auto → team-security-focus*
 *[View full report](https://app.revue.io/reviews/abc123)*
 ```
