@@ -1,5 +1,5 @@
 # Revue.io — Product Requirements Document
-**Version:** 1.2  
+**Version:** 1.3  
 **Date:** March 2026  
 **Status:** Draft  
 **Owner:** Revue Team
@@ -704,8 +704,8 @@ A consolidated summary posted to the PR/MR:
 - Source code and diffs must never be stored by Revue's cloud backend
 - Agent runner must be runnable as a standalone binary / Docker image / pip package
 - Must support air-gapped environments (self-hosted AI + self-hosted VCS)
-- Review must complete within 3 minutes for diffs up to 500 changed lines
-- **Large diffs (>500 lines):** Revue will chunk the diff by file, process in batches, and merge findings. Diffs over a configurable hard limit (default: 2000 lines) will be summarised before agent dispatch.
+- Review must complete within 3 minutes for diffs up to 2,000 changed lines
+- **Large diffs (> configurable limit, default 2,000 lines):** Revue stops the review immediately — before any AI call — and posts a single comment explaining the limit, why it exists, and suggesting a logical PR breakdown. Exit is a warning (non-blocking), not a failure. Batch mode (chunked review across multiple agent passes) is a Phase 2 feature.
 - **Graceful degradation:** If an agent fails or times out (default: 90s per agent), Nova proceeds with available findings and marks the failing agent's contribution as unavailable in the summary. The review run does not fail entirely.
 - **Monorepos:** Multiple `.revue.yml` files are supported via path-scoped configuration. Each top-level service path can define its own team and agent settings.
 - **Token budget:** Each agent receives only the diff portions relevant to its trigger patterns, not the full diff. Cleo is responsible for routing the correct diff slices per agent.
@@ -777,13 +777,23 @@ Cleo's routing is a direct evolution of the existing `evaluate_triggers()` imple
 **Step 1 — Team selection (new, currently hardcoded to `team-swift-ios`)**
 
 ```
-Security override (highest priority — trumps everything):
+Hard limit check (runs first — before any AI call):
+  Diff > configurable limit (default: 2,000 lines)
+                         →  STOP. Do not run review.
+                            Post a single PR/MR comment:
+                            "This PR is too large to review automatically.
+                             Breaking it into smaller PRs is a best practice.
+                             Here are suggested logical breakpoints: [list]"
+                            Exit with warning (not failure — don't block merge
+                            for a tooling limit).
+
+Security override (highest priority after size check):
   Any of: auth, password, token, jwt, encrypt, decrypt, sql, secret, api_key
   found in diff content  →  force team-security-focus
 
-Size heuristic (second priority):
+Size heuristic:
   Diff < 50 lines        →  team-quick (Maya only — fast, low cost)
-  Diff > 500 lines       →  team-full-review (all agents)
+  50–2,000 lines         →  normal team selection continues below
 
 Language detection (default — file extensions):
   *.swift                →  team-swift-ios
@@ -792,8 +802,39 @@ Language detection (default — file extensions):
   *.ts / *.tsx           →  team-typescript
   mixed / unknown        →  team-full-review
 
-Priority order: security override → size heuristic → language detection
+Priority order: hard limit → security override → size heuristic → language
 ```
+
+**Hard limit behaviour in detail:**
+
+When a PR/MR exceeds the limit, Revue posts a comment like:
+
+```
+⚠️ Revue — PR too large to review automatically
+
+This PR contains 3,847 changed lines across 42 files.
+Revue's limit is 2,000 lines to ensure reliable, focused reviews.
+
+**Why this matters:** Large PRs are harder to review accurately — for
+humans and AI alike. Smaller, focused PRs get better feedback, merge
+faster, and carry lower risk.
+
+**Suggested breakdown:**
+- `src/auth/` (312 lines) → PR 1: Authentication changes
+- `src/api/` (891 lines) → PR 2: API layer refactor
+- `src/models/` (1,204 lines) → PR 3: Data model updates
+- `tests/` (1,440 lines) → PR 4: Test suite additions
+
+The limit is configurable in `.revue.yml`:
+  review:
+    max_diff_lines: 2000  # increase if needed
+```
+
+The breakdown suggestion uses Cleo's diff analysis (grouped by directory/concern) — no extra AI call, uses the `shared_analysis` output.
+
+**Post-MVP (Phase 2): Batch mode**
+
+Instead of stopping, Revue will chunk the diff by logical file groups, run each batch independently through the agent pipeline, and merge findings. Each batch stays within model context limits. The PR/MR receives a single consolidated review across all batches.
 
 The existing `shared_analysis` upfront AI call already produces `complexity`, `security_concerns`, and `performance_concerns` — this output is wired into Step 1 to inform team selection. No additional AI call needed.
 
@@ -828,4 +869,4 @@ If 3 commits are pushed rapidly, Revue will run 3 full reviews on near-identical
 
 *Market Analysis: see `market-analysis.md`*  
 *Implementation reference: see `context/ai-code-review-service/`*  
-*v1.2 — Cleo routing algorithm resolved. Token budget + caching deferred to Phase 2.*
+*v1.3 — Hard diff limit added: stop + suggest breakdown (MVP). Batch mode deferred to Phase 2.*
