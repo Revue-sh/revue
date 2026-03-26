@@ -1,5 +1,5 @@
 # Revue.io — Product Requirements Document
-**Version:** 1.0  
+**Version:** 1.1  
 **Date:** March 2026  
 **Status:** Draft  
 **Owner:** Revue Team
@@ -143,7 +143,13 @@ Layer 4: Human review ─────────────── Human decisi
           └──────────────────────────┘
 ```
 
-**Key point:** Source code never leaves the customer's infrastructure. The CI runner fetches the diff, runs Revue locally, calls the AI backend directly, and posts comments back to the VCS. Revue's cloud only receives configuration and webhook triggers — never source code.
+**Key point — data flows explained clearly:**
+- **Revue's cloud** receives only configuration and webhook triggers — never source code or diffs
+- **The diff** is sent directly from the CI runner to the customer's chosen AI backend (OpenAI, Anthropic, Azure, etc.) under the customer's own API key and that provider's data terms
+- Teams using Azure OpenAI with zero data retention, or a self-hosted model, have full data sovereignty
+- Teams using public OpenAI/Anthropic should review their provider's data handling policies
+
+**Webhook security:** All incoming webhooks are verified using platform-native secret tokens (GitHub webhook secrets, GitLab secret tokens). Requests with invalid signatures are rejected before processing.
 
 This is consistent with the current design of the existing GitLab implementation and extends it cleanly.
 
@@ -275,15 +281,25 @@ GitLab  → Apply Suggestion
 
 **VCS Abstraction Layer:**
 
+Note: GitHub and GitLab use different comment position models. GitHub requires a diff-position offset; GitLab requires a `line_code` hash. The abstraction uses a rich `DiffPosition` type that each adapter translates natively.
+
 ```python
+@dataclass
+class DiffPosition:
+    file_path: str
+    line_number: int       # Logical line number (adapter translates)
+    side: str              # "new" | "old"
+    raw_diff_hunk: str     # For adapter-specific position calculation
+
 class VCSAdapter(Protocol):
     def get_diff(self, pr_id: str) -> str: ...
-    def post_review_comment(self, pr_id: str, file: str, line: int, body: str) -> None: ...
+    def post_review_comment(self, pr_id: str, position: DiffPosition, body: str) -> None: ...
     def post_summary_comment(self, pr_id: str, body: str) -> None: ...
     def set_review_status(self, pr_id: str, status: str) -> None: ...
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool: ...
 
-class GitHubAdapter(VCSAdapter): ...
-class GitLabAdapter(VCSAdapter): ...
+class GitHubAdapter(VCSAdapter): ...   # Translates DiffPosition → diff offset
+class GitLabAdapter(VCSAdapter): ...   # Translates DiffPosition → line_code hash
 class BitbucketAdapter(VCSAdapter): ...  # Phase 2
 class AzureDevOpsAdapter(VCSAdapter): ...  # Phase 2
 ```
@@ -389,12 +405,12 @@ def create_ai_client(config: AIConfig) -> AIClient:
 
 | Agent | Focus |
 |-------|-------|
-| **TestBot** | Test coverage, test quality, missing edge cases |
-| **DocBot** | Documentation completeness, API docs |
-| **AccessibilityBot** | WCAG compliance for UI code |
-| **MigrationBot** | DB migrations, schema changes, backward compat |
-| **ConcurrencyBot** | Async/await, race conditions, thread safety (Swift 6, Kotlin coroutines) |
-| **DependencyBot** | CVEs in added dependencies, licence issues |
+| **Finn** *(Test coverage)* | Test coverage gaps, test quality, missing edge cases |
+| **Dara** *(Documentation)* | Documentation completeness, API docs, inline comments |
+| **Arlo** *(Accessibility)* | WCAG compliance for UI code, a11y patterns |
+| **Remy** *(Migrations)* | DB migrations, schema changes, backward compatibility |
+| **Sora** *(Concurrency)* | Async/await, race conditions, thread safety (Swift 6, Kotlin coroutines) |
+| **Rex** *(Dependencies)* | CVEs in added dependencies, licence issues |
 
 ### 7.3 Agent Definition Format (Declarative YAML/Markdown)
 
@@ -624,7 +640,12 @@ A consolidated summary posted to the PR/MR:
 - Clear separation of concerns in service layer
 
 ---
-*Agents: Zara 🔒 · Kai ⚡ · Maya ✨ · Leo 🏗️*
+### 🧠 Sage's Suggestions (2)
+- `UserRepository.py:47` — Apply parameterised query fix *(1-click)*
+- `api/users.py:23` — Apply input sanitisation fix *(1-click)*
+
+---
+*Agents: Zara 🔒 · Kai ⚡ · Maya ✨ · Leo 🏗️ · Sage 🧠*
 *AI: Claude Sonnet 4.5 · Team: auto → team-security-focus*
 *[View full report](https://app.revue.io/reviews/abc123)*
 ```
@@ -680,10 +701,14 @@ A consolidated summary posted to the PR/MR:
 ## 12. Technical Constraints & Non-Goals
 
 ### Constraints
-- Source code must never be stored by Revue's cloud backend
+- Source code and diffs must never be stored by Revue's cloud backend
 - Agent runner must be runnable as a standalone binary / Docker image / pip package
 - Must support air-gapped environments (self-hosted AI + self-hosted VCS)
 - Review must complete within 3 minutes for diffs up to 500 changed lines
+- **Large diffs (>500 lines):** Revue will chunk the diff by file, process in batches, and merge findings. Diffs over a configurable hard limit (default: 2000 lines) will be summarised before agent dispatch.
+- **Graceful degradation:** If an agent fails or times out (default: 90s per agent), Nova proceeds with available findings and marks the failing agent's contribution as unavailable in the summary. The review run does not fail entirely.
+- **Monorepos:** Multiple `.revue.yml` files are supported via path-scoped configuration. Each top-level service path can define its own team and agent settings.
+- **Token budget:** Each agent receives only the diff portions relevant to its trigger patterns, not the full diff. Cleo is responsible for routing the correct diff slices per agent.
 
 ### Non-Goals (v1.0)
 - Sage does **not** auto-commit fixes — suggestions require explicit developer acceptance
@@ -707,22 +732,52 @@ A consolidated summary posted to the PR/MR:
 
 ## Appendix A: Competitive Positioning Summary
 
-| Feature | Revue | CodeRabbit | Greptile | Copilot Review |
-|---------|-------|------------|----------|----------------|
-| Multi-agent | ✅ | ❌ | ❌ | ❌ |
-| Open AI backend | ✅ | ❌ | ❌ | ❌ |
-| GitHub | ✅ | ✅ | ✅ | ✅ |
-| GitLab | ✅ | ✅ | ✅ | ❌ |
-| Bitbucket | Phase 2 | ✅ | ❌ | ❌ |
-| Code stays in CI | ✅ | ❌ | ❌ | ❌ |
-| Pre-commit hook | Phase 2 | ❌ | ❌ | ❌ |
-| Resolver (fix suggestions) | ✅ MVP | ❌ | ❌ | ❌ |
-| Resolver (auto-commit loop) | Phase 2 | ❌ | ❌ | ❌ |
-| Custom agents | ✅ | ❌ | ❌ | ❌ |
-| Configurable blocking | ✅ | Limited | ❌ | ❌ |
-| Self-hosted option | Phase 3 | ❌ | ❌ | ❌ |
+| Feature | Revue | CodeRabbit | Greptile | Copilot Review | Snyk Code | SonarCloud |
+|---------|-------|------------|----------|----------------|-----------|------------|
+| Multi-agent | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Open AI backend | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| GitHub | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| GitLab | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Bitbucket | Phase 2 | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Code stays in CI | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Pre-commit hook | Phase 2 | ❌ | ❌ | ❌ | ✅ (CLI) | ✅ (CLI) |
+| Resolver (fix suggestions) | ✅ MVP | ❌ | ❌ | ❌ | Limited | Limited |
+| Resolver (auto-commit loop) | Phase 2 | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Custom agents | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Configurable blocking | ✅ | Limited | ❌ | ❌ | ✅ | ✅ |
+| Security focus | ✅ (Zara) | Limited | ❌ | ❌ | ✅ primary | ✅ primary |
+| Self-hosted option | Phase 3 | ❌ | ❌ | ❌ | ✅ | ✅ (Sonar) |
+
+---
+
+## Appendix B: Glossary
+
+| Term | Definition |
+|------|-----------|
+| **Workspace** | A Revue account associated with one or more VCS organisations or groups. Billing and configuration are workspace-scoped. |
+| **Review run** | A single execution of the Revue agent pipeline triggered by a PR/MR event. One run = one diff reviewed. |
+| **Agent** | A specialised AI persona with a defined system prompt, trigger rules, and focus area. Runs within a review run. |
+| **Team** | A named group of agents that run together for a specific review scenario (e.g. `team-security-focus`). |
+| **Diff** | The set of changed lines in a PR/MR. Revue reviews diffs only — not the full codebase. |
+| **Finding** | A single issue identified by an agent, with severity, location, description, and remediation. |
+| **Suggestion** | A Sage-generated fix posted as a platform-native suggested change (GitHub) or apply suggestion (GitLab). Requires explicit developer acceptance. |
+| **Blocking** | Configured behaviour where Revue fails the CI job or sets a "changes requested" review status when findings of a specified severity are found. Off by default. |
+| **BYOK** | Bring Your Own Key — customer provides their own AI provider API key. Revue never stores it. |
+
+---
+
+## Appendix C: Open Design Decisions (Needs Input)
+
+These items were flagged during team review and require design decisions before implementation:
+
+1. **Cleo's `auto` routing algorithm** — How exactly does Cleo decide which team and which agents to activate? Current thinking: keyword matching on diff content + file path pattern matching + diff size heuristics. Needs a formal decision matrix specifying weights and fallback behaviour.
+
+2. **Token budget strategy** — Each agent receiving only its relevant diff slice is stated as a constraint, but the slicing logic needs design. How are overlapping concerns handled (e.g. a function that is both a security issue and a performance issue)?
+
+3. **Diff caching** — If 3 commits are pushed rapidly, should Revue deduplicate runs? What's the invalidation key — commit SHA, diff hash, or both?
 
 ---
 
 *Market Analysis: see `market-analysis.md`*  
-*Implementation reference: see `context/ai-code-review-service/`*
+*Implementation reference: see `context/ai-code-review-service/`*  
+*v1.1 — Updated following full team review (Cleo · Zara · Kai · Maya · Leo · Nova · Sage)*
