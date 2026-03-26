@@ -61,15 +61,16 @@ Most teams have Layer 1. Almost none have Layer 2. Few have Layer 3 done well. R
 
 ### 3.2 MVP Goals (v1.0)
 - [ ] Multi-agent CI review that runs on GitHub and GitLab PRs/MRs
-- [ ] Configurable specialised agents (Security, Performance, Code Quality, Architecture)
+- [ ] Configurable specialised agents: Cleo, Zara, Kai, Maya, Leo, Nova
 - [ ] Support any AI backend (OpenAI, Anthropic, Azure, OpenRouter, custom gateway)
 - [ ] Inline review comments with severity levels
+- [ ] **Sage (Resolver)** — scoped, confidence-gated fix suggestions posted as platform-native suggestions (1-click accept)
 - [ ] Configurable blocking behaviour
 - [ ] Self-service onboarding (GitHub App, GitLab integration)
 
 ### 3.3 Phase 2 Goals (v1.5)
 - [ ] Single-agent mode as pre-commit git hook (Layer 2)
-- [ ] Agentic resolver loop (triage → fix / won't fix / defer)
+- [ ] Sage v2 — auto-commit fixes to branch + multi-round loop
 - [ ] Review analytics dashboard
 - [ ] Bitbucket + Azure DevOps support
 - [ ] Custom agent authoring UI
@@ -153,68 +154,104 @@ PR/MR Opened
      │
      ▼
 ┌──────────────┐
-│  Orchestrator│ ← Analyses diff, selects agents, routes
+│     Cleo     │ ← Analyses diff, selects agents, routes
+│ (Orchestrator│
 └──────┬───────┘
        │ parallel dispatch
   ┌────┴─────────────────────────────────┐
   │            │            │            │
   ▼            ▼            ▼            ▼
 ┌──────┐  ┌──────┐  ┌──────────┐  ┌──────────┐
-│SecBot│  │Perf  │  │Quality   │  │Arch      │
-│      │  │Bot   │  │Bot       │  │Reviewer  │
-│Sec.  │  │Perf. │  │SOLID/    │  │Patterns/ │
-│OWASP │  │Algo  │  │Maintain. │  │Design    │
-│CVEs  │  │N+1   │  │Tech debt │  │Coupling  │
+│ Zara │  │ Kai  │  │   Maya   │  │   Leo    │
+│      │  │      │  │          │  │          │
+│ Sec. │  │Perf. │  │  SOLID/  │  │Patterns/ │
+│ OWASP│  │ Algo │  │Maintain. │  │  Design  │
+│ CVEs │  │  N+1 │  │Tech debt │  │ Coupling │
 └──┬───┘  └──┬───┘  └────┬─────┘  └────┬─────┘
    │         │            │             │
    └────┬────┘            └──────┬──────┘
         │                        │
         ▼                        ▼
    ┌─────────────────────────────────┐
-   │         Consolidator            │
+   │              Nova               │
    │  Merge → Deduplicate → Prioritise│
    │  → Format → Inline Comments     │
-   └─────────────────────────────────┘
+   └──────────────┬──────────────────┘
                   │
                   ▼
-         ┌────────────────┐
-         │  Agentic Loop  │ ← Phase 2
-         │ (AI Resolver)  │
-         │ Fix/Won't Fix/ │
-         │ Defer → Iterate│
-         └────────────────┘
+   ┌─────────────────────────────────┐
+   │              Sage               │
+   │          (Resolver — MVP)       │
+   │                                 │
+   │  Per finding:                   │
+   │  ├─ Self-contained? → Post      │
+   │  │    platform suggestion       │
+   │  │    (1-click accept)          │
+   │  └─ Context-needed? → Label     │
+   │       "Needs human" + reason    │
+   └──────────────┬──────────────────┘
                   │
                   ▼
-         PR/MR Comments + Review
+         PR/MR Comments + Suggestions
          Blocking decision (configurable)
 ```
 
-### 4.4 Agentic PR Review Loop (Phase 2 Vision)
+### 4.4 Sage — The Resolver Agent
 
-Based on the architectural diagram shared:
+Sage evaluates each of Nova's findings and decides whether a fix can be safely suggested from the diff alone — or whether it requires human judgement.
+
+**Core principle: Sage knows what it doesn't know.**
 
 ```
-PR Opened
-    │
-    ▼
-AI Persona Review ──→ Findings (inline comments with severity)
-    │ parallel + moderated debate
-    ▼
-AI Resolver
-    ├─ Fix: pushes code fix
-    ├─ Won't Fix: explains why
-    └─ Defer: flags for human
-    │
-    ▼
-Round limit reached?
-    ├─ No: loop back (max 2 rounds)
-    └─ Yes →
-         ├─ Escalate to human (MEDIUM/HIGH remain)
-         ├─ Accept (no findings remain)
-         └─ Accept with notes (LOW severity only)
+Nova finding received
+        │
+        ▼
+   Is the fix entirely self-contained
+   within the changed lines?
+        │
+   ┌────┴─────┐
+  YES          NO
+   │            │
+   ▼            ▼
+Confidence    Label "Needs human"
+check ≥ 90%   Post comment with:
+   │          - Why it can't fix it
+   ▼          - What context is needed
+Post as       - Suggested next step
+platform
+suggestion:
+GitHub  → Suggested Change
+GitLab  → Apply Suggestion
+(developer accepts with 1 click,
+ Sage never commits autonomously)
 ```
 
-No human involved until escalation. This is the agentic review loop.
+#### Self-Contained Findings (Safe to Suggest)
+
+| Agent | Examples Sage can fix |
+|-------|-----------------------|
+| **Zara** | SQL injection → parameterised query, hardcoded secret → env var reference, missing input sanitisation on a new field |
+| **Kai** | Allocation moved outside a newly introduced loop, obvious O(n²) in a new code block |
+| **Maya** | Unused import, missing null check on a new variable, magic number → named constant, SOLID violation introduced in the diff (new class doing too many things, tightly coupled new dependency) |
+
+#### Context-Dependent Findings (Always Human)
+
+- All **Leo (Architecture)** findings — require broader codebase understanding
+- Any fix requiring changes to files **outside the diff**
+- Findings where Sage confidence is **< 90%**
+- Anything touching existing code not introduced in this PR/MR
+
+#### Sage v1 vs v2
+
+| Capability | MVP (v1.0) | Phase 2 (v1.5) |
+|-----------|-----------|----------------|
+| Classify: fixable vs needs-human | ✅ | ✅ |
+| Post fix as platform suggestion (1-click) | ✅ | ✅ |
+| Explain why it can't fix something | ✅ | ✅ |
+| Confidence score on every suggestion | ✅ | ✅ |
+| Auto-commit fix to branch | ❌ | ✅ |
+| Multi-round loop (fix → re-review → fix) | ❌ | ✅ |
+| Fix files outside the diff | ❌ | ❌ (never) |
 
 ---
 
@@ -560,7 +597,7 @@ cursor.execute(query, (user_id,))
 ```
 
 References: OWASP A03:2021 – Injection, CWE-89
-Agent: SecBot 🔒
+Agent: Zara 🔒 | Sage suggests: apply fix above ✨
 ```
 
 ### 10.2 Summary Comment
@@ -605,7 +642,8 @@ A consolidated summary posted to the PR/MR:
 | GitLab integration (migrate existing) | P0 | Port from internal tool |
 | Multi-agent BMAD engine | P0 | Port from internal tool, extend |
 | AI provider abstraction (OpenAI, Anthropic, Azure, OpenRouter, Custom) | P0 | |
-| Core agents (SecBot, PerfBot, QualityBot, Consolidator, Orchestrator) | P0 | |
+| Core agents: Cleo, Zara, Kai, Maya, Leo, Nova | P0 | |
+| **Sage (Resolver) — scoped MVP** | P0 | Suggestion-only, self-contained fixes, confidence-gated |
 | `.revue.yml` config schema | P0 | |
 | Inline + summary comments | P0 | |
 | Configurable blocking | P0 | |
@@ -620,9 +658,8 @@ A consolidated summary posted to the PR/MR:
 |---------|----------|-------|
 | Single-agent git hook (pre-push) | P0 | Layer 2 |
 | Bitbucket + Azure DevOps adapters | P0 | |
-| Agentic resolver loop (triage + fix) | P1 | Phase 2 flagship |
-| ArchBot agent | P1 | |
-| ConcurrencyBot (Swift, Kotlin) | P1 | |
+| **Sage v2** — auto-commit + multi-round loop | P1 | Builds on MVP Sage foundation |
+| Concurrency specialist (Swift 6, Kotlin coroutines) | P1 | |
 | Custom agent authoring (UI) | P1 | |
 | Slack / Teams notifications | P2 | |
 | Review analytics dashboard | P2 | Trend data, false positive tracking |
@@ -649,7 +686,8 @@ A consolidated summary posted to the PR/MR:
 - Review must complete within 3 minutes for diffs up to 500 changed lines
 
 ### Non-Goals (v1.0)
-- Revue does **not** write or suggest entire code rewrites (fix proposals come in Phase 2 as the agentic loop)
+- Sage does **not** auto-commit fixes — suggestions require explicit developer acceptance
+- Sage does **not** fix issues that require context outside the diff — it defers those to humans
 - Revue does **not** replace linters or SAST tools (it complements Layer 1)
 - Revue does **not** store or index the codebase (it reviews diffs only, not full context)
 - Revue is **not** a code search or refactoring tool
@@ -660,9 +698,10 @@ A consolidated summary posted to the PR/MR:
 
 1. **Agent Marketplace:** Should community-contributed agents be hosted on revue.io or distributed via GitHub? → Recommend GitHub-hosted with a curated index on revue.io.
 2. **Cross-model review:** Priority for Phase 2 or 3? → High value differentiator, suggest Phase 2.
-3. **Agentic resolver loop:** When the AI resolver "pushes a code fix" — does it push to the same branch or open a new commit? → New commit on same branch, clearly attributed to Revue.
+3. **Sage v2 auto-commit:** When Sage pushes a fix autonomously — same commit on same branch, or a new commit? → New commit on same branch, clearly attributed to Revue (e.g. `[revue] fix: parameterise SQL query`).
 4. **Confidentiality of findings:** Should review comments be private (visible only to the PR author) or public by default? → Public by default, configurable.
 5. **Free tier limits:** 100 runs/month or time-based (30 days)? → 100 runs/month, resets monthly.
+6. **Sage confidence threshold:** Is 90% the right cutoff, or should teams be able to configure it? → Recommend 90% default, configurable per project in `.revue.yml`.
 
 ---
 
@@ -677,7 +716,8 @@ A consolidated summary posted to the PR/MR:
 | Bitbucket | Phase 2 | ✅ | ❌ | ❌ |
 | Code stays in CI | ✅ | ❌ | ❌ | ❌ |
 | Pre-commit hook | Phase 2 | ❌ | ❌ | ❌ |
-| Agentic loop | Phase 2 | ❌ | ❌ | ❌ |
+| Resolver (fix suggestions) | ✅ MVP | ❌ | ❌ | ❌ |
+| Resolver (auto-commit loop) | Phase 2 | ❌ | ❌ | ❌ |
 | Custom agents | ✅ | ❌ | ❌ | ❌ |
 | Configurable blocking | ✅ | Limited | ❌ | ❌ |
 | Self-hosted option | Phase 3 | ❌ | ❌ | ❌ |
