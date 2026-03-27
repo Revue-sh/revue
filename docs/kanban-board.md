@@ -1,5 +1,5 @@
 # Kanban Board — Revue.io
-**Last Updated:** 2026-03-27 14:27 GMT  
+**Last Updated:** 2026-03-27 16:24 GMT  
 **Source of Truth:** Taiga — http://localhost:9000/project/revueio/kanban  
 **⚠️ This file is a mirror. If Taiga is available, prefer Taiga. Update this file whenever a story is closed.**
 
@@ -81,18 +81,16 @@
 
 ---
 
-## 📋 E7 — Post-MVP Tech Debt (0/8, To Do)
+## ✅ E7 — Post-MVP Tech Debt (8/8 ✅)
 
-> Non-blocking gaps identified during DoD review (2026-03-27). Do not block MVP launch.
-
-- [ ] **[70]** FileChange model: add language field + centralise diff parser + edge case tests *(Story 7)*
-- [ ] **[71]** Align agent timeout — AC says 90s, impl uses 120s *(Story 10)*
-- [ ] **[72]** Noise filters — implement DI-pattern/language-aware suppression per AC *(Story 14)*
-- [ ] **[73]** Add verify_webhook_signature() to VCSAdapter protocol *(Story 15)*
-- [ ] **[74]** Standardise adapter method names + test pagination + MR approval *(Stories 18+19)*
-- [ ] **[75]** Publish GitHub Actions as proper revue-io/action@v1 *(Story 20)*
-- [ ] **[76]** Fix Cleo size heuristic thresholds + add team-quick routing *(Story 23)*
-- [ ] **[77]** Extract team configs to standalone YAML files *(Story 26)*
+- [x] **[70]** FileChange model: add language field + centralise diff parser + edge case tests *(Story 7)*
+- [x] **[71]** Align agent timeout — AC says 90s, impl uses 120s *(Story 10)*
+- [x] **[72]** Noise filters — implement DI-pattern/language-aware suppression per AC *(Story 14)*
+- [x] **[73]** Add verify_webhook_signature() to VCSAdapter protocol *(Story 15)*
+- [x] **[74]** Standardise adapter method names + test pagination + MR approval *(Stories 18+19)*
+- [x] **[75]** Publish GitHub Actions as proper revue-io/action@v1 *(Story 20)*
+- [x] **[76]** Fix Cleo size heuristic thresholds + add team-quick routing *(Story 23)*
+- [x] **[77]** Extract team configs to standalone YAML files *(Story 26)*
 
 ---
 
@@ -106,4 +104,4 @@
 | E4 — Sage: The Resolver Agent | 5 | 5/5 | ✅ Done |
 | E5 — AI Backend & Configuration | 4 | 4/4 | ✅ Done |
 | E6 — Onboarding, Observability & Launch | 6 | 0/6 | 🔜 Not started |
-| E7 — Post-MVP Tech Debt & Improvements | 8 | 0/8 | 📋 Backlog |
+| E7 — Post-MVP Tech Debt & Improvements | 8 | 8/8 | ✅ Done |
