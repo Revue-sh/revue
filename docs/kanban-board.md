@@ -1,14 +1,15 @@
 # Kanban Board — Revue.io
-**Last Updated:** 2026-03-27 16:33 GMT
+**Last Updated:** 2026-03-27 16:46 GMT
 **Source of Truth:** Taiga — http://localhost:9000/project/revueio/kanban
 **⚠️ This file is a mirror. If Taiga is available, prefer Taiga. Update this file whenever a story is closed.**
 
 ---
 
 ## Story Status Summary
-**Total:** 62 stories (51 Done + 11 open)
+**Total:** 62 stories (51 Done + 6 open + 5 archived)
 **Done:** 51 (82%)
-**To Do:** 11 (E6 only)
+**To Do:** 6 (E6 active backlog)
+**Archived:** 5 (E6 duplicates — superseded by [62]–[67])
 **In Progress:** 0
 
 ---
@@ -80,22 +81,26 @@
 
 ---
 
-## 📋 To Do (11)
+## 📋 To Do — E6 Active Backlog (6 stories)
 
-### Epic E6 — Onboarding, Observability & Launch (0/11, Not started 🔜)
-- [ ] **[39]** Self-service workspace onboarding — web UI
-- [ ] **[40]** Free tier enforcement — 100 review runs per workspace per month
-- [ ] **[41]** Stripe billing integration — Pro and Team tier
-- [ ] **[42]** Basic analytics — review run history and issue trends
-- [ ] **[43]** Documentation site
-- [ ] **[62]** Workspace onboarding UI — sign-up, connect VCS, install app
-- [ ] **[63]** Free tier enforcement — BYOK, 100 runs/month cap
-- [ ] **[64]** Stripe billing — Pro and Team tier subscription management
-- [ ] **[65]** Run history dashboard — list reviews with status and findings summary
-- [ ] **[66]** Basic analytics — finding trends by category and severity
-- [ ] **[67]** Documentation site — getting started guide and .revue.yml reference
+### Epic E6 — Onboarding, Observability & Launch (0/6, Not started 🔜)
 
-> Note: Stories 39–43 and 62–67 cover overlapping scope (E6 was expanded). Triage required at sprint planning to de-duplicate before implementation begins.
+**Recommended delivery order (per architecture dependencies):**
+1. [62] → [63] + [64] (parallel) → [65] → [66] | [67] anytime
+
+- [ ] **[62]** Workspace onboarding UI — sign-up, connect VCS, install app *(L, ~1 week)*
+- [ ] **[63]** Free tier enforcement — BYOK, 100 runs/month cap *(M, ~2 days)*
+- [ ] **[64]** Stripe billing — Pro and Team tier subscription management *(L, ~1 week)*
+- [ ] **[65]** Run history dashboard — list reviews with status and findings summary *(M, ~2 days)*
+- [ ] **[66]** Basic analytics — finding trends by category and severity *(M, ~2 days)*
+- [ ] **[67]** Documentation site — getting started guide and .revue.yml reference *(M, ~2 days)*
+
+### 🗄️ Archived (5 — superseded, do not implement)
+- ~~[39]~~ Self-service workspace onboarding web UI → superseded by **[62]**
+- ~~[40]~~ Free tier enforcement 100 runs/month → superseded by **[63]**
+- ~~[41]~~ Stripe billing Pro and Team tier → superseded by **[64]**
+- ~~[42]~~ Basic analytics run history + trends → split into **[65]** + **[66]**
+- ~~[43]~~ Documentation site → superseded by **[67]**
 
 ---
 
@@ -108,5 +113,5 @@
 | E3 — Agent System & Routing | 16 | 16/16 | ✅ Done |
 | E4 — Sage: The Resolver Agent | 5 | 5/5 | ✅ Done |
 | E5 — AI Backend & Configuration | 4 | 4/4 | ✅ Done |
-| E6 — Onboarding, Observability & Launch | 11 | 0/11 | 🔜 Not started |
+| E6 — Onboarding, Observability & Launch | 6 active (5 archived) | 0/6 | 🔜 Not started |
 | E7 — Post-MVP Tech Debt & Improvements | 8 | 8/8 | ✅ Done |
