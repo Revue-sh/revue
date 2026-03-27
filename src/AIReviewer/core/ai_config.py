@@ -54,6 +54,8 @@ class AIConfig:
     min_confidence: int = 70
     agent_timeout_seconds: int = 90  # Per-agent wall-clock timeout. PRD: 90s. Raise for slow networks.
     ignore_patterns: list[str] = field(default_factory=list)
+    disabled_noise_filters: list[str] = field(default_factory=list)  # filter names to disable
+    noise_filter_confidence_threshold: float = 0.5  # LowConfidenceFilter threshold
     agents_team: str = "team-full-review"
     custom_agents_dir: str = ""
     output_format: str = "markdown"

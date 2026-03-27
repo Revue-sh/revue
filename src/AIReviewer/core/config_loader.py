@@ -68,6 +68,10 @@ review:
     - "*.lock"
     - "package-lock.json"
     - "*.min.js"
+
+noise_filters:
+  disable: []                   # e.g. ["swift-di", "linter-suppression"]
+  low_confidence_threshold: 0.5
 """
 
 _VALID_PROVIDERS = {"anthropic", "openai", "azure", "openrouter", "custom"}
@@ -144,6 +148,13 @@ def load_config(
     if "ignore_patterns" in review:
         patterns = review["ignore_patterns"]
         config.ignore_patterns = list(patterns) if patterns else []  # type: ignore[arg-type]
+
+    # --- noise_filters section ---
+    nf: dict[str, object] = raw.get("noise_filters", {}) or {}  # type: ignore[assignment]
+    if "disable" in nf:
+        config.disabled_noise_filters = list(nf["disable"])  # type: ignore[arg-type]
+    if "low_confidence_threshold" in nf:
+        config.noise_filter_confidence_threshold = float(nf["low_confidence_threshold"])  # type: ignore[arg-type]
 
     # --- agents section ---
     agents: dict[str, object] = raw.get("agents", {}) or {}  # type: ignore[assignment]
