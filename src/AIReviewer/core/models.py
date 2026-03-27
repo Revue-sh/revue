@@ -61,3 +61,14 @@ class FixabilityResult:
     confidence: float  # 0-100
     category: str      # "self-contained" | "context-dependent" | "unfixable"
     reason: str
+
+
+@dataclass
+class CodeFix:
+    """Generated code fix from Sage."""
+    original_lines: list[str]  # Lines before fix
+    fixed_lines: list[str]     # Lines after fix
+    start_line: int            # First line number (1-indexed)
+    end_line: int              # Last line number (inclusive)
+    confidence: float          # 0-100
+    explanation: str           # Why this fix works
