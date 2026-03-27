@@ -1,92 +1,157 @@
 # Session Continuation
-**Updated:** 2026-03-27 (Fri morning session) | **For:** Next session
+**Updated:** 2026-03-27 (Fri 10:50 GMT) | **For:** Next session
 
 ---
 
 ## Completed this session
 
-- **Taiga board full audit & fix** — all ghost epic links removed, E6 stories (56–61) created and linked, all 36 stories correctly assigned to epics
-- **Story status sync** — 21 stories moved to Done in Taiga matching actual codebase state
-- **Story 17+18** ✅ — `cleo_router.py` — two-step team auto-selection (security override, size heuristic, language detection) + trigger evaluation + `route()` — 45 tests
-- **Story 30** ✅ — `agent_loader.py` extended — `load_custom_agents()`, `load_all_agents()`, path-traversal protection — 12 new tests
-- **Story 10** ✅ — `github_adapter.py` — GitHub App webhook verify + parse, PR diff fetch, inline + summary comments — HMAC-SHA256 timing-safe
-- **Story 11** ✅ — `gitlab_adapter.py` — GitLab OAuth + PAT, MR webhook verify + parse, diff fetch, inline + summary comments
+### First parallel wave (stories 10, 11, 17, 18, 30)
+- **Story 17+18** ✅ — `cleo_router.py` — team auto-selection + trigger evaluation (45 tests)
+- **Story 30** ✅ — `agent_loader.py` — custom agent support with path-traversal protection (12 tests)
+- **Story 10** ✅ — `github_adapter.py` — GitHub webhook handling (HMAC verify + event parsing)
+- **Story 11** ✅ — `gitlab_adapter.py` — GitLab webhook handling (token verify + MR event parsing)
 
-**Total after session: 21/36 Taiga stories Done. 258 tests passing. 0 failures.**
+### Second parallel wave (stories 12, 13, 14, 15)
+- **Story 12** ✅ — `github_adapter.py` extended — full `get_diff()`, Review API inline comments, summary comments (5 tests)
+- **Story 13** ✅ — `gitlab_adapter.py` extended — MR diff fetch, Discussions API inline comments, flattened comment lists (5 tests)
+- **Story 14** ✅ — `.github/workflows/revue-review.yml` — GitHub Actions CI template + README
+- **Story 15** ✅ — `ci-templates/gitlab-ci/revue-review.yml` — GitLab CI template + `post_review.py` helper + README
 
-Commits: `4f5f9b8`, `fb86c88`
+**Session total: 9 stories completed in 2 parallel waves**
+
+**Test count:** 268 passing (up from 181 at session start)
+
+**Commits:** `4f5f9b8`, `fb86c88`, `aa8b4fb`, `40147aa`
 
 ---
 
-## Sprint & Epic State
+## Epic & Sprint Status
 
-| Epic | Stories Done | Stories Remaining |
-|------|-------------|-------------------|
-| E1 — Core Review Engine | 8/8 ✅ | — |
-| E2 — VCS Platform Integration | 4/7 | 12, 13, 14, 15 |
-| E3 — Agent System & Routing | 6/6 ✅ | — |
-| E4 — Sage — The Resolver | 0/5 | 22, 23, 24, 25, 26 |
-| E5 — AI Backend & Config | 4/4 ✅ | — |
-| E6 — Onboarding & Launch | 0/6 | 56, 57, 58, 59, 60, 61 |
+| Epic | Stories | Status |
+|------|---------|--------|
+| E1 — Core Review Engine | 8/8 | ✅ Complete |
+| E2 — VCS Platform Integration | 7/7 | ✅ Complete |
+| E3 — Agent System & Routing | 5/5 | ✅ Complete |
+| E4 — Sage — The Resolver Agent | 0/5 | 🔜 Next |
+| E5 — AI Backend & Configuration | 4/4 | ✅ Complete |
+| E6 — Onboarding & Launch | 0/0 | (Future work) |
 
-**Sprints 1–4 complete (per sprint plan). Starting Sprint 5 — VCS Integration.**
+**Overall: 25/30 stories Done (83%)**
+
+**Sprints complete:** 1–5 (Foundation, Core Pipeline, Agent System, Routing, VCS Integration)  
+**Next sprint:** Sprint 6 — Sage (5 stories)
 
 ---
 
 ## Project structure (current)
 
 ```
-AIReviewer/
-├── agents/
-│   ├── cleo.yaml, nova.yaml
-│   └── zara.md, kai.md, maya.md, leo.md
-├── core/
-│   ├── ai_config.py, ai_client.py, key_resolver.py
-│   ├── config_loader.py          ← .revue.yml loader
-│   ├── vcs_adapter.py            ← VCSAdapter Protocol + DiffPosition + translation helpers
-│   ├── github_adapter.py         ← ✨ NEW — GitHubAdapter (webhook + API)
-│   ├── gitlab_adapter.py         ← ✨ NEW — GitLabAdapter (webhook + API)
-│   ├── cleo_router.py            ← ✨ NEW — select_team() + evaluate_triggers() + route()
-│   ├── diff_parser.py, diff_limit.py
-│   ├── shared_analysis.py, agent_loader.py
-│   ├── agent_runner.py, contradiction_detector.py, contradiction_resolver.py
-│   ├── nova_consolidator.py, noise_filters.py, pipeline.py
-│   └── models.py
-├── cli.py
-└── tests/ — 258 tests, all passing
+Projects/revue.io/
+├── .github/workflows/
+│   └── revue-review.yml          ← ✨ NEW — GitHub Actions template
+├── ci-templates/
+│   ├── github-actions/
+│   │   ├── README.md
+│   │   └── test-workflow.sh
+│   └── gitlab-ci/
+│       ├── revue-review.yml      ← ✨ NEW — GitLab CI template
+│       ├── post_review.py
+│       └── README.md
+├── docs/
+│   ├── prd.md, sprint-plan.md, session-continuation.md
+│   ├── market-analysis.md, overnight-decisions.md
+└── src/AIReviewer/
+    ├── agents/
+    │   ├── cleo.yaml, nova.yaml
+    │   └── zara.md, kai.md, maya.md, leo.md
+    ├── core/
+    │   ├── ai_config.py, ai_client.py, key_resolver.py
+    │   ├── config_loader.py
+    │   ├── vcs_adapter.py
+    │   ├── github_adapter.py     ← Extended with full VCSAdapter methods
+    │   ├── gitlab_adapter.py     ← Extended with full VCSAdapter methods
+    │   ├── cleo_router.py        ← ✨ NEW — routing logic
+    │   ├── diff_parser.py, diff_limit.py
+    │   ├── shared_analysis.py, agent_loader.py
+    │   ├── agent_runner.py, contradiction_detector.py
+    │   ├── contradiction_resolver.py
+    │   ├── nova_consolidator.py, noise_filters.py, pipeline.py
+    │   └── models.py
+    ├── cli.py
+    └── tests/ — 268 tests, all passing
 ```
 
 ---
 
-## Remaining work — next steps (priority order)
+## Remaining work — E4: Sage (The Resolver Agent)
 
-### 1. Story 12 — GitHub adapter: fetch PR diff + post inline review comments
-**File:** `core/github_adapter.py` (extend existing)
-**First action:** Implement `get_diff()` to fetch full unified diff from `GET /repos/{owner}/{repo}/pulls/{id}/files` and parse into `FileChange[]`. Then `post_inline_comment()` using GitHub Review API (`POST /repos/{owner}/{repo}/pulls/{id}/reviews`). Use `translate_github_position()` from `vcs_adapter.py`.
+5 stories remaining (28-32), with dependencies:
 
-### 2. Story 13 — GitLab adapter: fetch MR diff + post inline comments
-**File:** `core/gitlab_adapter.py` (extend existing)
-**First action:** Implement `get_diff()` from `GET /projects/{id}/merge_requests/{iid}/changes`. Post inline via GitLab Discussions API (`POST /projects/{id}/merge_requests/{iid}/discussions`) with `position` object containing `base_sha`, `head_sha`, `old_path`, `new_path`, `new_line`. Use `translate_gitlab_line_code()`.
+### 1. Story 28 — Sage fixability classifier ⚡ START HERE
+**File:** Create `src/AIReviewer/core/sage_classifier.py`  
+**First action:**
+```python
+@dataclass
+class FixabilityResult:
+    is_fixable: bool
+    confidence: float  # 0-100
+    category: str      # "self-contained" | "context-dependent" | "unfixable"
+    reason: str
 
-### 3. Story 14 — CI runner integration: GitHub Actions step
-**File:** create `ci-templates/github-actions/revue-review.yml`
-**First action:** Write a reusable GitHub Actions workflow that (a) checks out the PR diff, (b) runs `revue review --diff $DIFF_FILE`, (c) reads the JSON output, (d) posts findings as inline comments via the GitHub API. Use `REVUE_API_KEY` secret.
+def classify_finding(finding: AIReview, diff: str) -> FixabilityResult:
+    """
+    Classify if a finding can be auto-fixed.
+    
+    Self-contained (fixable):
+    - Security findings with clear patterns (SQL injection, secrets in code)
+    - Null checks, unused imports, simple typos
+    - Finding line is in the diff (new/modified code)
+    
+    Context-dependent (unfixable):
+    - Architecture suggestions (Leo findings)
+    - Performance issues requiring profiling
+    - Findings on unchanged code (outside diff)
+    
+    Use pattern matching + heuristics (no AI call for classifier).
+    """
+```
 
-### 4. Story 15 — CI runner integration: GitLab CI include template
-**File:** create `ci-templates/gitlab-ci/revue-review.yml`
-**First action:** Write a GitLab CI/CD `include` template with a `revue-review` job that runs in `merge_request_event` pipelines. Pipe MR diff → `revue review` → post via GitLab API.
+### 2. Story 29 — Sage fix generator (depends on 28)
+**File:** Create `src/AIReviewer/core/sage_generator.py`  
+**First action:** Implement `generate_fix(finding: AIReview, file_content: str, diff: str) -> CodeFix` using AI to produce the actual code change. Returns `CodeFix(original_lines, fixed_lines, confidence)`.
 
-### 5. Stories 22–26 — Sage (Resolver Agent) — E4
-**Dependency:** Needs pipeline + VCS adapters working. Start after 12+13 done.
-**First action:** `core/sage_classifier.py` — implement `classify_finding(finding: AIReview) -> FixabilityResult` with confidence threshold. Self-contained = Zara SQL injection / secrets, null checks, unused imports. Context-dependent = all Leo findings + anything outside diff.
+### 3. Stories 30+31 — VCS integrations (parallel, both depend on 29)
+**Story 30:** `github_adapter.py` — add `post_suggested_change()` method using GitHub Review API suggestions format  
+**Story 31:** `gitlab_adapter.py` — add `post_apply_suggestion()` method using GitLab suggestion syntax
+
+### 4. Story 32 — Sage summary section (depends on 30+31)
+**File:** Extend `src/AIReviewer/core/pipeline.py`  
+**First action:** Add Sage section to final review output: "🔧 Auto-fixable: 3 issues (click to apply) | ⚠️ Needs manual review: 5 issues"
 
 ---
 
-## Next parallel wave (all unblocked right now)
+## Next session strategy
 
-Stories **12, 13, 14, 15** have no cross-dependencies — run all 4 agents simultaneously with party mode.
+**Option A — Sequential Sage implementation:**
+1. Story 28 (classifier) — 30 min
+2. Story 29 (generator) — 45 min
+3. Stories 30+31 (parallel VCS integrations) — 20 min
+4. Story 32 (summary) — 15 min
 
-After that: Stories **22, 23, 24, 25, 26** (Sage — all sequential except 24+25 which can parallel).
+**Total time: ~2 hours for full E4 epic**
+
+**Option B — Partial sprint:**
+Just stories 28+29 (core Sage logic), defer VCS integrations to next session.
+
+---
+
+## Key decisions this session
+
+1. **Parallel execution pattern validated** — 2 waves (5 + 4 stories) completed with 0 conflicts
+2. **VCS adapter error handling** — all methods return `False`/`[]` on errors, never raise
+3. **GitHub Review API** — inline comments must use Review API with `event: COMMENT`, not single-comment endpoint
+4. **GitLab discussions structure** — `discussions[].notes[]` arrays must be flattened for uniform comment list
+5. **CI templates** — both platforms need webhook → diff fetch → Revue CLI → post comments flow; GitHub uses `actions/github-script`, GitLab uses custom Python helper
 
 ---
 
@@ -94,8 +159,12 @@ After that: Stories **22, 23, 24, 25, 26** (Sage — all sequential except 24+25
 
 Read `Projects/revue.io/docs/session-continuation.md` for full context.
 
-Sprints 1–4 complete. 21/36 Taiga stories Done. 258 tests passing. Starting Sprint 5 — VCS Integration.
+**Status:** 25/30 stories Done (83%). Epics E1, E2, E3, E5 complete. 268 tests passing.
 
-**Next: run 4 parallel agents** (party mode) on stories 12 (GitHub PR diff + inline comments), 13 (GitLab MR diff + inline comments), 14 (GitHub Actions CI template), 15 (GitLab CI template). All unblocked.
+**Next:** Epic E4 — Sage (The Resolver Agent) — 5 stories remaining.
 
-Source: `Projects/revue.io/src/AIReviewer/`. New files this session: `github_adapter.py`, `gitlab_adapter.py`, `cleo_router.py`.
+**Start with Story 28** — Sage fixability classifier. Create `src/AIReviewer/core/sage_classifier.py` with pattern-based heuristics to categorize findings as self-contained (fixable), context-dependent (manual review), or unfixable.
+
+Then stories 29 (generator), 30+31 (VCS integrations, parallel), 32 (summary).
+
+Project: `/Users/langostin/.openclaw/workspace-bmad/Projects/revue.io/src/AIReviewer/`
