@@ -81,6 +81,21 @@
 
 ---
 
+## 📋 E7 — Post-MVP Tech Debt (0/8, To Do)
+
+> Non-blocking gaps identified during DoD review (2026-03-27). Do not block MVP launch.
+
+- [ ] **[70]** FileChange model: add language field + centralise diff parser + edge case tests *(Story 7)*
+- [ ] **[71]** Align agent timeout — AC says 90s, impl uses 120s *(Story 10)*
+- [ ] **[72]** Noise filters — implement DI-pattern/language-aware suppression per AC *(Story 14)*
+- [ ] **[73]** Add verify_webhook_signature() to VCSAdapter protocol *(Story 15)*
+- [ ] **[74]** Standardise adapter method names + test pagination + MR approval *(Stories 18+19)*
+- [ ] **[75]** Publish GitHub Actions as proper revue-io/action@v1 *(Story 20)*
+- [ ] **[76]** Fix Cleo size heuristic thresholds + add team-quick routing *(Story 23)*
+- [ ] **[77]** Extract team configs to standalone YAML files *(Story 26)*
+
+---
+
 ## Epic Status Summary
 
 | Epic | Stories | Done | Status |
@@ -91,3 +106,4 @@
 | E4 — Sage: The Resolver Agent | 5 | 5/5 | ✅ Done |
 | E5 — AI Backend & Configuration | 4 | 4/4 | ✅ Done |
 | E6 — Onboarding, Observability & Launch | 6 | 0/6 | 🔜 Not started |
+| E7 — Post-MVP Tech Debt & Improvements | 8 | 0/8 | 📋 Backlog |
