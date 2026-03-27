@@ -34,10 +34,12 @@ class GitHubAdapter:
         token: str,
         repo: str,
         base_url: str = "https://api.github.com",
+        webhook_secret: str = "",
     ) -> None:
         self._token = token
         self._repo = repo
         self._base_url = base_url.rstrip("/")
+        self._webhook_secret = webhook_secret
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -250,15 +252,27 @@ class GitHubAdapter:
     # Webhook helpers (static)
     # ------------------------------------------------------------------
 
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        """Verify HMAC-SHA256 webhook signature (VCSAdapter protocol compliance).
+
+        ``signature`` is expected in the form ``sha256=<hex>``
+        (``X-Hub-Signature-256`` header from GitHub).
+        Uses ``hmac.compare_digest`` for timing-safe comparison.
+
+        Args:
+            payload:   Raw request body bytes.
+            signature: Value of the ``X-Hub-Signature-256`` header.
+
+        Returns:
+            True if the signature is valid.
+        """
+        return self._verify_webhook_signature_with_secret(payload, signature, self._webhook_secret)
+
     @staticmethod
-    def verify_webhook_signature(
+    def _verify_webhook_signature_with_secret(
         payload: bytes, signature: str, secret: str
     ) -> bool:
-        """Verify HMAC-SHA256 webhook signature from GitHub.
-
-        ``signature`` is expected in the form ``sha256=<hex>``.
-        Uses ``hmac.compare_digest`` for timing-safe comparison.
-        """
+        """Low-level HMAC verification — accepts explicit secret for testing."""
         if not signature.startswith("sha256="):
             return False
         expected = hmac.new(

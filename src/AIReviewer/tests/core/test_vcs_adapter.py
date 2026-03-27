@@ -10,6 +10,8 @@ from AIReviewer.core.vcs_adapter import (
     translate_github_position,
     translate_gitlab_line_code,
 )
+from AIReviewer.core.github_adapter import GitHubAdapter
+from AIReviewer.core.gitlab_adapter import GitLabAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +68,7 @@ def test_diff_position_gitlab_fields() -> None:
 
 
 class _MinimalAdapter:
-    """Minimal concrete class satisfying VCSAdapter structurally."""
+    """Minimal concrete class satisfying VCSAdapter structurally (all 6 methods)."""
 
     def get_diff(self, pr_id: int) -> list[FileChange]:
         return []
@@ -87,10 +89,86 @@ class _MinimalAdapter:
     ) -> DiffPosition:
         return DiffPosition(file_path=file_path, line_number=line_number)
 
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        return True
+
+
+class _MissingWebhookAdapter:
+    """Adapter that omits verify_webhook_signature — must NOT satisfy protocol."""
+
+    def get_diff(self, pr_id: int) -> list[FileChange]: return []
+    def post_inline_comment(self, pr_id, position, body) -> bool: return True
+    def post_summary_comment(self, pr_id, body) -> bool: return True
+    def get_existing_comments(self, pr_id) -> list[dict]: return []
+    def resolve_position(self, file_path, line_number, diff) -> DiffPosition:
+        return DiffPosition(file_path=file_path, line_number=line_number)
+
 
 def test_vcs_adapter_protocol_structural() -> None:
-    """A class implementing all five methods passes isinstance check."""
+    """A class implementing all six methods passes isinstance check."""
     adapter = _MinimalAdapter()
+    assert isinstance(adapter, VCSAdapter)
+
+
+def test_vcs_adapter_protocol_missing_webhook_fails() -> None:
+    """A class omitting verify_webhook_signature fails the protocol check."""
+    adapter = _MissingWebhookAdapter()
+    assert not isinstance(adapter, VCSAdapter)
+
+
+# ---------------------------------------------------------------------------
+# GitHub adapter — verify_webhook_signature protocol compliance
+# ---------------------------------------------------------------------------
+
+import hashlib
+import hmac as _hmac
+
+
+def _make_github_sig(payload: bytes, secret: str) -> str:
+    digest = _hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
+
+
+def test_github_adapter_verify_webhook_signature_valid() -> None:
+    secret = "my-webhook-secret"
+    payload = b'{"action":"opened"}'
+    sig = _make_github_sig(payload, secret)
+    adapter = GitHubAdapter(token="tok", repo="owner/repo", webhook_secret=secret)
+    assert adapter.verify_webhook_signature(payload, sig) is True
+
+
+def test_github_adapter_verify_webhook_signature_invalid() -> None:
+    adapter = GitHubAdapter(token="tok", repo="owner/repo", webhook_secret="correct-secret")
+    assert adapter.verify_webhook_signature(b"payload", "sha256=wronghex") is False
+
+
+def test_github_adapter_verify_webhook_signature_missing_prefix() -> None:
+    adapter = GitHubAdapter(token="tok", repo="owner/repo", webhook_secret="secret")
+    assert adapter.verify_webhook_signature(b"payload", "nohashprefix") is False
+
+
+def test_github_adapter_satisfies_vcs_adapter_protocol() -> None:
+    adapter = GitHubAdapter(token="tok", repo="owner/repo", webhook_secret="s")
+    assert isinstance(adapter, VCSAdapter)
+
+
+# ---------------------------------------------------------------------------
+# GitLab adapter — verify_webhook_signature protocol compliance
+# ---------------------------------------------------------------------------
+
+def test_gitlab_adapter_verify_webhook_signature_valid() -> None:
+    secret = "gitlab-token-secret"
+    adapter = GitLabAdapter(token="tok", project_id=1, webhook_secret=secret)
+    assert adapter.verify_webhook_signature(b"any-payload", secret) is True
+
+
+def test_gitlab_adapter_verify_webhook_signature_invalid() -> None:
+    adapter = GitLabAdapter(token="tok", project_id=1, webhook_secret="correct")
+    assert adapter.verify_webhook_signature(b"any-payload", "wrong-token") is False
+
+
+def test_gitlab_adapter_satisfies_vcs_adapter_protocol() -> None:
+    adapter = GitLabAdapter(token="tok", project_id=1, webhook_secret="s")
     assert isinstance(adapter, VCSAdapter)
 
 

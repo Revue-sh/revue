@@ -46,23 +46,23 @@ def test_github_verify_signature_valid() -> None:
     sig = "sha256=" + hmac.new(
         secret.encode(), payload, hashlib.sha256
     ).hexdigest()
-    assert GitHubAdapter.verify_webhook_signature(payload, sig, secret) is True
+    adapter = GitHubAdapter(token="tok", repo="owner/repo", webhook_secret=secret)
+    assert adapter.verify_webhook_signature(payload, sig) is True
 
 
 def test_github_verify_signature_invalid() -> None:
     """Tampered signature is rejected."""
     payload = b'{"action":"opened"}'
-    assert (
-        GitHubAdapter.verify_webhook_signature(payload, "sha256=badhex", "s")
-        is False
-    )
+    adapter = GitHubAdapter(token="tok", repo="owner/repo", webhook_secret="s")
+    assert adapter.verify_webhook_signature(payload, "sha256=badhex") is False
 
 
 def test_github_verify_signature_missing_prefix() -> None:
     """Signature without sha256= prefix is rejected."""
     payload = b"{}"
     sig = hmac.new(b"s", payload, hashlib.sha256).hexdigest()
-    assert GitHubAdapter.verify_webhook_signature(payload, sig, "s") is False
+    adapter = GitHubAdapter(token="tok", repo="owner/repo", webhook_secret="s")
+    assert adapter.verify_webhook_signature(payload, sig) is False
 
 
 # =====================================================================

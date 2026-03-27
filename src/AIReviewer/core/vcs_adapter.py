@@ -44,6 +44,12 @@ class VCSAdapter(Protocol):
     Implementations provide concrete API calls for a specific platform
     (GitHub, GitLab, Bitbucket, etc.) while consumers depend only on
     this protocol.
+
+    All five methods plus ``verify_webhook_signature`` must be implemented.
+    The webhook method is declared here (not just on concrete adapters) so
+    that the type system enforces it on every future adapter — a missing
+    implementation will fail ``isinstance(adapter, VCSAdapter)`` at runtime
+    and raise a type error at static analysis time.
     """
 
     def get_diff(self, pr_id: int) -> list[FileChange]: ...
@@ -59,6 +65,21 @@ class VCSAdapter(Protocol):
     def resolve_position(
         self, file_path: str, line_number: int, diff: str
     ) -> DiffPosition: ...
+
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        """Verify the webhook payload against its signature.
+
+        Args:
+            payload:   Raw request body bytes.
+            signature: Platform-supplied signature header value.
+                       GitHub: ``sha256=<hex>`` (X-Hub-Signature-256)
+                       GitLab: bare token string (X-Gitlab-Token)
+
+        Returns:
+            True if the signature is valid, False otherwise.
+            Must use a timing-safe comparison (hmac.compare_digest).
+        """
+        ...
 
 
 # ---------------------------------------------------------------------------

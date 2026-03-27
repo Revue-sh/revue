@@ -37,11 +37,13 @@ class GitLabAdapter:
         project_id: int | str,
         base_url: str = "https://gitlab.com",
         token_type: str = "oauth",
+        webhook_secret: str = "",
     ) -> None:
         self._token = token
         self._project_id = project_id
         self._base_url = base_url.rstrip("/")
         self._token_type = token_type
+        self._webhook_secret = webhook_secret
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -288,8 +290,28 @@ class GitLabAdapter:
         """Verify ``X-Gitlab-Token`` header for webhook security.
 
         Uses ``hmac.compare_digest`` for timing-safe comparison.
+
+        .. deprecated::
+            Use ``verify_webhook_signature`` to satisfy the VCSAdapter protocol.
+            This static helper is kept for backward compatibility.
         """
         return hmac.compare_digest(token_header, expected_token)
+
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        """Verify the ``X-Gitlab-Token`` header (VCSAdapter protocol compliance).
+
+        GitLab does not use HMAC-SHA256 for webhook verification — it passes
+        the configured secret token verbatim in ``X-Gitlab-Token``.
+        ``payload`` is accepted for protocol compatibility but is not used.
+
+        Args:
+            payload:   Raw request body bytes (unused for GitLab).
+            signature: Value of the ``X-Gitlab-Token`` header.
+
+        Returns:
+            True if ``signature`` matches the configured ``webhook_secret``.
+        """
+        return hmac.compare_digest(signature, self._webhook_secret)
 
     @staticmethod
     def parse_webhook_event(
