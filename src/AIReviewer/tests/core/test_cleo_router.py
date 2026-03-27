@@ -8,6 +8,8 @@ import pytest
 from AIReviewer.core.cleo_router import (
     DEFAULT_TEAM,
     LARGE_CHANGE_THRESHOLD,
+    QUICK_THRESHOLD_LINES,
+    FULL_REVIEW_THRESHOLD_LINES,
     SECURITY_AGENT_NAME,
     SECURITY_FILE_PATTERNS,
     TEAM_PRESETS,
@@ -25,15 +27,23 @@ from AIReviewer.core.shared_analysis import SharedAnalysisResult
 # ---------------------------------------------------------------------------
 
 
-def _fc(path: str = "app.py", change_type: str = "modified") -> FileChange:
+def _fc(path: str = "app.py", change_type: str = "modified",
+        additions: int = 5, deletions: int = 2) -> FileChange:
     return FileChange(
         file_path=path, change_type=change_type,
-        additions=5, deletions=2, diff="",
+        additions=additions, deletions=deletions, diff="",
     )
 
 
-def _many_files(n: int, ext: str = ".py") -> list[FileChange]:
-    return [_fc(f"src/file_{i}{ext}") for i in range(n)]
+def _many_files(n: int, ext: str = ".py",
+                additions: int = 5, deletions: int = 2) -> list[FileChange]:
+    return [_fc(f"src/file_{i}{ext}", additions=additions, deletions=deletions)
+            for i in range(n)]
+
+
+def _files_with_lines(total_lines: int, ext: str = ".py") -> list[FileChange]:
+    """Create file changes totalling exactly total_lines changed lines."""
+    return [_fc(f"src/file.{ext}", additions=total_lines, deletions=0)]
 
 
 def _shared(
@@ -82,24 +92,55 @@ class _FakeDefinition:
 class TestSelectTeam:
     """select_team() tests."""
 
-    def test_default_full_team_small_changeset(self):
-        result = select_team([_fc("app.py"), _fc("utils.py")])
+    def test_default_full_team_medium_changeset(self):
+        """Diff between 50-500 lines with no language match → full review."""
+        files = _files_with_lines(100)
+        result = select_team(files)
         assert result.team_name == DEFAULT_TEAM
         assert set(result.agents) == set(TEAM_PRESETS[DEFAULT_TEAM])
         assert result.security_override is False
 
-    def test_lean_team_large_changeset(self):
-        files = _many_files(LARGE_CHANGE_THRESHOLD + 1)
+    def test_quick_team_small_diff(self):
+        """Diff < 50 lines → team-quick (Maya only)."""
+        files = _files_with_lines(QUICK_THRESHOLD_LINES - 1)
         result = select_team(files)
-        assert result.team_name == "team-lean"
-        assert "cleo" in result.agents
-        assert "nova" in result.agents
-        assert "zara" in result.agents
-        assert f"{LARGE_CHANGE_THRESHOLD}" in result.reason
+        assert result.team_name == "team-quick"
+        assert "maya" in result.agents
+
+    def test_quick_team_boundary_exactly_49_lines(self):
+        files = _files_with_lines(49)
+        result = select_team(files)
+        assert result.team_name == "team-quick"
+
+    def test_quick_team_not_triggered_at_50_lines(self):
+        """Exactly 50 lines is NOT < 50 — should NOT be team-quick."""
+        files = _files_with_lines(QUICK_THRESHOLD_LINES)
+        result = select_team(files)
+        assert result.team_name != "team-quick"
+
+    def test_full_review_large_diff(self):
+        """Diff > 500 lines → team-full-review."""
+        files = _files_with_lines(FULL_REVIEW_THRESHOLD_LINES + 1)
+        result = select_team(files)
+        assert result.team_name == "team-full-review"
+        assert f"{FULL_REVIEW_THRESHOLD_LINES}" in result.reason
+
+    def test_full_review_boundary_exactly_501_lines(self):
+        files = _files_with_lines(501)
+        result = select_team(files)
+        assert result.team_name == "team-full-review"
+
+    def test_lean_team_large_changeset(self):
+        """Legacy: large file count still works (team-lean not removed)."""
+        files = _many_files(LARGE_CHANGE_THRESHOLD + 1, additions=2, deletions=2)
+        # each file = 4 lines, 21 files = 84 lines → between thresholds
+        result = select_team(files)
+        # Should NOT be team-lean (size heuristic now line-based)
+        assert result.team_name != "team-lean"
 
     def test_lean_team_boundary_not_triggered(self):
-        """Exactly LARGE_CHANGE_THRESHOLD files should NOT trigger lean team."""
-        files = _many_files(LARGE_CHANGE_THRESHOLD)
+        """Legacy compat — file count boundary no longer triggers lean."""
+        files = _many_files(LARGE_CHANGE_THRESHOLD, additions=2, deletions=2)
         result = select_team(files)
         assert result.team_name != "team-lean"
 
@@ -147,35 +188,48 @@ class TestSelectTeam:
     def test_config_default_team_does_not_short_circuit(self):
         """Setting config.agents_team to DEFAULT_TEAM should not short-circuit."""
         config = _FakeConfig(agents_team=DEFAULT_TEAM)
-        result = select_team([_fc()], config=config)  # type: ignore[arg-type]
+        # Use enough lines to skip team-quick threshold
+        result = select_team([_fc(additions=60)], config=config)  # type: ignore[arg-type]
         assert result.team_name == DEFAULT_TEAM
 
     def test_swift_files_select_ios_team(self):
-        files = [_fc("Sources/App/ViewController.swift")]
+        # Use enough lines to skip team-quick (< 50 would route to team-quick)
+        files = [_fc("Sources/App/ViewController.swift", additions=60)]
         result = select_team(files)
         assert result.team_name == "team-swift-ios"
 
     def test_kotlin_files_select_ios_team(self):
-        files = [_fc("app/src/main/Activity.kt")]
+        files = [_fc("app/src/main/Activity.kt", additions=60)]
         result = select_team(files)
         assert result.team_name == "team-swift-ios"
 
+    def test_security_override_bypasses_quick_team(self):
+        """Security override prevents team-quick even on tiny diffs."""
+        files = [_fc("Sources/App.swift", additions=5), _fc("config/.env", additions=3)]
+        result = select_team(files)
+        assert result.security_override is True
+        assert result.team_name != "team-quick"
+        assert SECURITY_AGENT_NAME in result.agents
+
     def test_security_override_added_to_lang_team(self):
         """Language team + security file → Zara added if not already present."""
-        files = [_fc("Sources/App.swift"), _fc("config/.env")]
+        files = [_fc("Sources/App.swift", additions=60), _fc("config/.env", additions=5)]
         result = select_team(files)
         assert result.security_override is True
         assert SECURITY_AGENT_NAME in result.agents
 
-    def test_large_changeset_overrides_language_team(self):
-        """Size heuristic takes precedence over language detection."""
-        files = _many_files(LARGE_CHANGE_THRESHOLD + 1, ext=".swift")
+    def test_large_diff_overrides_language_team(self):
+        """Line-count size heuristic (>500) takes precedence over language detection."""
+        files = [_fc("Sources/App.swift", additions=600)]
         result = select_team(files)
-        assert result.team_name == "team-lean"
+        assert result.team_name == "team-full-review"
+        assert "600" in result.reason or "500" in result.reason
 
     def test_empty_file_list(self):
+        """Empty file list → 0 lines → team-quick (below 50 threshold)."""
         result = select_team([])
-        assert result.team_name == DEFAULT_TEAM
+        # 0 lines < 50 → team-quick, no security override
+        assert result.team_name == "team-quick"
         assert result.security_override is False
 
 
@@ -188,17 +242,20 @@ class TestLanguageDetection:
     """Language detection from file extensions."""
 
     def test_python_detected(self):
-        result = select_team([_fc("app.py")])
+        # Use enough lines to avoid team-quick threshold
+        result = select_team([_fc("app.py", additions=60)])
         # Python doesn't have a special team, so falls back to default
         assert result.team_name == DEFAULT_TEAM
 
     def test_mixed_extensions_primary_wins(self):
-        files = [_fc("a.swift"), _fc("b.swift"), _fc("c.py")]
+        files = [_fc("a.swift", additions=30), _fc("b.swift", additions=30),
+                 _fc("c.py", additions=5)]
         result = select_team(files)
         assert result.team_name == "team-swift-ios"
 
     def test_no_recognised_extension(self):
-        result = select_team([_fc("Makefile"), _fc("Dockerfile")])
+        result = select_team([_fc("Makefile", additions=60),
+                               _fc("Dockerfile", additions=10)])
         assert result.team_name == DEFAULT_TEAM
 
 
@@ -275,17 +332,14 @@ class TestRoute:
             _FakeAgent("leo", ["**/*.py"]),
             _FakeAgent("nova", ["**"]),
         ]
-        # Large changeset → lean team (cleo, zara, nova)
-        files = _many_files(LARGE_CHANGE_THRESHOLD + 5)
+        # Large diff (>500 lines) → full review team
+        files = [_fc("app.py", additions=600)]
         selection, filtered = route(files, agents)
 
-        assert selection.team_name == "team-lean"
+        assert selection.team_name == "team-full-review"
         filtered_names = {a.name for a in filtered}
         assert "cleo" in filtered_names
-        assert "zara" in filtered_names
         assert "nova" in filtered_names
-        assert "kai" not in filtered_names
-        assert "leo" not in filtered_names
 
     def test_route_full_team_all_agents_run(self):
         agents = [
@@ -296,7 +350,8 @@ class TestRoute:
             _FakeAgent("leo", ["**/*.py"]),
             _FakeAgent("nova", ["**"]),
         ]
-        files = [_fc("app.py")]
+        # Medium diff (between thresholds, no special language) → full review
+        files = [_fc("app.py", additions=100)]
         selection, filtered = route(files, agents)
 
         assert selection.team_name == DEFAULT_TEAM
@@ -321,7 +376,8 @@ class TestRoute:
             _FakeAgent("zara", ["**/*.js"]),  # only JS
             _FakeAgent("nova", ["**"]),
         ]
-        files = [_fc("app.py")]  # Python only
+        # Medium diff (not quick) — Python only, no security
+        files = [_fc("app.py", additions=60)]
         selection, filtered = route(files, agents)
 
         filtered_names = {a.name for a in filtered}
@@ -351,7 +407,7 @@ class TestRoute:
             _FakeAgent("nova", ["**"]),
         ]
         config = _FakeConfig(agents_team="team-security-focus")
-        files = [_fc("app.py")]
+        files = [_fc("app.py", additions=60)]
         selection, filtered = route(files, agents, config=config)  # type: ignore[arg-type]
 
         assert selection.team_name == "team-security-focus"
@@ -367,14 +423,14 @@ class TestRoute:
             _FakeAgent("nova", ["**"]),
         ]
         shared = _shared(risk_areas=["injection", "database"])
-        files = [_fc("app.py")]
+        files = [_fc("app.py", additions=60)]
         selection, filtered = route(files, agents, shared=shared)
 
         assert selection.security_override is True
         assert "zara" in {a.name for a in filtered}
 
     def test_route_empty_agents_list(self):
-        selection, filtered = route([_fc()], [])
+        selection, filtered = route([_fc(additions=60)], [])
         assert filtered == []
         assert selection.team_name == DEFAULT_TEAM
 
@@ -384,7 +440,8 @@ class TestRoute:
             _FakeAgent("cleo", ["**"]),
             _FakeAgent("custom-agent", ["**"]),
         ]
-        files = [_fc("app.py")]
+        # medium diff → full team (cleo is in it, custom-agent is not)
+        files = [_fc("app.py", additions=60)]
         selection, filtered = route(files, agents)
 
         filtered_names = {a.name for a in filtered}
@@ -400,7 +457,8 @@ class TestRoute:
                 return []
 
         agents = [_BareAgent()]
-        files = [_fc("app.py")]
+        # medium diff → full review (cleo is in full review team)
+        files = [_fc("app.py", additions=60)]
         selection, filtered = route(files, agents)
 
         # No definition → no triggers → always runs (if in team)
@@ -431,3 +489,55 @@ class TestTeamSelection:
         a = TeamSelection("t", ["a"], False, "r")
         b = TeamSelection("t", ["a"], False, "r")
         assert a == b
+
+
+# ---------------------------------------------------------------------------
+# [76] AC: size heuristic thresholds + team-quick (new tests)
+# ---------------------------------------------------------------------------
+
+class TestSizeHeuristicAC:
+    """Explicit AC tests for Story 23 size thresholds."""
+
+    def test_49_lines_routes_to_team_quick(self):
+        result = select_team(_files_with_lines(49))
+        assert result.team_name == "team-quick"
+        assert "maya" in result.agents
+
+    def test_50_lines_does_not_route_to_team_quick(self):
+        result = select_team(_files_with_lines(50))
+        assert result.team_name != "team-quick"
+
+    def test_501_lines_routes_to_team_full_review(self):
+        result = select_team(_files_with_lines(501))
+        assert result.team_name == "team-full-review"
+        assert "500" in result.reason or "501" in result.reason
+
+    def test_500_lines_does_not_route_to_full_review_by_size(self):
+        """Exactly 500 lines is NOT > 500 — size heuristic should not trigger."""
+        result = select_team(_files_with_lines(500))
+        assert result.team_name != "team-full-review" or "language" in result.reason or "default" in result.reason
+
+    def test_security_override_trumps_size_heuristic(self):
+        """Security override always wins — even tiny diffs get Zara."""
+        result = select_team([_fc(".env", additions=3)])
+        assert result.security_override is True
+        assert result.team_name != "team-quick"
+        assert SECURITY_AGENT_NAME in result.agents
+
+    def test_team_quick_has_maya(self):
+        """PRD specifies team-quick is Maya only (+ nova for consolidation)."""
+        from AIReviewer.core.cleo_router import TEAM_PRESETS
+        assert "maya" in TEAM_PRESETS["team-quick"]
+
+    def test_team_quick_excludes_expensive_agents(self):
+        """team-quick should not include heavy agents like leo, kai, zara."""
+        from AIReviewer.core.cleo_router import TEAM_PRESETS
+        quick = TEAM_PRESETS["team-quick"]
+        assert "leo" not in quick
+        assert "kai" not in quick
+        assert "zara" not in quick
+
+    def test_constants_match_spec(self):
+        """QUICK_THRESHOLD_LINES=50 and FULL_REVIEW_THRESHOLD_LINES=500 per AC."""
+        assert QUICK_THRESHOLD_LINES == 50
+        assert FULL_REVIEW_THRESHOLD_LINES == 500

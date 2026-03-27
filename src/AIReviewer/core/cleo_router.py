@@ -33,6 +33,14 @@ SECURITY_FILE_PATTERNS: frozenset[str] = frozenset({
     "*.cert",
 })
 
+# Line-count thresholds for size heuristic (AC Story 23)
+# diff < QUICK_THRESHOLD_LINES  → team-quick  (Maya only — fast, low cost)
+# diff > FULL_REVIEW_THRESHOLD_LINES → team-full-review
+# between the two → language/default selection
+QUICK_THRESHOLD_LINES: int = 50
+FULL_REVIEW_THRESHOLD_LINES: int = 500
+
+# Kept for backward compat — was file-count based; superseded by line-count above
 LARGE_CHANGE_THRESHOLD: int = 20
 
 # Extension → language mapping (mirrors shared_analysis._EXT_TO_LANG)
@@ -54,7 +62,8 @@ _LANG_TO_TEAM: dict[str, str] = {
 # Team presets: team_name → list of agent names
 TEAM_PRESETS: dict[str, list[str]] = {
     "team-full-review": ["cleo", "zara", "kai", "maya", "leo", "nova"],
-    "team-lean": ["cleo", "zara", "nova"],
+    "team-quick": ["maya", "nova"],          # trivial/small diffs — Maya only
+    "team-lean": ["cleo", "zara", "nova"],   # legacy — kept for compat
     "team-swift-ios": ["cleo", "zara", "maya", "nova"],
     "team-security-focus": ["cleo", "zara", "nova"],
 }
@@ -134,16 +143,28 @@ def select_team(
             reason=f"team set by config: {config.agents_team}",
         )
 
-    # Size heuristic
-    if len(file_changes) > LARGE_CHANGE_THRESHOLD:
-        agents = list(TEAM_PRESETS["team-lean"])
+    # Size heuristic (line-count based — AC Story 23)
+    # Security override already applied above — size check is subordinate
+    total_lines = sum(fc.additions + fc.deletions for fc in file_changes)
+
+    if total_lines < QUICK_THRESHOLD_LINES and not security_override:
+        agents = list(TEAM_PRESETS["team-quick"])
+        return TeamSelection(
+            team_name="team-quick",
+            agents=agents,
+            security_override=False,
+            reason=f"small diff ({total_lines} lines < {QUICK_THRESHOLD_LINES} — quick review)",
+        )
+
+    if total_lines > FULL_REVIEW_THRESHOLD_LINES:
+        agents = list(TEAM_PRESETS["team-full-review"])
         if security_override and SECURITY_AGENT_NAME not in agents:
             agents.append(SECURITY_AGENT_NAME)
         return TeamSelection(
-            team_name="team-lean",
+            team_name="team-full-review",
             agents=agents,
             security_override=security_override,
-            reason=f"large changeset ({len(file_changes)} files > {LARGE_CHANGE_THRESHOLD})",
+            reason=f"large diff ({total_lines} lines > {FULL_REVIEW_THRESHOLD_LINES} — full review)",
         )
 
     # Language-based team selection
