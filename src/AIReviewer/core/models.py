@@ -25,6 +25,7 @@ class FileChange:
     additions: int
     deletions: int
     diff: str
+    language: str = "unknown"  # Detected from file extension by diff_parser.detect_language()
 
 
 @dataclass

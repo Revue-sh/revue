@@ -83,6 +83,7 @@ def _parse_single_file_diff(section: str) -> FileChange | None:
             additions=0,
             deletions=0,
             diff="[binary]",
+            language=detect_language(file_path),
         )
 
     # Extract old/new paths from --- / +++ lines
@@ -135,6 +136,7 @@ def _parse_single_file_diff(section: str) -> FileChange | None:
         additions=additions,
         deletions=deletions,
         diff=diff_text,
+        language=detect_language(file_path),
     )
 
 

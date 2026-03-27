@@ -225,3 +225,130 @@ class TestFilterChangesReturnsBothTuples:
         excluded_paths = {c.file_path for c in excluded}
         assert included_paths == {"keep.py"}
         assert excluded_paths == {"skip.md", "big.py"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: language field populated on FileChange (AC: detect language from ext)
+# ---------------------------------------------------------------------------
+
+class TestLanguageDetectedOnParse:
+    def test_language_populated_for_python_file(self) -> None:
+        changes = parse_diff(SINGLE_FILE_MODIFIED_DIFF)
+        assert changes[0].language == "python"
+
+    def test_language_populated_for_markdown_file(self) -> None:
+        changes = parse_diff(THREE_FILE_DIFF)
+        md_change = next(c for c in changes if c.file_path == "README.md")
+        assert md_change.language == "markdown"
+
+    def test_language_populated_for_binary_file(self) -> None:
+        changes = parse_diff(BINARY_FILE_DIFF)
+        assert changes[0].language == "unknown"  # .png not in registry
+
+    def test_language_unknown_for_unrecognised_extension(self) -> None:
+        diff = """\
+diff --git a/data/config.toml b/data/config.toml
+index abc1234..def5678 100644
+--- a/data/config.toml
++++ b/data/config.toml
+@@ -1,2 +1,3 @@
+ [section]
++key = "value"
+"""
+        changes = parse_diff(diff)
+        assert changes[0].language == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Tests: edge cases — empty diff, binary, rename, >10 files (AC requirement)
+# ---------------------------------------------------------------------------
+
+class TestEmptyDiff:
+    def test_empty_string_returns_empty_list(self) -> None:
+        assert parse_diff("") == []
+
+    def test_whitespace_only_returns_empty_list(self) -> None:
+        assert parse_diff("   \n\n  ") == []
+
+    def test_no_diff_header_returns_empty_list(self) -> None:
+        assert parse_diff("just some random text\nno diff here") == []
+
+
+class TestBinaryFileHandled:
+    def test_binary_file_skipped_with_correct_fields(self) -> None:
+        changes = parse_diff(BINARY_FILE_DIFF)
+        assert len(changes) == 1
+        c = changes[0]
+        assert c.file_path == "assets/logo.png"
+        assert c.change_type == "binary"
+        assert c.additions == 0
+        assert c.deletions == 0
+        assert c.diff == "[binary]"
+
+    def test_binary_in_multi_file_diff_does_not_block_others(self) -> None:
+        diff = BINARY_FILE_DIFF + "\n" + SINGLE_FILE_MODIFIED_DIFF
+        changes = parse_diff(diff)
+        assert len(changes) == 2
+        types = {c.change_type for c in changes}
+        assert "binary" in types
+        assert "modified" in types
+
+
+class TestRenamedFile:
+    def test_renamed_file_uses_new_path(self) -> None:
+        diff = """\
+diff --git a/src/old_name.py b/src/new_name.py
+similarity index 95%
+rename from src/old_name.py
+rename to src/new_name.py
+index abc1234..def5678 100644
+--- a/src/old_name.py
++++ b/src/new_name.py
+@@ -1,3 +1,4 @@
+ def hello():
++    # renamed
+     return "hello"
+"""
+        changes = parse_diff(diff)
+        assert len(changes) == 1
+        assert changes[0].file_path == "src/new_name.py"
+        assert changes[0].change_type == "modified"
+
+    def test_renamed_file_language_from_new_path(self) -> None:
+        diff = """\
+diff --git a/src/old_name.py b/src/new_name.py
+similarity index 95%
+rename from src/old_name.py
+rename to src/new_name.py
+index abc1234..def5678 100644
+--- a/src/old_name.py
++++ b/src/new_name.py
+@@ -1,3 +1,4 @@
+ def hello():
++    # renamed
+     return "hello"
+"""
+        changes = parse_diff(diff)
+        assert changes[0].language == "python"
+
+
+class TestMoreThanTenFiles:
+    def test_parse_twelve_file_diff(self) -> None:
+        """parse_diff handles diffs with >10 files correctly."""
+        parts = []
+        for i in range(12):
+            parts.append(f"""\
+diff --git a/src/module_{i}.py b/src/module_{i}.py
+index abc{i:04d}..def{i:04d} 100644
+--- a/src/module_{i}.py
++++ b/src/module_{i}.py
+@@ -1,2 +1,3 @@
+ x = {i}
++y = {i + 1}
+""")
+        changes = parse_diff("\n".join(parts))
+        assert len(changes) == 12
+        for i, c in enumerate(changes):
+            assert c.file_path == f"src/module_{i}.py"
+            assert c.additions == 1
+            assert c.language == "python"
