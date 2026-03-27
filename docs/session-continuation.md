@@ -5,26 +5,23 @@
 
 ## Completed this session
 
-- **Project named and set up** — Revue.io, domain getrevue.io, email getrevue@gmail.com created
-- **Market analysis written** — TAM/SAM/SOM, competitive landscape (CodeRabbit, Greptile, Copilot Review, Snyk, SonarCloud), platform priorities, business model recommendation (hybrid tier model) — `docs/market-analysis.md`
-- **PRD written and iterated to v1.3** — `docs/prd.md` — covers architecture, 7-agent team, Sage resolver design, AI backend abstraction, VCS integration, configuration schema, phased roadmap
-- **Agent team named** — Cleo (Orchestrator), Zara (Security), Kai (Performance), Maya (Code Quality), Leo (Architecture), Nova (Consolidator), Sage (Resolver). Planned: Finn, Dara, Arlo, Remy, Sora, Rex
-- **PRD team review** (party mode) — 8 fixes applied: VCSAdapter moved to E1, DiffPosition abstraction, GitLab webhook algorithm clarified, rate limit backoff added, token rotation AC added, wall clock timeout clarified, shared analysis fallback added, hard diff limit behaviour defined
-- **Cleo routing algorithm resolved** (PRD v1.2) — 2-step: team auto-selection (security override → size → language), then existing evaluate_triggers() carries over unchanged
-- **Hard diff limit designed** (PRD v1.3) — 2000-line default, stop before any AI call, post breakdown suggestion, exit as warning (non-blocking). Phase 2: batch mode
-- **48 user stories created in Taiga** across 6 epics — all with full acceptance criteria, linked to epics, team-reviewed and quality-improved (commit `537aa8a`)
-- **8 sprints planned and created in Taiga** — 16 weeks, MVP launches Sprint 7 (22 Jun 2026), monetisation Sprint 8 (6 Jul 2026) — `docs/sprint-plan.md`
-- **Handoff skill created** — `~/.openclaw/skills/handoff/SKILL.md` (adapted for OpenClaw)
+- **Sprint 1 fully implemented** — all 6 stories done, 67 tests passing, committed `ea0752a`
+- **[027] AIClient protocol and provider factory** — `core/ai_client.py` + `core/ai_config.py`: AIClient Protocol, 5 providers (Anthropic default), factory, 429 retry with exponential backoff, timeout propagation
+- **[029] BYOK env var handling** — `resolve_api_key()` with 4-tier priority, `__repr__` masks key, provider-default env vars map
+- **[028] .revue.yml config schema and loader** — `core/config_loader.py`: full YAML schema, validate_config(), DEFAULT_REVUE_YML constant
+- **[009] VCSAdapter protocol and DiffPosition** — `core/vcs_adapter.py`: DiffPosition dataclass, VCSAdapter Protocol, GitHub position translation stub, GitLab line_code stub
+- **[001] Diff ingestion** — `core/diff_parser.py`: parse_diff(), detect_language(), filter_changes(), handles add/modify/delete/binary
+- **[045] Local diff CLI** — `cli.py` + `pyproject.toml`: `revue review --diff=X`, `revue init`, `revue validate` — Sprint 1 deliverable working
 
 ---
 
 ## Sprint & Epic State
 
-**Current sprint:** Not started — Sprint 1 kicks off 30 March 2026
+**Current sprint:** Sprint 1 ✅ COMPLETE | Sprint 2 starts 13 Apr 2026
 
 | Sprint | Dates | Theme | Stories | Status |
 |--------|-------|-------|---------|--------|
-| S1 | 30 Mar – 12 Apr | Foundation | 6 | 🔲 Not started |
+| S1 | 30 Mar – 12 Apr | Foundation | 6/6 | ✅ Done |
 | S2 | 13 Apr – 26 Apr | Core Pipeline | 7 | 🔲 Not started |
 | S3 | 27 Apr – 10 May | Agent System | 6 | 🔲 Not started |
 | S4 | 11 May – 24 May | Routing & Teams | 12 | 🔲 Not started |
@@ -33,43 +30,42 @@
 | S7 | 22 Jun – 5 Jul | Launch 🚀 | 5 | 🔲 Not started |
 | S8 | 6 Jul – 19 Jul | Monetisation | 2 | 🔲 Not started |
 
-**Epic progress:** 0/48 stories done. All stories in New status on Kanban board.
+**Epic progress:** 6/48 stories done.
 
-**Taiga board:** http://localhost:9000/project/revueio/kanban  
-**Taiga sprints:** http://localhost:9000/project/revueio/taskboard
+**Project location:** `Projects/revue.io/src/AIReviewer/`
+**Taiga board:** http://localhost:9000/project/revueio/kanban
 
 ---
 
-## Remaining work — next steps
+## Sprint 2 — Core Pipeline stories (next up)
 
-1. **Sprint 1 — Story [027]: AIClient protocol and provider factory** *(first story to implement)*
-   - Create `AIReviewer/core/ai_client.py` — define `AIClient` Protocol, implement `OpenAIClient`, `AnthropicClient`, `AzureOpenAIClient`, `OpenRouterClient`, `CustomGatewayClient`
-   - Factory function `create_ai_client(config: AIConfig) -> AIClient`
-   - Tests: each provider instantiates, factory selects correctly, 429 retry with backoff, timeout handling
+All 7 stories can begin. Dependency: [001] ✅ [027] ✅ [009] ✅
 
-2. **Story [029]: Environment variable handling and BYOK**
-   - Add `api_key_env` field to config, read at runtime, never log
-   - Depends on [027]
+Parallel opportunities:
+- **Wave A (parallel):** [002] Hard diff limit + [003] Shared analysis
+- **Wave B (parallel):** [004] Parallel agent execution + [005] Contradiction detection
+- **Wave C (sequential):** [006] Contradiction resolution → [007] Nova consolidation → [008] Noise filters
 
-3. **Story [028]: .revue.yml config schema and loader**
-   - Define full schema, validate on startup with clear errors
-   - Depends on [029]
+| Story | Subject | Size | Depends on |
+|-------|---------|------|------------|
+| [002] | Hard diff limit check — stop and suggest breakdown | M | [001] |
+| [003] | Shared analysis — upfront AI call for classification | S | [001] [027] |
+| [004] | Parallel agent execution with timeout and graceful degradation | M | [001] [003] |
+| [005] | Contradiction detection between specialist findings | S | [004] |
+| [006] | Contradiction resolution via orchestrator | S | [005] |
+| [007] | Nova consolidation — deduplicate and prioritise findings | M | [006] |
+| [008] | Noise filters — suppress false positives | S | [007] |
 
-4. **Story [009]: VCSAdapter protocol and DiffPosition abstraction**
-   - `core/vcs_adapter.py` — Protocol + DiffPosition dataclass
-   - GitHub position translation and GitLab line_code hash translation stubs
+---
 
-5. **Story [001]: Diff ingestion**
-   - Parse unified diff into `FileChange(file_path, diff, language, lines_changed)`
-   - Depends on [009]
+## Key technical decisions made
 
-6. **Story [045]: Local diff input mode**
-   - CLI: `revue review --diff=path/to/file.diff --config=.revue.yml`
-   - Enables Sprint 1-4 development without a live VCS
-
-7. **Open decisions (2 remaining from PRD):**
-   - Token budget strategy — deferred to Phase 2, no action needed now
-   - Diff caching — deferred to Phase 2, no action needed now
+- **Default provider:** `anthropic` (not openai)
+- **API key resolution priority:** direct value → named env var → provider-default env var → ValueError
+- **Provider enum:** `Literal["anthropic", "openai", "azure", "openrouter", "custom"]`
+- **Retry strategy:** 3 attempts, delays 1s/2s/4s, on 429/RateLimitError only; TimeoutError propagates
+- **Hard diff limit:** 2000 lines default, configurable via `.revue.yml`
+- **httpx timeouts:** connect=60, read=600, write=600, pool=600
 
 ---
 
@@ -77,9 +73,9 @@
 
 Read `Projects/revue.io/docs/session-continuation.md` for full context.
 
-We're starting Sprint 1 of Revue.io (AI code review SaaS). PRD is v1.3, 48 stories across 6 epics are in Taiga (http://localhost:9000/project/revueio/kanban), 8 sprints planned.
+Sprint 1 of Revue.io is complete (6/48 stories, 67 tests). Starting Sprint 2 — Core Pipeline.
 
-First story to implement: **[027] AIClient protocol and provider factory** — `AIReviewer/core/ai_client.py`. Define AIClient Protocol + implementations for OpenAI, Anthropic, Azure, OpenRouter, Custom Gateway. Factory function. Tests for each provider, rate limit retry (429 + exponential backoff), and timeout handling.
+First wave (parallel): **[002] Hard diff limit check** and **[003] Shared analysis upfront AI call**
 
-Source project to port from: `Projects/revue.io/context/ai-code-review-service/AIReviewer/`
-Target project location: `/Volumes/Lexar SSD/Projects/revue.io/` (or a new workspace folder)
+Project source: `Projects/revue.io/src/AIReviewer/`
+Taiga board: http://localhost:9000/project/revueio/kanban

@@ -10,20 +10,14 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal
 
+from .key_resolver import PROVIDER_DEFAULT_ENV_VARS  # SRP: re-exported for backwards compat
+from . import key_resolver as _key_resolver
+
 
 # AI Configuration Constants
 DEFAULT_AI_MAX_TOKENS = 50000
 DEFAULT_AI_TEMPERATURE = 0.3
 DEFAULT_AI_CONFIDENCE = 70
-
-# Provider-default environment variable names for API keys
-PROVIDER_DEFAULT_ENV_VARS: dict[str, str] = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "azure": "AZURE_OPENAI_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-    "custom": "REVUE_API_KEY",
-}
 
 
 @dataclass
@@ -71,51 +65,14 @@ class AIConfig:
             f"api_key=\"{masked_key}\", api_key_env={self.api_key_env!r})"
         )
 
+    # SRP: logic lives in key_resolver.py
     def resolve_api_key(self) -> str:
-        """Resolve the API key at runtime.
-
-        Priority order:
-        1. self.api_key if set (direct value)
-        2. os.environ[self.api_key_env] if api_key_env is set
-        3. Provider-default env var from PROVIDER_DEFAULT_ENV_VARS
-        4. Raise ValueError
-        """
-        if self.api_key:
-            return self.api_key
-
-        if self.api_key_env:
-            value = os.environ.get(self.api_key_env)
-            if value:
-                return value
-
-        default_env = PROVIDER_DEFAULT_ENV_VARS.get(self.provider)
-        if default_env:
-            value = os.environ.get(default_env)
-            if value:
-                return value
-
-        raise ValueError(
-            f"No API key found for provider {self.provider!r}. "
-            f"Set api_key directly, set api_key_env to an env var name, "
-            f"or export {PROVIDER_DEFAULT_ENV_VARS.get(self.provider, 'REVUE_API_KEY')}."
-        )
+        """Resolve the API key at runtime (delegates to key_resolver)."""
+        return _key_resolver.resolve_api_key(self)
 
     def validate_provider_config(self) -> List[str]:
-        """Validate provider-specific configuration. Returns error messages."""
-        errors: List[str] = []
-
-        if self.provider == "azure":
-            if not self.azure_endpoint:
-                errors.append("azure_endpoint is required for Azure provider")
-            if not self.azure_deployment:
-                errors.append("azure_deployment is required for Azure provider")
-
-        try:
-            self.resolve_api_key()
-        except ValueError as exc:
-            errors.append(str(exc))
-
-        return errors
+        """Validate provider-specific configuration (delegates to key_resolver)."""
+        return _key_resolver.validate_provider_config(self)
 
     @classmethod
     def from_env(cls) -> "AIConfig":

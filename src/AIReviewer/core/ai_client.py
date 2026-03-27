@@ -220,21 +220,29 @@ class CustomGatewayClient:
 
 
 # ---------------------------------------------------------------------------
-# Factory
+# Factory (OCP: registry-based — extend via register_provider, no edits needed)
 # ---------------------------------------------------------------------------
 
+_PROVIDER_REGISTRY: dict[str, type] = {
+    "openai": OpenAIClient,
+    "anthropic": AnthropicClient,
+    "azure": AzureOpenAIClient,
+    "openrouter": OpenRouterClient,
+    "custom": CustomGatewayClient,
+}
+
+
+def register_provider(name: str, cls: type) -> None:
+    """Register a new provider class. Enables extension without modifying this file."""
+    _PROVIDER_REGISTRY[name] = cls
+
+
 def create_ai_client(config: AIConfig) -> AIClient:
-    """Instantiate the correct AI client based on *config.provider*."""
-    match config.provider:
-        case "openai":
-            return OpenAIClient(config)
-        case "anthropic":
-            return AnthropicClient(config)
-        case "azure":
-            return AzureOpenAIClient(config)
-        case "openrouter":
-            return OpenRouterClient(config)
-        case "custom":
-            return CustomGatewayClient(config)
-        case _:
-            raise ValueError(f"Unknown provider: {config.provider!r}")
+    """Instantiate the correct AI client based on config.provider."""
+    cls = _PROVIDER_REGISTRY.get(config.provider)
+    if cls is None:
+        raise ValueError(
+            f"Unknown provider: {config.provider!r}. "
+            f"Known providers: {sorted(_PROVIDER_REGISTRY.keys())}"
+        )
+    return cls(config)

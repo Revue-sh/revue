@@ -10,6 +10,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Callable
 
 from AIReviewer.core.config_loader import (
     DEFAULT_REVUE_YML,
@@ -18,6 +19,7 @@ from AIReviewer.core.config_loader import (
 )
 from AIReviewer.core.diff_parser import filter_changes, parse_diff_file
 from AIReviewer.core.ai_client import create_ai_client
+from AIReviewer.core.pipeline import ReviewPipeline
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
 # Commands
 # ---------------------------------------------------------------------------
 
-def cmd_review(args: argparse.Namespace) -> int:
+def cmd_review(
+    args: argparse.Namespace,
+    pipeline_factory: Callable | None = None,
+) -> int:
+    """Run a code review.  Accepts an optional *pipeline_factory* for DIP injection."""
     # 1. Verify diff file exists
     diff_path = Path(args.diff)
     if not diff_path.exists():
@@ -103,64 +109,56 @@ def cmd_review(args: argparse.Namespace) -> int:
             print(f"Config error: {err}", file=sys.stderr)
         return 1
 
-    # 5. Parse diff
-    try:
-        changes = parse_diff_file(str(diff_path))
-    except Exception as exc:
-        print(f"Error parsing diff: {exc}", file=sys.stderr)
-        return 1
-
-    # 6. Filter
-    included, excluded = filter_changes(
-        changes, config.ignore_patterns, config.max_diff_lines
-    )
-
-    total = len(changes)
-    excluded_count = len(excluded)
-    print(f"Found {total} files ({excluded_count} excluded by filters)")
-
-    # 7. Dry-run: list files and exit
+    # 5. Dry-run: parse, filter, list files and exit (no AI call)
     if args.dry_run:
+        try:
+            changes = parse_diff_file(str(diff_path))
+        except Exception as exc:
+            print(f"Error parsing diff: {exc}", file=sys.stderr)
+            return 1
+
+        included, excluded = filter_changes(
+            changes, config.ignore_patterns, config.max_diff_lines
+        )
+        total = len(changes)
+        print(f"Found {total} files ({len(excluded)} excluded by filters)")
         for fc in included:
             print(f"  [review] {fc.file_path} (+{fc.additions}/-{fc.deletions})")
         for fc in excluded:
             print(f"  [skip]   {fc.file_path}")
         return 0
 
-    # 8. Resolve API key — fail fast
+    # 6. Resolve API key — fail fast
     try:
         config.resolve_api_key()
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    # 9. Create AI client
+    # 7. Build pipeline (DIP: injected factory or default)
     try:
-        client = create_ai_client(config)
+        if pipeline_factory is not None:
+            pipeline = pipeline_factory(config)
+        else:
+            pipeline = ReviewPipeline(config)
     except Exception as exc:
         print(f"Error creating AI client: {exc}", file=sys.stderr)
         return 1
 
-    # 10. Review each included file
-    results: list[dict[str, str]] = []
-    for fc in included:
-        prompt = (
-            f"Review this code diff for {fc.file_path}:\n\n"
-            f"{fc.diff}\n\n"
-            f"Provide findings as JSON."
-        )
-        try:
-            response = client.complete(
-                [{"role": "user", "content": prompt}],
-                max_tokens=config.ai_max_tokens,
-                temperature=config.ai_temp,
-            )
-            results.append({"file": fc.file_path, "review": response})
-        except Exception as exc:
-            print(f"Error reviewing {fc.file_path}: {exc}", file=sys.stderr)
-            results.append({"file": fc.file_path, "review": f"ERROR: {exc}"})
+    # 8. Run pipeline
+    review_results, excluded = pipeline.run(str(diff_path))
+    total = len(review_results) + len(excluded)
+    print(f"Found {total} files ({len(excluded)} excluded by filters)")
 
-    # 11. Output
+    # 9. Output
+    results: list[dict[str, str]] = []
+    for rr in review_results:
+        if rr.error:
+            print(f"Error reviewing {rr.file_path}: {rr.error}", file=sys.stderr)
+            results.append({"file": rr.file_path, "review": f"ERROR: {rr.error}"})
+        else:
+            results.append({"file": rr.file_path, "review": rr.response})
+
     fmt = config.output_format
     if fmt == "json":
         print(json.dumps(results, indent=2))

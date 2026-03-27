@@ -17,6 +17,7 @@ from AIReviewer.core.ai_client import (
     OpenRouterClient,
     _with_retry,
     create_ai_client,
+    register_provider,
 )
 from AIReviewer.core.ai_config import AIConfig
 
@@ -146,8 +147,16 @@ def test_factory_raises_unknown_provider() -> None:
     config = _make_config()
     # Force an invalid provider value
     object.__setattr__(config, "provider", "deepseek")
-    with pytest.raises(ValueError, match="Unknown provider"):
+    with pytest.raises(ValueError, match=r"Unknown provider.*Known providers"):
         create_ai_client(config)
+
+
+@patch("AIReviewer.core.ai_client.openai.OpenAI")
+def test_register_provider(mock_openai_cls: MagicMock) -> None:
+    register_provider("gemini", OpenAIClient)
+    config = _make_config(provider="gemini")
+    client = create_ai_client(config)
+    assert isinstance(client, OpenAIClient)
 
 
 # ---------------------------------------------------------------------------
