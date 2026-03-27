@@ -770,3 +770,140 @@ def test_gitlab_post_apply_suggestion_api_error() -> None:
         result = adapter.post_apply_suggestion(5, position, code_fix)
 
     assert result is False
+
+
+# =====================================================================
+# [74] post_review_comment — naming fix + backward-compat alias
+# =====================================================================
+
+def test_github_post_review_comment_canonical_name() -> None:
+    """post_review_comment (canonical name) works correctly."""
+    review_body = json.dumps({"id": 10, "state": "COMMENTED"}).encode()
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    position = DiffPosition(file_path="src/app.py", line_number=5, position=3)
+    with patch("urllib.request.urlopen", return_value=_make_resp(review_body)):
+        result = adapter.post_review_comment(10, position, "Looks good!")
+    assert result is True
+
+
+def test_github_post_inline_comment_alias_still_works() -> None:
+    """post_inline_comment alias continues to work (backward compat)."""
+    review_body = json.dumps({"id": 11, "state": "COMMENTED"}).encode()
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    position = DiffPosition(file_path="src/app.py", line_number=5, position=3)
+    with patch("urllib.request.urlopen", return_value=_make_resp(review_body)):
+        result = adapter.post_inline_comment(10, position, "Still works!")
+    assert result is True
+
+
+def test_gitlab_post_review_comment_canonical_name() -> None:
+    """GitLab post_review_comment (canonical name) posts to discussions API."""
+    discussion_resp = json.dumps({"id": "abc123"}).encode()
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    position = DiffPosition(file_path="lib/auth.rb", line_number=10)
+    with patch("urllib.request.urlopen", return_value=_make_resp(discussion_resp)):
+        result = adapter.post_review_comment(1, position, "Fix this")
+    assert result is True
+
+
+def test_gitlab_post_inline_comment_alias_still_works() -> None:
+    """GitLab post_inline_comment alias continues to work (backward compat)."""
+    discussion_resp = json.dumps({"id": "abc124"}).encode()
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    position = DiffPosition(file_path="lib/auth.rb", line_number=10)
+    with patch("urllib.request.urlopen", return_value=_make_resp(discussion_resp)):
+        result = adapter.post_inline_comment(1, position, "Still works!")
+    assert result is True
+
+
+# =====================================================================
+# [74] GitHub pagination — get_diff fetches all pages
+# =====================================================================
+
+def test_github_get_diff_single_page() -> None:
+    """Single page (< 100 files) — fetches once and returns."""
+    files = [
+        {"filename": f"src/file_{i}.py", "status": "modified",
+         "additions": 1, "deletions": 1,
+         "patch": f"@@ -1,2 +1,2 @@\n context\n-old{i}\n+new{i}"}
+        for i in range(5)
+    ]
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    with patch("urllib.request.urlopen", return_value=_make_resp(json.dumps(files).encode())) as mock:
+        changes = adapter.get_diff(1)
+    assert len(changes) == 5
+    assert mock.call_count == 1
+
+
+def test_github_get_diff_paginates_multiple_pages() -> None:
+    """When page returns 100 files, fetches next page until empty page."""
+    page1 = [
+        {"filename": f"src/file_{i}.py", "status": "modified",
+         "additions": 1, "deletions": 0,
+         "patch": f"@@ -1 +1 @@\n+line{i}"}
+        for i in range(100)
+    ]
+    page2 = [
+        {"filename": f"src/extra_{i}.py", "status": "added",
+         "additions": 1, "deletions": 0,
+         "patch": f"@@ -0,0 +1 @@\n+line{i}"}
+        for i in range(3)
+    ]
+    responses = [
+        _make_resp(json.dumps(page1).encode()),
+        _make_resp(json.dumps(page2).encode()),
+    ]
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    with patch("urllib.request.urlopen", side_effect=responses) as mock:
+        changes = adapter.get_diff(1)
+    assert len(changes) == 103
+    assert mock.call_count == 2  # page 1 (100 files) then page 2 (3 files → stop)
+
+
+def test_github_get_diff_empty_first_page() -> None:
+    """Empty response on first page returns empty list."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    with patch("urllib.request.urlopen", return_value=_make_resp(b"[]")):
+        changes = adapter.get_diff(1)
+    assert changes == []
+
+
+# =====================================================================
+# [74] GitLab set_review_status (MR approval for blocking mode)
+# =====================================================================
+
+def test_gitlab_set_review_status_approved() -> None:
+    """set_review_status('approved') calls approve endpoint and returns True."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch("urllib.request.urlopen", return_value=_make_resp(b"{}")) as mock:
+        result = adapter.set_review_status(5, "approved")
+    assert result is True
+    url = mock.call_args[0][0].full_url
+    assert "/approve" in url
+
+
+def test_gitlab_set_review_status_unapproved() -> None:
+    """set_review_status('unapproved') calls unapprove endpoint and returns True."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch("urllib.request.urlopen", return_value=_make_resp(b"{}")) as mock:
+        result = adapter.set_review_status(5, "unapproved")
+    assert result is True
+    url = mock.call_args[0][0].full_url
+    assert "/unapprove" in url
+
+
+def test_gitlab_set_review_status_invalid_status() -> None:
+    """Unknown status logs warning and returns False without API call."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch("urllib.request.urlopen") as mock:
+        result = adapter.set_review_status(5, "request_changes")
+    assert result is False
+    mock.assert_not_called()
+
+
+def test_gitlab_set_review_status_api_error_returns_false() -> None:
+    """API error is caught and returns False (non-fatal)."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
+        result = adapter.set_review_status(5, "unapproved")
+    assert result is False

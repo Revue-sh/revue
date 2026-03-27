@@ -54,7 +54,7 @@ class VCSAdapter(Protocol):
 
     def get_diff(self, pr_id: int) -> list[FileChange]: ...
 
-    def post_inline_comment(
+    def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
     ) -> bool: ...
 

@@ -73,7 +73,7 @@ class _MinimalAdapter:
     def get_diff(self, pr_id: int) -> list[FileChange]:
         return []
 
-    def post_inline_comment(
+    def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
     ) -> bool:
         return True
@@ -97,7 +97,7 @@ class _MissingWebhookAdapter:
     """Adapter that omits verify_webhook_signature — must NOT satisfy protocol."""
 
     def get_diff(self, pr_id: int) -> list[FileChange]: return []
-    def post_inline_comment(self, pr_id, position, body) -> bool: return True
+    def post_review_comment(self, pr_id, position, body) -> bool: return True
     def post_summary_comment(self, pr_id, body) -> bool: return True
     def get_existing_comments(self, pr_id) -> list[dict]: return []
     def resolve_position(self, file_path, line_number, diff) -> DiffPosition:

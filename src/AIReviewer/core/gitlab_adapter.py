@@ -133,7 +133,7 @@ class GitLabAdapter:
             )
         return changes
 
-    def post_inline_comment(
+    def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
     ) -> bool:
         """Post an inline discussion note on the MR.
@@ -159,8 +159,11 @@ class GitLabAdapter:
             )
             return True
         except Exception as exc:
-            _LOG.warning("post_inline_comment failed for MR %s: %s", pr_id, exc)
+            _LOG.warning("post_review_comment failed for MR %s: %s", pr_id, exc)
             return False
+
+    # Backward-compat alias — remove in v2.0
+    post_inline_comment = post_review_comment
 
     def post_summary_comment(self, pr_id: int, body: str) -> bool:
         """Post a top-level MR note (not a discussion).
@@ -214,6 +217,32 @@ class GitLabAdapter:
             line_code=line_code,
             new_line=line_number,
         )
+
+    def set_review_status(self, pr_id: int, status: str) -> bool:
+        """Set the MR approval status for blocking mode.
+
+        Args:
+            pr_id:  MR IID.
+            status: ``"approved"`` to approve or ``"unapproved"`` to revoke.
+                    Pass ``"unapproved"`` when Revue finds blocking-severity issues.
+
+        Returns:
+            True on success, False on error (non-fatal — review still posted).
+
+        GitLab API:
+            POST /projects/{id}/merge_requests/{iid}/approve
+            POST /projects/{id}/merge_requests/{iid}/unapprove
+        """
+        if status not in ("approved", "unapproved"):
+            _LOG.warning("set_review_status: unknown status %r — skipping", status)
+            return False
+        endpoint = f"/merge_requests/{pr_id}/{status}"
+        try:
+            self._request("POST", endpoint)
+            return True
+        except Exception as exc:
+            _LOG.warning("set_review_status(%r) failed for MR %s: %s", status, pr_id, exc)
+            return False
 
     def post_apply_suggestion(
         self, pr_id: int, position: DiffPosition, code_fix: CodeFix

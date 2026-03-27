@@ -90,36 +90,49 @@ class GitHubAdapter:
     # ------------------------------------------------------------------
 
     def get_diff(self, pr_id: int) -> list[FileChange]:
-        """Fetch PR diff from GitHub Files API. Parse into FileChange objects.
+        """Fetch PR diff from GitHub Files API with pagination.
 
+        GitHub paginates /pulls/{pr_id}/files at 30 files per page by default
+        (max 100 per page). This method fetches all pages.
         Binary files (no ``patch`` field) are skipped.
         """
-        files: list[dict[str, Any]] = self._request(
-            "GET", f"/repos/{self._repo}/pulls/{pr_id}/files"
-        )
         changes: list[FileChange] = []
-        for f in files:
-            if "patch" not in f:
-                # Binary or otherwise unpatchable file — skip
-                continue
-            status = f.get("status", "modified")
-            change_type = {
-                "added": "added",
-                "removed": "deleted",
-                "renamed": "modified",
-            }.get(status, "modified")
-            changes.append(
-                FileChange(
-                    file_path=f["filename"],
-                    change_type=change_type,
-                    additions=f.get("additions", 0),
-                    deletions=f.get("deletions", 0),
-                    diff=f["patch"],
-                )
+        page = 1
+        per_page = 100
+        while True:
+            files: list[dict[str, Any]] = self._request(
+                "GET",
+                f"/repos/{self._repo}/pulls/{pr_id}/files"
+                f"?per_page={per_page}&page={page}",
             )
+            if not files:
+                break
+            for f in files:
+                if "patch" not in f:
+                    # Binary or otherwise unpatchable file — skip
+                    continue
+                status = f.get("status", "modified")
+                change_type = {
+                    "added": "added",
+                    "removed": "deleted",
+                    "renamed": "modified",
+                }.get(status, "modified")
+                changes.append(
+                    FileChange(
+                        file_path=f["filename"],
+                        change_type=change_type,
+                        additions=f.get("additions", 0),
+                        deletions=f.get("deletions", 0),
+                        diff=f["patch"],
+                    )
+                )
+            if len(files) < per_page:
+                # Last page reached
+                break
+            page += 1
         return changes
 
-    def post_inline_comment(
+    def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
     ) -> bool:
         """Post an inline review comment via the GitHub Review API.
@@ -148,8 +161,11 @@ class GitHubAdapter:
             )
             return True
         except Exception as exc:
-            logger.error("post_inline_comment failed for PR %d: %s", pr_id, exc)
+            logger.error("post_review_comment failed for PR %d: %s", pr_id, exc)
             return False
+
+    # Backward-compat alias — remove in v2.0
+    post_inline_comment = post_review_comment
 
     def post_summary_comment(self, pr_id: int, body: str) -> bool:
         """Post a top-level PR comment (not a review comment).
