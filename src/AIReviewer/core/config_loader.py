@@ -62,6 +62,7 @@ ai:
 review:
   max_diff_lines: 2000
   min_confidence: 70
+  agent_timeout_seconds: 90  # raise to 120 for slow VPN/corporate networks
   ignore_patterns:
     - "*.md"
     - "*.lock"
@@ -138,6 +139,8 @@ def load_config(
     if "min_confidence" in review:
         config.min_confidence = int(review["min_confidence"])  # type: ignore[arg-type]
         config.ai_confidence = config.min_confidence
+    if "agent_timeout_seconds" in review:
+        config.agent_timeout_seconds = int(review["agent_timeout_seconds"])  # type: ignore[arg-type]
     if "ignore_patterns" in review:
         patterns = review["ignore_patterns"]
         config.ignore_patterns = list(patterns) if patterns else []  # type: ignore[arg-type]
@@ -194,6 +197,11 @@ def validate_config(config: AIConfig) -> list[str]:
     if config.min_confidence < 0 or config.min_confidence > 100:
         errors.append(
             f"min_confidence must be between 0 and 100, got {config.min_confidence}."
+        )
+
+    if config.agent_timeout_seconds <= 0 or config.agent_timeout_seconds > 600:
+        errors.append(
+            f"agent_timeout_seconds must be between 1 and 600, got {config.agent_timeout_seconds}."
         )
 
     if config.ai_temp < 0.0 or config.ai_temp > 2.0:

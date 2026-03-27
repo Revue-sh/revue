@@ -9,6 +9,7 @@ import pytest
 from AIReviewer.core.agent_runner import (
     AgentProtocol, AgentRunResult, ParallelRunResult,
     run_agents_parallel,
+    DEFAULT_AGENT_TIMEOUT_SECONDS,
 )
 from AIReviewer.core.models import FileChange, AIReview
 
@@ -124,3 +125,19 @@ def test_agents_run_in_parallel():
     result = run_agents_parallel(agents, [_fc()])
     # Should be < 0.5s (generous bound to avoid flakiness)
     assert result.total_elapsed < 0.5
+
+
+def test_default_timeout_matches_prd():
+    """Default timeout is 90s as specified in the PRD (AC Story 10)."""
+    assert DEFAULT_AGENT_TIMEOUT_SECONDS == 90.0
+
+
+def test_configurable_timeout_passed_through():
+    """Callers can override the timeout — e.g. 120s for slow networks."""
+    class _FastAgent:
+        name = "fast"
+        def analyse(self, changes, shared=None):
+            return []
+
+    result = run_agents_parallel([_FastAgent()], [_fc()], timeout_seconds=120.0)
+    assert result.agent_results[0].success is True

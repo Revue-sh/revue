@@ -52,6 +52,7 @@ class AIConfig:
     # Review settings (configurable via .revue.yml)
     max_diff_lines: int = 2000
     min_confidence: int = 70
+    agent_timeout_seconds: int = 90  # Per-agent wall-clock timeout. PRD: 90s. Raise for slow networks.
     ignore_patterns: list[str] = field(default_factory=list)
     agents_team: str = "team-full-review"
     custom_agents_dir: str = ""

@@ -67,11 +67,20 @@ class ParallelRunResult:
         return [r.agent_name for r in self.agent_results if r.success]
 
 
+DEFAULT_AGENT_TIMEOUT_SECONDS: float = 90.0
+"""Per-agent wall-clock timeout in seconds.
+
+PRD specifies 90s. Configurable via .revue.yml (review.agent_timeout_seconds).
+Raise to 120 for slow VPN/corporate networks.
+Pass AIConfig.agent_timeout_seconds when calling run_agents_parallel().
+"""
+
+
 def run_agents_parallel(
     agents: list[AgentProtocol],
     changes: list[FileChange],
     shared: "SharedAnalysisResult | None" = None,
-    timeout_seconds: float = 120.0,
+    timeout_seconds: float = DEFAULT_AGENT_TIMEOUT_SECONDS,
     max_workers: int | None = None,
 ) -> ParallelRunResult:
     """
