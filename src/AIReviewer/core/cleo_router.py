@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from .shared_analysis import SharedAnalysisResult
 
 from .models import FileChange
+from .team_loader import load_all_teams, TeamConfig
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -71,6 +72,30 @@ TEAM_PRESETS: dict[str, list[str]] = {
 DEFAULT_TEAM: str = "team-full-review"
 
 SECURITY_AGENT_NAME: str = "zara"
+
+# ---------------------------------------------------------------------------
+# YAML-backed team registry — loaded at import time, falls back to TEAM_PRESETS
+# ---------------------------------------------------------------------------
+
+def _build_team_registry() -> dict[str, list[str]]:
+    """Load team agent lists from YAML files, merged with TEAM_PRESETS fallback.
+
+    YAML definitions take precedence over hardcoded TEAM_PRESETS when both
+    exist for the same team ID.
+    """
+    registry = dict(TEAM_PRESETS)  # start from hardcoded fallback
+    try:
+        yaml_teams = load_all_teams()
+        for team_id, config in yaml_teams.items():
+            registry[team_id] = config.agents
+    except Exception as exc:  # pragma: no cover
+        import logging
+        logging.getLogger(__name__).warning("Failed to load team YAMLs: %s", exc)
+    return registry
+
+
+# Populated once at import. Tests can monkey-patch _TEAM_REGISTRY directly.
+_TEAM_REGISTRY: dict[str, list[str]] = _build_team_registry()
 
 SECURITY_RISK_AREAS: frozenset[str] = frozenset({
     "authentication", "authorisation", "authorization",
@@ -132,7 +157,7 @@ def select_team(
 
     # If config explicitly sets a team, honour it
     if config is not None and config.agents_team and config.agents_team != DEFAULT_TEAM:
-        preset = TEAM_PRESETS.get(config.agents_team, TEAM_PRESETS[DEFAULT_TEAM])
+        preset = _TEAM_REGISTRY.get(config.agents_team, _TEAM_REGISTRY.get(DEFAULT_TEAM, []))
         agents = list(preset)
         if security_override and SECURITY_AGENT_NAME not in agents:
             agents.append(SECURITY_AGENT_NAME)
@@ -148,7 +173,7 @@ def select_team(
     total_lines = sum(fc.additions + fc.deletions for fc in file_changes)
 
     if total_lines < QUICK_THRESHOLD_LINES and not security_override:
-        agents = list(TEAM_PRESETS["team-quick"])
+        agents = list(_TEAM_REGISTRY.get("team-quick", TEAM_PRESETS.get("team-quick", [])))
         return TeamSelection(
             team_name="team-quick",
             agents=agents,
@@ -157,7 +182,7 @@ def select_team(
         )
 
     if total_lines > FULL_REVIEW_THRESHOLD_LINES:
-        agents = list(TEAM_PRESETS["team-full-review"])
+        agents = list(_TEAM_REGISTRY.get("team-full-review", TEAM_PRESETS.get("team-full-review", [])))
         if security_override and SECURITY_AGENT_NAME not in agents:
             agents.append(SECURITY_AGENT_NAME)
         return TeamSelection(
@@ -171,7 +196,7 @@ def select_team(
     primary_lang = _detect_primary_language(file_changes)
     lang_team = _LANG_TO_TEAM.get(primary_lang, "") if primary_lang else ""
     if lang_team and lang_team in TEAM_PRESETS:
-        agents = list(TEAM_PRESETS[lang_team])
+        agents = list(_TEAM_REGISTRY.get(lang_team, TEAM_PRESETS.get(lang_team, [])))
         if security_override and SECURITY_AGENT_NAME not in agents:
             agents.append(SECURITY_AGENT_NAME)
         return TeamSelection(
@@ -182,7 +207,7 @@ def select_team(
         )
 
     # Default: full review
-    agents = list(TEAM_PRESETS[DEFAULT_TEAM])
+    agents = list(_TEAM_REGISTRY.get(DEFAULT_TEAM, TEAM_PRESETS.get(DEFAULT_TEAM, [])))
     if security_override and SECURITY_AGENT_NAME not in agents:
         agents.append(SECURITY_AGENT_NAME)
     return TeamSelection(

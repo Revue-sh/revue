@@ -1,0 +1,40 @@
+team:
+  name: Swift iOS Review
+  id: team-swift-ios
+  icon: 🍎
+  description: |
+    Specialised review team for Swift iOS applications. Covers Swift 6
+    concurrency (actors, async/await), UIKit/SwiftUI patterns, Swinject DI,
+    Keychain security, and iOS best practices.
+  when_to_use: |
+    - Swift source files (*.swift)
+    - Kotlin Android files (*.kt, *.kts) — shares iOS team config
+    - iOS-specific APIs (UIKit, SwiftUI, Combine, SwiftData)
+    - Concurrency patterns (async/await, actors, @MainActor)
+  timeout_seconds: 90
+
+agents:
+  primary:
+    - cleo
+    - maya
+    - nova
+  secondary:
+    - zara
+
+triggers:
+  languages:
+    - swift
+    - kotlin
+  file_patterns:
+    - "**/*.swift"
+    - "**/*.kt"
+    - "**/*.kts"
+  keywords:
+    - async
+    - await
+    - actor
+    - "@MainActor"
+    - SwiftUI
+    - UIKit
+    - Combine
+    - Keychain

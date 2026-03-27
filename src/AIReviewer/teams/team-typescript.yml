@@ -1,0 +1,42 @@
+team:
+  name: TypeScript Review
+  id: team-typescript
+  icon: 🔷
+  description: |
+    Review team for TypeScript/JavaScript applications including React,
+    Angular, NestJS, Node.js, and related frameworks. Covers type safety,
+    async patterns, DI decorators, and frontend best practices.
+  when_to_use: |
+    - TypeScript files (*.ts, *.tsx)
+    - JavaScript files (*.js, *.jsx)
+    - React, Angular, NestJS, Node.js code
+    - Frontend components and API handlers
+  timeout_seconds: 90
+
+agents:
+  primary:
+    - cleo
+    - maya
+    - nova
+  secondary:
+    - zara
+    - kai
+
+triggers:
+  languages:
+    - typescript
+    - javascript
+  file_patterns:
+    - "**/*.ts"
+    - "**/*.tsx"
+    - "**/*.js"
+    - "**/*.jsx"
+  keywords:
+    - async
+    - await
+    - Promise
+    - "@Injectable"
+    - "@Component"
+    - useEffect
+    - useState
+    - NestJS
