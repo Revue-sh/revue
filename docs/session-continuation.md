@@ -1,27 +1,23 @@
 # Session Continuation
-**Updated:** 2026-03-27 (Fri 10:50 GMT) | **For:** Next session
+**Updated:** 2026-03-27 (Fri ~12:00 GMT) | **For:** Next session
 
 ---
 
 ## Completed this session
 
-### First parallel wave (stories 10, 11, 17, 18, 30)
-- **Story 17+18** ✅ — `cleo_router.py` — team auto-selection + trigger evaluation (45 tests)
-- **Story 30** ✅ — `agent_loader.py` — custom agent support with path-traversal protection (12 tests)
-- **Story 10** ✅ — `github_adapter.py` — GitHub webhook handling (HMAC verify + event parsing)
-- **Story 11** ✅ — `gitlab_adapter.py` — GitLab webhook handling (token verify + MR event parsing)
+### Epic E4 — Sage (The Resolver Agent) ✅ COMPLETE
+All 5 stories completed in sequence:
 
-### Second parallel wave (stories 12, 13, 14, 15)
-- **Story 12** ✅ — `github_adapter.py` extended — full `get_diff()`, Review API inline comments, summary comments (5 tests)
-- **Story 13** ✅ — `gitlab_adapter.py` extended — MR diff fetch, Discussions API inline comments, flattened comment lists (5 tests)
-- **Story 14** ✅ — `.github/workflows/revue-review.yml` — GitHub Actions CI template + README
-- **Story 15** ✅ — `ci-templates/gitlab-ci/revue-review.yml` — GitLab CI template + `post_review.py` helper + README
+1. **Story 28** ✅ — `sage_classifier.py` — pattern-based fixability classifier (17 tests)
+2. **Story 29** ✅ — `sage_generator.py` — AI-powered fix generation (12 tests)
+3. **Story 30** ✅ — `github_adapter.py` extended — Suggested Change posting (3 tests)
+4. **Story 31** ✅ — `gitlab_adapter.py` extended — Apply Suggestion posting (3 tests)
+5. **Story 32** ✅ — `sage_pipeline.py` — orchestration + summary generation (8 tests)
 
-**Session total: 9 stories completed in 2 parallel waves**
+**Total new tests this session:** 43  
+**Session total test count:** 311 passing (up from 268 at session start)
 
-**Test count:** 268 passing (up from 181 at session start)
-
-**Commits:** `4f5f9b8`, `fb86c88`, `aa8b4fb`, `40147aa`
+**Commits:** `5dd862e`, `446c11e`, `a587c17`, `9df0844`
 
 ---
 
@@ -32,14 +28,14 @@
 | E1 — Core Review Engine | 8/8 | ✅ Complete |
 | E2 — VCS Platform Integration | 7/7 | ✅ Complete |
 | E3 — Agent System & Routing | 5/5 | ✅ Complete |
-| E4 — Sage — The Resolver Agent | 0/5 | 🔜 Next |
+| E4 — Sage (The Resolver Agent) | 5/5 | ✅ Complete |
 | E5 — AI Backend & Configuration | 4/4 | ✅ Complete |
-| E6 — Onboarding & Launch | 0/0 | (Future work) |
+| E6 — Onboarding & Launch | 1/3 | 🔜 2 stories remaining |
 
-**Overall: 25/30 stories Done (83%)**
+**Overall: 30/32 stories Done (94%)**
 
-**Sprints complete:** 1–5 (Foundation, Core Pipeline, Agent System, Routing, VCS Integration)  
-**Next sprint:** Sprint 6 — Sage (5 stories)
+**Sprints complete:** 1–6 (Foundation, Core Pipeline, Agent System, Routing, VCS Integration, Sage)  
+**Remaining:** Sprint 7 (Launch) — 2 stories
 
 ---
 
@@ -48,17 +44,13 @@
 ```
 Projects/revue.io/
 ├── .github/workflows/
-│   └── revue-review.yml          ← ✨ NEW — GitHub Actions template
+│   └── revue-review.yml          ← GitHub Actions template
 ├── ci-templates/
-│   ├── github-actions/
-│   │   ├── README.md
-│   │   └── test-workflow.sh
-│   └── gitlab-ci/
-│       ├── revue-review.yml      ← ✨ NEW — GitLab CI template
-│       ├── post_review.py
-│       └── README.md
+│   ├── github-actions/           ← README + test workflow
+│   └── gitlab-ci/                ← GitLab CI template + helper
 ├── docs/
-│   ├── prd.md, sprint-plan.md, session-continuation.md
+│   ├── prd.md, sprint-plan.md, kanban-board.md
+│   ├── session-continuation.md
 │   ├── market-analysis.md, overnight-decisions.md
 └── src/AIReviewer/
     ├── agents/
@@ -68,103 +60,114 @@ Projects/revue.io/
     │   ├── ai_config.py, ai_client.py, key_resolver.py
     │   ├── config_loader.py
     │   ├── vcs_adapter.py
-    │   ├── github_adapter.py     ← Extended with full VCSAdapter methods
-    │   ├── gitlab_adapter.py     ← Extended with full VCSAdapter methods
-    │   ├── cleo_router.py        ← ✨ NEW — routing logic
+    │   ├── github_adapter.py     ← Extended with post_suggested_change()
+    │   ├── gitlab_adapter.py     ← Extended with post_apply_suggestion()
+    │   ├── cleo_router.py
     │   ├── diff_parser.py, diff_limit.py
     │   ├── shared_analysis.py, agent_loader.py
     │   ├── agent_runner.py, contradiction_detector.py
     │   ├── contradiction_resolver.py
     │   ├── nova_consolidator.py, noise_filters.py, pipeline.py
-    │   └── models.py
+    │   ├── sage_classifier.py    ← ✨ NEW — fixability classification
+    │   ├── sage_generator.py     ← ✨ NEW — AI-powered fix generation
+    │   ├── sage_pipeline.py      ← ✨ NEW — Sage orchestration + summary
+    │   └── models.py             ← Extended with FixabilityResult, CodeFix
     ├── cli.py
-    └── tests/ — 268 tests, all passing
+    └── tests/ — 311 tests, all passing
 ```
 
 ---
 
-## Remaining work — E4: Sage (The Resolver Agent)
+## Remaining work — E6: Onboarding & Launch (2 stories)
 
-5 stories remaining (28-32), with dependencies:
+### 1. Story 33 — Self-service workspace onboarding (web UI)
+**Epic:** E6 — Onboarding & Launch  
+**Size:** L (5 pts)  
+**Description:** Web UI for workspace setup — GitHub App install, GitLab OAuth, workspace configuration  
+**Next action:** This is a web app feature (frontend + backend). Not part of the CLI tool. Could be stubbed or deferred to post-MVP.
 
-### 1. Story 28 — Sage fixability classifier ⚡ START HERE
-**File:** Create `src/AIReviewer/core/sage_classifier.py`  
-**First action:**
-```python
-@dataclass
-class FixabilityResult:
-    is_fixable: bool
-    confidence: float  # 0-100
-    category: str      # "self-contained" | "context-dependent" | "unfixable"
-    reason: str
-
-def classify_finding(finding: AIReview, diff: str) -> FixabilityResult:
-    """
-    Classify if a finding can be auto-fixed.
-    
-    Self-contained (fixable):
-    - Security findings with clear patterns (SQL injection, secrets in code)
-    - Null checks, unused imports, simple typos
-    - Finding line is in the diff (new/modified code)
-    
-    Context-dependent (unfixable):
-    - Architecture suggestions (Leo findings)
-    - Performance issues requiring profiling
-    - Findings on unchanged code (outside diff)
-    
-    Use pattern matching + heuristics (no AI call for classifier).
-    """
-```
-
-### 2. Story 29 — Sage fix generator (depends on 28)
-**File:** Create `src/AIReviewer/core/sage_generator.py`  
-**First action:** Implement `generate_fix(finding: AIReview, file_content: str, diff: str) -> CodeFix` using AI to produce the actual code change. Returns `CodeFix(original_lines, fixed_lines, confidence)`.
-
-### 3. Stories 30+31 — VCS integrations (parallel, both depend on 29)
-**Story 30:** `github_adapter.py` — add `post_suggested_change()` method using GitHub Review API suggestions format  
-**Story 31:** `gitlab_adapter.py` — add `post_apply_suggestion()` method using GitLab suggestion syntax
-
-### 4. Story 32 — Sage summary section (depends on 30+31)
-**File:** Extend `src/AIReviewer/core/pipeline.py`  
-**First action:** Add Sage section to final review output: "🔧 Auto-fixable: 3 issues (click to apply) | ⚠️ Needs manual review: 5 issues"
+### 2. Story 34 — Free tier enforcement (100 runs/month)
+**Epic:** E6 — Onboarding & Launch  
+**Size:** M (3 pts)  
+**Description:** Usage tracking and rate limiting for free tier  
+**Next action:** Add run counter to database, enforce limits in webhook handler. Requires backend infra.
 
 ---
 
-## Next session strategy
+## Key Architectural Decisions (Session 2)
 
-**Option A — Sequential Sage implementation:**
-1. Story 28 (classifier) — 30 min
-2. Story 29 (generator) — 45 min
-3. Stories 30+31 (parallel VCS integrations) — 20 min
-4. Story 32 (summary) — 15 min
-
-**Total time: ~2 hours for full E4 epic**
-
-**Option B — Partial sprint:**
-Just stories 28+29 (core Sage logic), defer VCS integrations to next session.
+1. **Sage classifier is pattern-based** — no AI calls, fast, deterministic. Confidence threshold ≥70 for fixable.
+2. **Sage generator uses constrained AI prompts** — minimal, safe fixes only. Returns `None` if AI declines.
+3. **VCS integrations use native platform syntax** — GitHub: ````suggestion` blocks, GitLab: ````suggestion:-X+Y`
+4. **Sage pipeline is standalone** — can be integrated into main pipeline post-MVP without refactoring.
+5. **Markdown summary format** — emoji indicators (🔧 ⚠️ ❌) for at-a-glance understanding.
 
 ---
 
-## Key decisions this session
+## What's Ready for Launch (MVP Checklist)
 
-1. **Parallel execution pattern validated** — 2 waves (5 + 4 stories) completed with 0 conflicts
-2. **VCS adapter error handling** — all methods return `False`/`[]` on errors, never raise
-3. **GitHub Review API** — inline comments must use Review API with `event: COMMENT`, not single-comment endpoint
-4. **GitLab discussions structure** — `discussions[].notes[]` arrays must be flattened for uniform comment list
-5. **CI templates** — both platforms need webhook → diff fetch → Revue CLI → post comments flow; GitHub uses `actions/github-script`, GitLab uses custom Python helper
+✅ **Core Review Engine** — multi-agent parallel execution, contradiction resolution, Nova consolidation  
+✅ **VCS Integration** — GitHub + GitLab webhook handling, diff fetching, inline comments  
+✅ **Agent System** — declarative YAML/Markdown agents, Cleo routing, custom agent support  
+✅ **Sage (Resolver)** — fixability classification, AI fix generation, 1-click suggestions  
+✅ **AI Backend** — BYOK, multi-provider support (OpenAI, Anthropic, Azure, etc.)  
+✅ **CI Templates** — GitHub Actions + GitLab CI ready-to-use templates  
+
+❌ **Web onboarding UI** — Story 33 (optional for CLI-first launch)  
+❌ **Usage tracking** — Story 34 (can launch without, rely on honor system for free tier)
 
 ---
 
-## Continuation prompt
+## Recommended Next Steps
+
+### Option A — Ship CLI-first MVP (no web UI)
+1. Skip Story 33 (web onboarding) — users install via CLI + manual setup
+2. Skip Story 34 (usage tracking) — launch without enforcement, add later
+3. Write deployment docs (install, config, CI setup)
+4. Launch announcement + demo
+5. **Timeline:** Ready to ship now
+
+### Option B — Complete full Sprint 7
+1. Build web onboarding UI (Story 33) — 5 pts, ~1 week
+2. Add usage tracking (Story 34) — 3 pts, ~2 days
+3. Full MVP as planned
+4. **Timeline:** +1.5 weeks
+
+### Option C — Hybrid approach
+1. Launch CLI MVP now (Option A)
+2. Build web UI in parallel (Story 33) — ship in v1.1
+3. Add usage tracking when backend infra ready (Story 34)
+4. **Timeline:** Ship week 1, web UI week 2
+
+---
+
+## Continuation Prompt (if continuing to Stories 33+34)
 
 Read `Projects/revue.io/docs/session-continuation.md` for full context.
 
-**Status:** 25/30 stories Done (83%). Epics E1, E2, E3, E5 complete. 268 tests passing.
+**Status:** 30/32 stories Done (94%). Epics E1–E5 complete. Epic E4 (Sage) complete. 311 tests passing.
 
-**Next:** Epic E4 — Sage (The Resolver Agent) — 5 stories remaining.
+**Next:** Epic E6 — Onboarding & Launch — 2 stories remaining.
 
-**Start with Story 28** — Sage fixability classifier. Create `src/AIReviewer/core/sage_classifier.py` with pattern-based heuristics to categorize findings as self-contained (fixable), context-dependent (manual review), or unfixable.
+**Start with Story 33** — Self-service workspace onboarding (web UI). This is a full-stack feature (React frontend + Flask/FastAPI backend). Requires:
+- GitHub App OAuth flow
+- GitLab OAuth integration
+- Workspace creation + config
+- Dashboard UI
 
-Then stories 29 (generator), 30+31 (VCS integrations, parallel), 32 (summary).
+OR
+
+**Ship CLI MVP now** and defer Stories 33+34 to post-launch iteration.
 
 Project: `/Users/langostin/.openclaw/workspace-bmad/Projects/revue.io/src/AIReviewer/`
+
+---
+
+## Session Stats
+
+- **Session duration:** ~45 minutes
+- **Stories completed:** 5 (28, 29, 30, 31, 32)
+- **Tests added:** 43
+- **Total test count:** 311 (all passing)
+- **Commits:** 4
+- **Epic completed:** E4 (Sage — The Resolver Agent)

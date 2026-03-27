@@ -1,12 +1,12 @@
 # Kanban Board — Revue.io
-**Last Updated:** 2026-03-27 11:16 GMT
+**Last Updated:** 2026-03-27 12:00 GMT
 
 ---
 
 ## Story Status Summary
 **Total:** 32 stories  
-**Done:** 29 (91%)  
-**In Progress:** 1  
+**Done:** 30 (94%)  
+**In Progress:** 0  
 **To Do:** 2
 
 ---
@@ -19,10 +19,7 @@
 
 ---
 
-## 🔄 In Progress (1)
-
-### Epic E4 — Sage (The Resolver Agent)
-- [ ] **Story 32** — Sage summary section in review output — **DS in progress**
+## 🔄 In Progress (0)
 
 ---
 
@@ -60,11 +57,12 @@
 - [x] **Story 29** — Environment variable handling + BYOK support
 - [x] **Story 45** — Local diff input mode (`--diff=sample.diff`)
 
-### Epic E4 — Sage (The Resolver Agent) (4/5 in Done)
+### Epic E4 — Sage (The Resolver Agent) (5/5 ✅ COMPLETE)
 - [x] **Story 28** — Sage fixability classifier (`sage_classifier.py`)
 - [x] **Story 29** — Sage fix generator (`sage_generator.py`)
 - [x] **Story 30** — Sage GitHub integration (Suggested Change API)
 - [x] **Story 31** — Sage GitLab integration (Apply Suggestion syntax)
+- [x] **Story 32** — Sage summary section in review output (`sage_pipeline.py`)
 
 ### Epic E6 — Onboarding & Launch (1/1 in Done)
 - [x] **Story 32** — Review summary comment (structured output)
