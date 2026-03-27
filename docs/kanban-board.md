@@ -1,76 +1,93 @@
 # Kanban Board — Revue.io
-**Last Updated:** 2026-03-27 12:00 GMT
+**Last Updated:** 2026-03-27 14:27 GMT  
+**Source of Truth:** Taiga — http://localhost:9000/project/revueio/kanban  
+**⚠️ This file is a mirror. If Taiga is available, prefer Taiga. Update this file whenever a story is closed.**
 
 ---
 
 ## Story Status Summary
-**Total:** 32 stories  
-**Done:** 30 (94%)  
-**In Progress:** 0  
-**To Do:** 2
+**Total:** 42 stories (30 Done + 12 open)  
+**Done:** 30 (71%)  
+**To Do:** 12 (E6 + 6 unassigned orphan stories)  
+**In Progress:** 0
 
 ---
 
-## 📋 To Do (2)
+## ✅ Done (30)
 
-### Epic E6 — Onboarding & Launch
-- [ ] **Story 33** — Self-service workspace onboarding (web UI)
-- [ ] **Story 34** — Free tier enforcement (100 runs/month)
+### Epic E1 — Core Review Engine (8/8 ✅)
+- [x] **[7]** Diff ingestion — parse raw VCS diff into structured FileChange objects
+- [x] **[8]** Hard diff limit check — stop and suggest breakdown for oversized PRs
+- [x] **[9]** Shared analysis — single upfront AI call for diff complexity and risk classification
+- [x] **[10]** Parallel agent execution with timeout and graceful degradation
+- [x] **[11]** Contradiction detection between specialist findings
+- [x] **[12]** Contradiction resolution via orchestrator
+- [x] **[13]** Nova consolidation — deduplicate and prioritise findings into unified output
+- [x] **[14]** Noise filters — suppress false positives post-consolidation
 
----
+### Epic E2 — VCS Platform Integration (7/7 ✅)
+- [x] **[15]** VCSAdapter protocol and DiffPosition abstraction
+- [x] **[16]** GitHub App setup and webhook handling
+- [x] **[17]** GitLab OAuth integration and webhook handling
+- [x] **[18]** GitHub adapter — fetch PR diff and post inline review comments
+- [x] **[19]** GitLab adapter — fetch MR diff and post inline review comments
+- [x] **[20]** CI runner integration — GitHub Actions step
+- [x] **[21]** CI runner integration — GitLab CI include template
 
-## 🔄 In Progress (0)
+### Epic E3 — Agent System & Routing (6/6 ✅)
+- [x] **[22]** Agent definition loader — parse declarative YAML/Markdown agent files
+- [x] **[23]** Cleo routing — Step 1: team auto-selection
+- [x] **[24]** Cleo routing — Step 2: agent trigger evaluation within team
+- [x] **[25]** Agent definition — Zara (Security analyst)
+- [x] **[26]** Team config — team-swift-ios
+- [x] **[27]** Nova and Cleo agent definitions
 
----
+### Epic E4 — Sage: The Resolver Agent (5/5 ✅)
+- [x] **[28]** Sage fixability classifier — categorise each finding as fixable or needs-human
+- [x] **[29]** Sage fix generator — produce code fix for self-contained findings
+- [x] **[30]** Sage GitHub integration — post fix as Suggested Change
+- [x] **[31]** Sage GitLab integration — post fix as Apply Suggestion
+- [x] **[32]** Sage summary section — aggregate resolver output in review summary
 
-## ✅ Done (26)
-
-### Epic E1 — Core Review Engine (8/8)
-- [x] **Story 1** — Diff ingestion (parse VCS diff → FileChange objects)
-- [x] **Story 2** — Hard diff limit check (stop & suggest breakdown)
-- [x] **Story 3** — Shared analysis (upfront AI classification)
-- [x] **Story 4** — Parallel agent execution (timeout + graceful degradation)
-- [x] **Story 5** — Contradiction detection between specialist findings
-- [x] **Story 6** — Contradiction resolution via orchestrator
-- [x] **Story 7** — Nova consolidation (deduplicate + prioritize)
-- [x] **Story 8** — Noise filters (suppress false positives)
-
-### Epic E2 — VCS Platform Integration (7/7)
-- [x] **Story 9** — VCSAdapter protocol + DiffPosition abstraction
-- [x] **Story 10** — GitHub App setup + webhook handling (HMAC verify)
-- [x] **Story 11** — GitLab OAuth + webhook handling (token verify)
-- [x] **Story 12** — GitHub adapter (fetch PR diff + post inline comments + Review API)
-- [x] **Story 13** — GitLab adapter (fetch MR diff + post inline comments + Discussions API)
-- [x] **Story 14** — GitHub Actions CI template (`.github/workflows/revue-review.yml`)
-- [x] **Story 15** — GitLab CI template (`ci-templates/gitlab-ci/revue-review.yml` + `post_review.py`)
-
-### Epic E3 — Agent System & Routing (5/5)
-- [x] **Story 16** — Agent definition loader (parse YAML/Markdown agent files)
-- [x] **Story 17** — Cleo routing — Step 1: team auto-selection
-- [x] **Story 18** — Cleo routing — Step 2: agent trigger evaluation
-- [x] **Story 19** — Agent definitions (Zara, Kai, Maya, Leo — Markdown + YAML)
-- [x] **Story 30** — Custom agent support (`agent_loader.py` with path-traversal protection)
-
-### Epic E5 — AI Backend & Configuration (4/4)
-- [x] **Story 27** — AIClient protocol + provider factory
-- [x] **Story 28** — `.revue.yml` config schema + loader
-- [x] **Story 29** — Environment variable handling + BYOK support
-- [x] **Story 45** — Local diff input mode (`--diff=sample.diff`)
-
-### Epic E4 — Sage (The Resolver Agent) (5/5 ✅ COMPLETE)
-- [x] **Story 28** — Sage fixability classifier (`sage_classifier.py`)
-- [x] **Story 29** — Sage fix generator (`sage_generator.py`)
-- [x] **Story 30** — Sage GitHub integration (Suggested Change API)
-- [x] **Story 31** — Sage GitLab integration (Apply Suggestion syntax)
-- [x] **Story 32** — Sage summary section in review output (`sage_pipeline.py`)
-
-### Epic E6 — Onboarding & Launch (1/1 in Done)
-- [x] **Story 32** — Review summary comment (structured output)
+### Epic E5 — AI Backend & Configuration (4/4 ✅)
+- [x] **[33]** AIClient protocol and provider factory
+- [x] **[34]** .revue.yml config schema and loader
+- [x] **[35]** Environment variable handling and BYOK support
+- [x] **[36]** Custom agent support — load project-specific agent definitions
 
 ---
 
-## Notes
-- **Sprint 6** (Sage) starts now — 5 stories remaining (28, 29, 30, 31, 32)
-- **Epic E4** is the last major feature epic before launch readiness
-- Stories 30+31 can run in parallel (both depend on 29)
-- **Test count:** 268 passing
+## 📋 To Do (12)
+
+### Epic E6 — Onboarding, Observability & Launch (0/6, In Progress 🔜)
+- [ ] **[62]** Workspace onboarding UI — sign-up, connect VCS, install app
+- [ ] **[63]** Free tier enforcement — BYOK, 100 runs/month cap
+- [ ] **[64]** Stripe billing — Pro and Team tier subscription management
+- [ ] **[65]** Run history dashboard — list reviews with status and findings summary
+- [ ] **[66]** Basic analytics — finding trends by category and severity
+- [ ] **[67]** Documentation site — getting started guide and .revue.yml reference
+
+### ⚠️ Orphan Stories — No Epic Assigned (6)
+> These stories exist on Taiga but are not linked to any epic. Needs triage — assign to an epic or close as duplicate/superseded.
+
+- [ ] **[37]** Configurable blocking behaviour
+- [ ] **[38]** Review summary comment — structured output with all agent contributions
+- [ ] **[39]** Self-service workspace onboarding — web UI
+- [ ] **[40]** Free tier enforcement — 100 review runs per workspace per month
+- [ ] **[41]** Stripe billing integration — Pro and Team tier
+- [ ] **[42]** Basic analytics — review run history and issue trends
+
+> Note: Stories 37–42 appear to be earlier versions of E6 stories (62–67). Likely created before E6 was structured. Recommend closing as duplicates after confirming scope overlap.
+
+---
+
+## Epic Status Summary
+
+| Epic | Stories | Done | Status |
+|------|---------|------|--------|
+| E1 — Core Review Engine | 8 | 8/8 | ✅ Done |
+| E2 — VCS Platform Integration | 7 | 7/7 | ✅ Done |
+| E3 — Agent System & Routing | 6 | 6/6 | ✅ Done |
+| E4 — Sage: The Resolver Agent | 5 | 5/5 | ✅ Done |
+| E5 — AI Backend & Configuration | 4 | 4/4 | ✅ Done |
+| E6 — Onboarding, Observability & Launch | 6 | 0/6 | 🔜 Not started |
