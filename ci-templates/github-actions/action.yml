@@ -1,0 +1,104 @@
+name: 'Revue.io AI Code Review'
+description: 'Multi-agent AI code review for pull requests. Runs Cleo, Zara, Kai, Maya, Leo, Nova and Sage to review your diff and post inline comments.'
+author: 'Revue.io'
+
+branding:
+  icon: 'eye'
+  color: 'purple'
+
+inputs:
+  revue_token:
+    description: 'Revue.io workspace API token (from app.revue.io/settings/tokens)'
+    required: false
+    default: ''
+  ai_api_key:
+    description: 'API key for your chosen AI provider (BYOK — never stored by Revue)'
+    required: true
+  ai_provider:
+    description: 'AI provider: anthropic | openai | azure | openrouter | custom'
+    required: false
+    default: 'anthropic'
+  ai_model:
+    description: 'Model name for the chosen provider'
+    required: false
+    default: 'claude-sonnet-4-5-20250929'
+  ai_base_url:
+    description: 'Custom base URL for Azure or self-hosted gateways'
+    required: false
+    default: ''
+  mode:
+    description: 'Review mode: multi-agent | single-agent'
+    required: false
+    default: 'multi-agent'
+  config_path:
+    description: 'Path to .revue.yml config file (default: .revue.yml in repo root)'
+    required: false
+    default: '.revue.yml'
+  min_confidence:
+    description: 'Minimum confidence threshold for Sage fix suggestions (0–100, default 70)'
+    required: false
+    default: '70'
+  fail_on_critical:
+    description: 'Exit with non-zero code if critical findings are found (default: false)'
+    required: false
+    default: 'false'
+  python_version:
+    description: 'Python version to use for the Revue runner'
+    required: false
+    default: '3.12'
+
+outputs:
+  findings_count:
+    description: 'Total number of findings posted to the PR'
+    value: ${{ steps.review.outputs.findings_count }}
+  critical_count:
+    description: 'Number of critical-severity findings'
+    value: ${{ steps.review.outputs.critical_count }}
+  review_url:
+    description: 'URL to the Revue review report (if revue_token provided)'
+    value: ${{ steps.review.outputs.review_url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Install Revue.io
+      shell: bash
+      run: pip install revue-io --quiet
+
+    - name: Get PR diff
+      id: diff
+      shell: bash
+      run: |
+        gh pr diff ${{ github.event.pull_request.number }} > /tmp/revue_pr.diff
+        echo "diff_lines=$(wc -l < /tmp/revue_pr.diff)" >> "$GITHUB_OUTPUT"
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+    - name: Run Revue review
+      id: review
+      shell: bash
+      run: ${{ github.action_path }}/entrypoint.sh
+      env:
+        REVUE_TOKEN: ${{ inputs.revue_token }}
+        AI_API_KEY: ${{ inputs.ai_api_key }}
+        REVUE_PROVIDER: ${{ inputs.ai_provider }}
+        REVUE_MODEL: ${{ inputs.ai_model }}
+        REVUE_BASE_URL: ${{ inputs.ai_base_url }}
+        REVUE_MODE: ${{ inputs.mode }}
+        REVUE_CONFIG: ${{ inputs.config_path }}
+        REVUE_MIN_CONFIDENCE: ${{ inputs.min_confidence }}
+        REVUE_FAIL_ON_CRITICAL: ${{ inputs.fail_on_critical }}
+        GITHUB_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        DIFF_FILE: /tmp/revue_pr.diff
+
+    - name: Review skipped notice
+      if: steps.diff.outputs.diff_lines == '0'
+      shell: bash
+      run: echo "::notice::Revue — empty diff, no review needed."

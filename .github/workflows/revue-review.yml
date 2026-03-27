@@ -15,74 +15,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for diff
+          fetch-depth: 0
 
-      - name: Get PR diff
-        id: diff
-        run: |
-          gh pr diff ${{ github.event.pull_request.number }} > pr.diff
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: AI Code Review
+        uses: revue-io/action@v1
         with:
-          python-version: "3.12"
-
-      - name: Install Revue.io
-        run: pip install revue-io
-
-      - name: Run Revue review
-        id: review
-        run: |
-          revue review --diff pr.diff --format json > review.json
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-      - name: Post review comments
-        if: always() && steps.review.outcome == 'success'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require("fs");
-
-            let review;
-            try {
-              review = JSON.parse(fs.readFileSync("review.json", "utf8"));
-            } catch (e) {
-              core.warning("Could not parse review.json: " + e.message);
-              return;
-            }
-
-            // Post summary comment
-            if (review.summary) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: review.summary
-              });
-            }
-
-            // Post inline comments
-            if (review.findings && review.findings.length > 0) {
-              const comments = review.findings.map(f => ({
-                path: f.file_path,
-                position: f.position,
-                body: `**${f.severity}**: ${f.message}\n\n${f.context || ""}`
-              }));
-
-              await github.rest.pulls.createReview({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: context.issue.number,
-                event: "COMMENT",
-                comments: comments.slice(0, 50)  // GitHub API limit
-              });
-            }
-
-      - name: Review skipped notice
-        if: steps.review.outcome == 'failure'
-        run: |
-          echo "::warning::Revue review did not complete — no comments posted. Check ANTHROPIC_API_KEY secret."
+          ai_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          ai_provider: anthropic
+          ai_model: claude-sonnet-4-5-20250929
+          mode: multi-agent
