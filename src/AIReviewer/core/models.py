@@ -52,3 +52,12 @@ class EnhancedIssue:
     symbols_mentioned: list[str] = field(default_factory=list)
     function_context: str = ""
     confidence: float = 0.0
+
+
+@dataclass
+class FixabilityResult:
+    """Result of Sage fixability classification."""
+    is_fixable: bool
+    confidence: float  # 0-100
+    category: str      # "self-contained" | "context-dependent" | "unfixable"
+    reason: str
