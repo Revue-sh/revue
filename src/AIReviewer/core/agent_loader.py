@@ -7,6 +7,7 @@ DIP: AgentRunner depends on AgentProtocol, not concrete loaded agent classes.
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,9 +17,12 @@ import yaml
 
 if TYPE_CHECKING:
     from .ai_client import AIClient
+    from .ai_config import AIConfig
     from .shared_analysis import SharedAnalysisResult
 
 from .models import FileChange, AIReview
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +215,92 @@ def load_agents_from_dir(
                 break
 
     return agents
+
+
+# ---------------------------------------------------------------------------
+# Custom agent loading (Story [030])
+# ---------------------------------------------------------------------------
+
+def _is_safe_path(file_path: Path, base_dir: Path) -> bool:
+    """Return True if *file_path* resolves inside *base_dir* (no symlink escape)."""
+    try:
+        resolved = file_path.resolve(strict=True)
+    except OSError:
+        return False
+    return resolved == base_dir or str(resolved).startswith(str(base_dir) + "/")
+
+
+def load_custom_agents(
+    custom_agents_dir: str,
+    parsers: list[AgentDefinitionParser] | None = None,
+) -> list[AgentDefinition]:
+    """
+    Load project-specific agent definitions from *custom_agents_dir*.
+
+    - If *custom_agents_dir* is empty or None → return []
+    - If directory does not exist → log warning, return []
+    - Scan for *.yaml, *.yml, *.md files
+    - Parse each using the standard parsers
+    - Skip files that fail validation (log warning, continue)
+    - Reject paths that resolve outside *custom_agents_dir* (symlink escape)
+    - Return list of AgentDefinition objects
+    """
+    if not custom_agents_dir:
+        return []
+
+    dir_path = Path(custom_agents_dir)
+    if not dir_path.is_dir():
+        logger.warning("Custom agents directory does not exist: %s", custom_agents_dir)
+        return []
+
+    resolved_base = dir_path.resolve(strict=True)
+    active_parsers = parsers or _DEFAULT_PARSERS
+    definitions: list[AgentDefinition] = []
+
+    for file_path in sorted(dir_path.iterdir()):
+        if not _is_safe_path(file_path, resolved_base):
+            logger.warning("Skipping path outside custom agents dir: %s", file_path)
+            continue
+        for parser in active_parsers:
+            if parser.can_parse(file_path):
+                try:
+                    definition = parser.parse(file_path)
+                    definitions.append(definition)
+                except Exception as exc:
+                    logger.warning("Skipping invalid custom agent %s: %s", file_path, exc)
+                break
+
+    return definitions
+
+
+def load_all_agents(
+    config: "AIConfig",
+    client: "AIClient",
+    builtin_agents_dir: str | None = None,
+) -> list[LoadedAgent]:
+    """
+    Load built-in agents + custom agents, with custom overriding built-ins by name.
+
+    1. Load built-in agents from *builtin_agents_dir* (or default ``agents/`` dir).
+    2. Load custom agents from ``config.custom_agents_dir``.
+    3. Custom agents with the same name as a built-in replace the built-in (logged at INFO).
+    4. Disabled agents (``enabled: false``) are excluded.
+    """
+    if builtin_agents_dir is None:
+        builtin_agents_dir = str(Path(__file__).resolve().parent.parent / "agents")
+
+    builtin = load_agents_from_dir(builtin_agents_dir, client)
+    agents_by_name: dict[str, LoadedAgent] = {a.name: a for a in builtin}
+
+    custom_defs = load_custom_agents(config.custom_agents_dir)
+    for defn in custom_defs:
+        if not defn.enabled:
+            continue
+        if defn.name in agents_by_name:
+            logger.info("Custom agent '%s' overrides built-in agent", defn.name)
+        agents_by_name[defn.name] = LoadedAgent(defn, client)
+
+    return list(agents_by_name.values())
 
 
 # ---------------------------------------------------------------------------
