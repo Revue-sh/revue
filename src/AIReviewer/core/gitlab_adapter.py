@@ -19,7 +19,7 @@ from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
-from AIReviewer.core.models import FileChange
+from AIReviewer.core.models import FileChange, CodeFix
 from AIReviewer.core.vcs_adapter import (
     DiffPosition,
     translate_gitlab_line_code,
@@ -212,6 +212,72 @@ class GitLabAdapter:
             line_code=line_code,
             new_line=line_number,
         )
+
+    def post_apply_suggestion(
+        self, pr_id: int, position: DiffPosition, code_fix: CodeFix
+    ) -> bool:
+        """Post a Sage-generated fix as a GitLab Apply Suggestion.
+
+        GitLab's suggestion syntax uses backtick-wrapped blocks in discussion
+        notes:
+
+            ```suggestion:-0+0
+            fixed line 1
+            fixed line 2
+            ```
+
+        The ``:-X+Y`` suffix indicates lines to remove/add relative to the
+        comment position. For multi-line fixes, we calculate the range based
+        on code_fix.start_line and code_fix.end_line.
+
+        Args:
+            pr_id: Merge request IID
+            position: DiffPosition for the comment
+            code_fix: CodeFix with original_lines, fixed_lines, explanation
+
+        Returns:
+            True on success, False on error
+        """
+        # Calculate suggestion range
+        # GitLab syntax: :-<lines_to_remove>+<lines_to_add>
+        lines_to_remove = len(code_fix.original_lines)
+        lines_to_add = len(code_fix.fixed_lines)
+
+        suggestion_lines = "\n".join(code_fix.fixed_lines)
+        body = f"""{code_fix.explanation}
+
+```suggestion:-{lines_to_remove}+{lines_to_add}
+{suggestion_lines}
+```
+
+*🤖 Sage suggestion (confidence: {code_fix.confidence:.0f}%)*
+"""
+
+        # Build position object for GitLab Discussions API
+        pos_obj: dict[str, Any] = {
+            "base_sha": "",  # Required but can be empty for simple cases
+            "head_sha": "",  # Required but can be empty
+            "start_sha": "",  # Required but can be empty
+            "position_type": "text",
+            "new_path": position.file_path,
+            "new_line": position.line_number,
+        }
+
+        if position.line_code:
+            pos_obj["line_code"] = position.line_code
+
+        try:
+            self._request(
+                "POST",
+                f"/merge_requests/{pr_id}/discussions",
+                {"body": body, "position": pos_obj},
+            )
+            return True
+        except Exception as exc:
+            _LOG.warning(
+                "post_apply_suggestion failed for MR %s: %s", pr_id, exc
+            )
+            return False
 
     # ------------------------------------------------------------------
     # Webhook helpers (static)

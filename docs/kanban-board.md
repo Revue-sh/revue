@@ -5,17 +5,15 @@
 
 ## Story Status Summary
 **Total:** 32 stories  
-**Done:** 26 (81%)  
-**In Progress:** 1  
-**To Do:** 5
+**Done:** 27 (84%)  
+**In Progress:** 2  
+**To Do:** 3
 
 ---
 
-## 📋 To Do (5)
+## 📋 To Do (3)
 
 ### Epic E4 — Sage (The Resolver Agent)
-- [ ] **Story 30** — Sage GitHub integration (Suggested Change API)
-- [ ] **Story 31** — Sage GitLab integration (Apply Suggestion syntax)
 - [ ] **Story 32** — Sage summary section in review output
 
 ### Epic E6 — Onboarding & Launch
@@ -24,10 +22,11 @@
 
 ---
 
-## 🔄 In Progress (1)
+## 🔄 In Progress (2)
 
 ### Epic E4 — Sage (The Resolver Agent)
-- [ ] **Story 29** — Sage fix generator (`sage_generator.py`) — **DS Complete, DEV in progress**
+- [ ] **Story 30** — Sage GitHub integration (Suggested Change API) — **DS in progress**
+- [ ] **Story 31** — Sage GitLab integration (Apply Suggestion syntax) — **DS in progress**
 
 ---
 
@@ -65,8 +64,9 @@
 - [x] **Story 29** — Environment variable handling + BYOK support
 - [x] **Story 45** — Local diff input mode (`--diff=sample.diff`)
 
-### Epic E4 — Sage (The Resolver Agent) (1/5 in Done)
+### Epic E4 — Sage (The Resolver Agent) (2/5 in Done)
 - [x] **Story 28** — Sage fixability classifier (`sage_classifier.py`)
+- [x] **Story 29** — Sage fix generator (`sage_generator.py`)
 
 ### Epic E6 — Onboarding & Launch (1/1 in Done)
 - [x] **Story 32** — Review summary comment (structured output)

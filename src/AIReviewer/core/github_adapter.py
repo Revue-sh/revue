@@ -17,7 +17,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from AIReviewer.core.models import FileChange
+from AIReviewer.core.models import FileChange, CodeFix
 from AIReviewer.core.vcs_adapter import (
     DiffPosition,
     translate_github_position,
@@ -185,6 +185,66 @@ class GitHubAdapter:
     ) -> DiffPosition:
         """Use translate_github_position() from vcs_adapter.py."""
         return translate_github_position(file_path, line_number, diff)
+
+    def post_suggested_change(
+        self, pr_id: int, position: DiffPosition, code_fix: CodeFix
+    ) -> bool:
+        """Post a Sage-generated fix as a GitHub Suggested Change.
+
+        GitHub's Suggested Change format uses special markdown syntax in review
+        comments:
+
+            ```suggestion
+            fixed line 1
+            fixed line 2
+            ```
+
+        For multi-line suggestions, GitHub requires the position to point to the
+        first line of the range, and the suggestion block contains all fixed lines.
+
+        Args:
+            pr_id: Pull request ID
+            position: DiffPosition for the first line of the fix
+            code_fix: CodeFix with original_lines, fixed_lines, explanation
+
+        Returns:
+            True on success, False on error
+        """
+        # Build suggestion markdown
+        suggestion_lines = "\n".join(code_fix.fixed_lines)
+        body = f"""{code_fix.explanation}
+
+```suggestion
+{suggestion_lines}
+```
+
+*🤖 Sage suggestion (confidence: {code_fix.confidence:.0f}%)*
+"""
+
+        # Use Review API with suggestion comment
+        payload: dict[str, Any] = {
+            "event": "COMMENT",
+            "comments": [
+                {
+                    "path": position.file_path,
+                    "position": position.position,
+                    "body": body,
+                }
+            ],
+        }
+
+        try:
+            self._request(
+                "POST",
+                f"/repos/{self._repo}/pulls/{pr_id}/reviews",
+                payload,
+            )
+            return True
+        except Exception as exc:
+            logger.error(
+                "post_suggested_change failed for PR %d: %s", pr_id, exc
+            )
+            return False
 
     # ------------------------------------------------------------------
     # Webhook helpers (static)

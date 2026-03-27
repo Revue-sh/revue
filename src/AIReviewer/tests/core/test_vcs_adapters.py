@@ -13,7 +13,7 @@ import pytest
 
 from AIReviewer.core.github_adapter import GitHubAdapter
 from AIReviewer.core.gitlab_adapter import GitLabAdapter
-from AIReviewer.core.models import FileChange
+from AIReviewer.core.models import FileChange, CodeFix
 from AIReviewer.core.vcs_adapter import DiffPosition, VCSAdapter
 
 
@@ -592,3 +592,181 @@ def test_gitlab_get_existing_comments_flattens_discussions() -> None:
     assert comments[0]["body"] == "Note A"
     assert comments[1]["body"] == "Note B"
     assert comments[2]["body"] == "Note C"
+
+
+# =====================================================================
+# Story 30 — GitHub Sage Suggested Change
+# =====================================================================
+
+
+def test_github_post_suggested_change_success() -> None:
+    """post_suggested_change posts a suggestion in correct markdown format."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    position = DiffPosition(
+        file_path="app/auth.py",
+        line_number=10,
+        position=5,
+    )
+    code_fix = CodeFix(
+        original_lines=["    api_key = \"hardcoded\""],
+        fixed_lines=['    api_key = os.getenv("API_KEY")'],
+        start_line=10,
+        end_line=10,
+        confidence=90.0,
+        explanation="Moved hardcoded secret to environment variable",
+    )
+
+    with patch("urllib.request.urlopen", return_value=_make_resp(b"{}")) as mock:
+        result = adapter.post_suggested_change(42, position, code_fix)
+
+    assert result is True
+    # Verify the request payload
+    call_args = mock.call_args[0][0]
+    body_sent = json.loads(call_args.data.decode())
+    
+    assert body_sent["event"] == "COMMENT"
+    assert len(body_sent["comments"]) == 1
+    comment_body = body_sent["comments"][0]["body"]
+    
+    # Check suggestion block
+    assert "```suggestion" in comment_body
+    assert 'os.getenv("API_KEY")' in comment_body
+    assert "Moved hardcoded secret" in comment_body
+    assert "confidence: 90%" in comment_body
+
+
+def test_github_post_suggested_change_multiline() -> None:
+    """Multi-line suggestions should include all fixed lines."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    position = DiffPosition(
+        file_path="app/auth.py",
+        line_number=10,
+        position=5,
+    )
+    code_fix = CodeFix(
+        original_lines=["    # Old", "    api_key = \"bad\"", "    "],
+        fixed_lines=["    # Fixed", '    api_key = os.getenv("API_KEY")', "    "],
+        start_line=10,
+        end_line=12,
+        confidence=85.0,
+        explanation="Fixed multi-line issue",
+    )
+
+    with patch("urllib.request.urlopen", return_value=_make_resp(b"{}")) as mock:
+        result = adapter.post_suggested_change(42, position, code_fix)
+
+    assert result is True
+    call_args = mock.call_args[0][0]
+    body_sent = json.loads(call_args.data.decode())
+    comment_body = body_sent["comments"][0]["body"]
+    
+    # All three lines should be in suggestion
+    assert "# Fixed" in comment_body
+    assert 'os.getenv("API_KEY")' in comment_body
+
+
+def test_github_post_suggested_change_api_error() -> None:
+    """API error should return False and not raise."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    position = DiffPosition(file_path="app/auth.py", line_number=10, position=5)
+    code_fix = CodeFix(
+        original_lines=["old"],
+        fixed_lines=["new"],
+        start_line=10,
+        end_line=10,
+        confidence=80.0,
+        explanation="Fix",
+    )
+
+    with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
+        result = adapter.post_suggested_change(42, position, code_fix)
+
+    assert result is False
+
+
+# =====================================================================
+# Story 31 — GitLab Sage Apply Suggestion
+# =====================================================================
+
+
+def test_gitlab_post_apply_suggestion_success() -> None:
+    """post_apply_suggestion posts suggestion in GitLab syntax."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    position = DiffPosition(
+        file_path="app/auth.py",
+        line_number=10,
+        line_code="abc123",
+    )
+    code_fix = CodeFix(
+        original_lines=["    api_key = \"hardcoded\""],
+        fixed_lines=['    api_key = os.getenv("API_KEY")'],
+        start_line=10,
+        end_line=10,
+        confidence=92.0,
+        explanation="Replaced hardcoded secret",
+    )
+
+    with patch("urllib.request.urlopen", return_value=_make_resp(b"{}")) as mock:
+        result = adapter.post_apply_suggestion(5, position, code_fix)
+
+    assert result is True
+    call_args = mock.call_args[0][0]
+    body_sent = json.loads(call_args.data.decode())
+    
+    # Check suggestion block with GitLab syntax
+    comment_body = body_sent["body"]
+    assert "```suggestion:-1+1" in comment_body
+    assert 'os.getenv("API_KEY")' in comment_body
+    assert "Replaced hardcoded secret" in comment_body
+    assert "confidence: 92%" in comment_body
+
+
+def test_gitlab_post_apply_suggestion_multiline() -> None:
+    """Multi-line suggestions use correct :-X+Y syntax."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    position = DiffPosition(
+        file_path="app/auth.py",
+        line_number=10,
+        line_code="abc123",
+    )
+    code_fix = CodeFix(
+        original_lines=["    # Old", "    api_key = \"bad\""],
+        fixed_lines=["    # Fixed", '    api_key = os.getenv("API_KEY")', "    # Done"],
+        start_line=10,
+        end_line=11,
+        confidence=88.0,
+        explanation="Multi-line fix",
+    )
+
+    with patch("urllib.request.urlopen", return_value=_make_resp(b"{}")) as mock:
+        result = adapter.post_apply_suggestion(5, position, code_fix)
+
+    assert result is True
+    call_args = mock.call_args[0][0]
+    body_sent = json.loads(call_args.data.decode())
+    comment_body = body_sent["body"]
+    
+    # 2 lines removed, 3 lines added
+    assert "```suggestion:-2+3" in comment_body
+    assert "# Fixed" in comment_body
+    assert 'os.getenv("API_KEY")' in comment_body
+    assert "# Done" in comment_body
+
+
+def test_gitlab_post_apply_suggestion_api_error() -> None:
+    """API error should return False and not raise."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    position = DiffPosition(file_path="app/auth.py", line_number=10)
+    code_fix = CodeFix(
+        original_lines=["old"],
+        fixed_lines=["new"],
+        start_line=10,
+        end_line=10,
+        confidence=80.0,
+        explanation="Fix",
+    )
+
+    with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
+        result = adapter.post_apply_suggestion(5, position, code_fix)
+
+    assert result is False
