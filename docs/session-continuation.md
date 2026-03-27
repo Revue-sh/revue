@@ -1,37 +1,35 @@
 # Session Continuation
-**Updated:** 2026-03-28 (overnight run) | **For:** Next session
+**Updated:** 2026-03-27 (Fri morning session) | **For:** Next session
 
 ---
 
-## What happened overnight
+## Completed this session
 
-Started Sprint 1 kick-off at 00:37, ran all night through Sprints 1–3. Full decisions log in `docs/overnight-decisions.md`.
+- **Taiga board full audit & fix** — all ghost epic links removed, E6 stories (56–61) created and linked, all 36 stories correctly assigned to epics
+- **Story status sync** — 21 stories moved to Done in Taiga matching actual codebase state
+- **Story 17+18** ✅ — `cleo_router.py` — two-step team auto-selection (security override, size heuristic, language detection) + trigger evaluation + `route()` — 45 tests
+- **Story 30** ✅ — `agent_loader.py` extended — `load_custom_agents()`, `load_all_agents()`, path-traversal protection — 12 new tests
+- **Story 10** ✅ — `github_adapter.py` — GitHub App webhook verify + parse, PR diff fetch, inline + summary comments — HMAC-SHA256 timing-safe
+- **Story 11** ✅ — `gitlab_adapter.py` — GitLab OAuth + PAT, MR webhook verify + parse, diff fetch, inline + summary comments
 
----
+**Total after session: 21/36 Taiga stories Done. 258 tests passing. 0 failures.**
 
-## Completed
-
-- **Sprint 1 ✅** — 6 stories, 67 tests — Foundation (AIClient, BYOK, config, VCSAdapter, diff ingestion, CLI)
-- **SOLID refactor ✅** — Fixed 4 violations before Sprint 2: OCP factory registry, SRP KeyResolver + ReviewPipeline, DIP CLI injection — 74 tests
-- **Sprint 2 ✅** — 7 stories, 136 tests — Core Pipeline (diff limit, shared analysis, parallel agents, contradiction detection/resolution, Nova consolidation, noise filters)
-- **Sprint 3 ✅** — 6 stories, 181 tests — Agent System (agent loader, Cleo, Nova, Zara, Kai, Maya, Leo definitions)
-
-**Total: 19/48 stories done. 181 tests passing. 0 failures.**
+Commits: `4f5f9b8`, `fb86c88`
 
 ---
 
 ## Sprint & Epic State
 
-| Sprint | Dates | Theme | Stories | Status |
-|--------|-------|-------|---------|--------|
-| S1 | 30 Mar – 12 Apr | Foundation | 6/6 | ✅ Done |
-| S2 | 13 Apr – 26 Apr | Core Pipeline | 7/7 | ✅ Done |
-| S3 | 27 Apr – 10 May | Agent System | 6/6 | ✅ Done |
-| S4 | 11 May – 24 May | Routing & Teams | 12 | 🔲 Not started |
-| S5 | 25 May – 7 Jun | VCS Integration | 5 | 🔲 Not started |
-| S6 | 8 Jun – 21 Jun | Sage | 5 | 🔲 Not started |
-| S7 | 22 Jun – 5 Jul | Launch 🚀 | 5 | 🔲 Not started |
-| S8 | 6 Jul – 19 Jul | Monetisation | 2 | 🔲 Not started |
+| Epic | Stories Done | Stories Remaining |
+|------|-------------|-------------------|
+| E1 — Core Review Engine | 8/8 ✅ | — |
+| E2 — VCS Platform Integration | 4/7 | 12, 13, 14, 15 |
+| E3 — Agent System & Routing | 6/6 ✅ | — |
+| E4 — Sage — The Resolver | 0/5 | 22, 23, 24, 25, 26 |
+| E5 — AI Backend & Config | 4/4 ✅ | — |
+| E6 — Onboarding & Launch | 0/6 | 56, 57, 58, 59, 60, 61 |
+
+**Sprints 1–4 complete (per sprint plan). Starting Sprint 5 — VCS Integration.**
 
 ---
 
@@ -39,70 +37,56 @@ Started Sprint 1 kick-off at 00:37, ran all night through Sprints 1–3. Full de
 
 ```
 AIReviewer/
-├── agents/          ← Agent definition files (YAML/Markdown)
-│   ├── cleo.yaml    ← Orchestrator
-│   ├── nova.yaml    ← Consolidator
-│   ├── zara.md      ← Security analyst
-│   ├── kai.md       ← Performance expert
-│   ├── maya.md      ← Code quality expert
-│   └── leo.md       ← Architecture reviewer
+├── agents/
+│   ├── cleo.yaml, nova.yaml
+│   └── zara.md, kai.md, maya.md, leo.md
 ├── core/
-│   ├── ai_config.py         ← AIConfig dataclass (multi-provider)
-│   ├── ai_client.py         ← AIClient Protocol + 5 providers + registry factory
-│   ├── key_resolver.py      ← BYOK key resolution (SRP)
-│   ├── config_loader.py     ← .revue.yml loader + validator
-│   ├── vcs_adapter.py       ← VCSAdapter Protocol + DiffPosition
-│   ├── diff_parser.py       ← Unified diff → FileChange parser
-│   ├── diff_limit.py        ← Hard diff limit guard
-│   ├── shared_analysis.py   ← Upfront AI classification call
-│   ├── agent_loader.py      ← YAML/MD agent definition loader
-│   ├── agent_runner.py      ← Parallel execution (ThreadPoolExecutor)
-│   ├── contradiction_detector.py  ← Pluggable contradiction detection
-│   ├── contradiction_resolver.py  ← AI-driven resolution
-│   ├── nova_consolidator.py ← Deduplication + prioritisation
-│   ├── noise_filters.py     ← Pluggable noise suppression
-│   ├── pipeline.py          ← ReviewPipeline orchestrator (SRP)
-│   └── models.py            ← FileChange, AIReview, Severity
-├── cli.py           ← `revue` CLI entry point
-└── tests/           ← 181 tests, all passing
+│   ├── ai_config.py, ai_client.py, key_resolver.py
+│   ├── config_loader.py          ← .revue.yml loader
+│   ├── vcs_adapter.py            ← VCSAdapter Protocol + DiffPosition + translation helpers
+│   ├── github_adapter.py         ← ✨ NEW — GitHubAdapter (webhook + API)
+│   ├── gitlab_adapter.py         ← ✨ NEW — GitLabAdapter (webhook + API)
+│   ├── cleo_router.py            ← ✨ NEW — select_team() + evaluate_triggers() + route()
+│   ├── diff_parser.py, diff_limit.py
+│   ├── shared_analysis.py, agent_loader.py
+│   ├── agent_runner.py, contradiction_detector.py, contradiction_resolver.py
+│   ├── nova_consolidator.py, noise_filters.py, pipeline.py
+│   └── models.py
+├── cli.py
+└── tests/ — 258 tests, all passing
 ```
 
 ---
 
-## Sprint 4 — Routing & Teams (next up)
+## Remaining work — next steps (priority order)
 
-12 stories, two parallel streams:
+### 1. Story 12 — GitHub adapter: fetch PR diff + post inline review comments
+**File:** `core/github_adapter.py` (extend existing)
+**First action:** Implement `get_diff()` to fetch full unified diff from `GET /repos/{owner}/{repo}/pulls/{id}/files` and parse into `FileChange[]`. Then `post_inline_comment()` using GitHub Review API (`POST /repos/{owner}/{repo}/pulls/{id}/reviews`). Use `translate_github_position()` from `vcs_adapter.py`.
 
-**Stream A — Cleo routing (sequential):**
-| Story | Subject |
-|-------|---------|
-| [017] | Cleo routing — Step 1: team auto-selection |
-| [018] | Cleo routing — Step 2: agent trigger evaluation |
+### 2. Story 13 — GitLab adapter: fetch MR diff + post inline comments
+**File:** `core/gitlab_adapter.py` (extend existing)
+**First action:** Implement `get_diff()` from `GET /projects/{id}/merge_requests/{iid}/changes`. Post inline via GitLab Discussions API (`POST /projects/{id}/merge_requests/{iid}/discussions`) with `position` object containing `base_sha`, `head_sha`, `old_path`, `new_path`, `new_line`. Use `translate_gitlab_line_code()`.
 
-**Stream B — Team configs (all parallel after [017]):**
-| Story | Subject |
-|-------|---------|
-| [020] | Team config — team-swift-ios |
-| [049] | Team config — team-security-focus |
-| [050] | Team config — team-performance |
-| [051] | Team config — team-full-review |
-| [052] | Team config — team-quick |
-| [053] | Team config — team-kotlin-android |
-| [054] | Team config — team-python |
-| [055] | Team config — team-typescript |
+### 3. Story 14 — CI runner integration: GitHub Actions step
+**File:** create `ci-templates/github-actions/revue-review.yml`
+**First action:** Write a reusable GitHub Actions workflow that (a) checks out the PR diff, (b) runs `revue review --diff $DIFF_FILE`, (c) reads the JSON output, (d) posts findings as inline comments via the GitHub API. Use `REVUE_API_KEY` secret.
 
-**After both streams:**
-| Story | Subject |
-|-------|---------|
-| [030] | Custom agent support |
-| [031] | Configurable blocking behaviour |
+### 4. Story 15 — CI runner integration: GitLab CI include template
+**File:** create `ci-templates/gitlab-ci/revue-review.yml`
+**First action:** Write a GitLab CI/CD `include` template with a `revue-review` job that runs in `merge_request_event` pipelines. Pipe MR diff → `revue review` → post via GitLab API.
+
+### 5. Stories 22–26 — Sage (Resolver Agent) — E4
+**Dependency:** Needs pipeline + VCS adapters working. Start after 12+13 done.
+**First action:** `core/sage_classifier.py` — implement `classify_finding(finding: AIReview) -> FixabilityResult` with confidence threshold. Self-contained = Zara SQL injection / secrets, null checks, unused imports. Context-dependent = all Leo findings + anything outside diff.
 
 ---
 
-## Read before starting next session
+## Next parallel wave (all unblocked right now)
 
-- `docs/overnight-decisions.md` — 7 decisions made overnight, worth reviewing
-- Key decision: agent CLI timeout issue — Claude Code CLI takes 3+ min per invocation, code was written directly. Worth checking `claude auth status`.
+Stories **12, 13, 14, 15** have no cross-dependencies — run all 4 agents simultaneously with party mode.
+
+After that: Stories **22, 23, 24, 25, 26** (Sage — all sequential except 24+25 which can parallel).
 
 ---
 
@@ -110,9 +94,8 @@ AIReviewer/
 
 Read `Projects/revue.io/docs/session-continuation.md` for full context.
 
-Sprints 1–3 are complete (19/48 stories, 181 tests). Starting Sprint 4 — Routing & Teams.
+Sprints 1–4 complete. 21/36 Taiga stories Done. 258 tests passing. Starting Sprint 5 — VCS Integration.
 
-First: **[017] Cleo routing — team auto-selection** then **[018] trigger evaluation**, then all 8 team configs in parallel.
+**Next: run 4 parallel agents** (party mode) on stories 12 (GitHub PR diff + inline comments), 13 (GitLab MR diff + inline comments), 14 (GitHub Actions CI template), 15 (GitLab CI template). All unblocked.
 
-Project source: `Projects/revue.io/src/AIReviewer/`
-Decisions log: `Projects/revue.io/docs/overnight-decisions.md`
+Source: `Projects/revue.io/src/AIReviewer/`. New files this session: `github_adapter.py`, `gitlab_adapter.py`, `cleo_router.py`.
