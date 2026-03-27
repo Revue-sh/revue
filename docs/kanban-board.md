@@ -1,21 +1,21 @@
 # Kanban Board — Revue.io
-**Last Updated:** 2026-03-27 16:24 GMT  
-**Source of Truth:** Taiga — http://localhost:9000/project/revueio/kanban  
+**Last Updated:** 2026-03-27 16:33 GMT
+**Source of Truth:** Taiga — http://localhost:9000/project/revueio/kanban
 **⚠️ This file is a mirror. If Taiga is available, prefer Taiga. Update this file whenever a story is closed.**
 
 ---
 
 ## Story Status Summary
-**Total:** 42 stories (30 Done + 12 open)  
-**Done:** 30 (71%)  
-**To Do:** 12 (E6 + 6 unassigned orphan stories)  
+**Total:** 62 stories (51 Done + 11 open)
+**Done:** 51 (82%)
+**To Do:** 11 (E6 only)
 **In Progress:** 0
 
 ---
 
-## ✅ Done (30)
+## ✅ Done (51)
 
-### Epic E1 — Core Review Engine (8/8 ✅)
+### Epic E1 — Core Review Engine (9/9 ✅)
 - [x] **[7]** Diff ingestion — parse raw VCS diff into structured FileChange objects
 - [x] **[8]** Hard diff limit check — stop and suggest breakdown for oversized PRs
 - [x] **[9]** Shared analysis — single upfront AI call for diff complexity and risk classification
@@ -24,8 +24,9 @@
 - [x] **[12]** Contradiction resolution via orchestrator
 - [x] **[13]** Nova consolidation — deduplicate and prioritise findings into unified output
 - [x] **[14]** Noise filters — suppress false positives post-consolidation
+- [x] **[51]** Local diff input mode — run review from a local .diff file for testing
 
-### Epic E2 — VCS Platform Integration (7/7 ✅)
+### Epic E2 — VCS Platform Integration (9/9 ✅)
 - [x] **[15]** VCSAdapter protocol and DiffPosition abstraction
 - [x] **[16]** GitHub App setup and webhook handling
 - [x] **[17]** GitLab OAuth integration and webhook handling
@@ -33,14 +34,26 @@
 - [x] **[19]** GitLab adapter — fetch MR diff and post inline review comments
 - [x] **[20]** CI runner integration — GitHub Actions step
 - [x] **[21]** CI runner integration — GitLab CI include template
+- [x] **[37]** Configurable blocking behaviour
+- [x] **[38]** Review summary comment — structured output with all agent contributions
 
-### Epic E3 — Agent System & Routing (6/6 ✅)
+### Epic E3 — Agent System & Routing (16/16 ✅)
 - [x] **[22]** Agent definition loader — parse declarative YAML/Markdown agent files
 - [x] **[23]** Cleo routing — Step 1: team auto-selection
 - [x] **[24]** Cleo routing — Step 2: agent trigger evaluation within team
 - [x] **[25]** Agent definition — Zara (Security analyst)
 - [x] **[26]** Team config — team-swift-ios
 - [x] **[27]** Nova and Cleo agent definitions
+- [x] **[52]** Agent definition — Kai (Performance expert)
+- [x] **[53]** Agent definition — Maya (Code quality expert)
+- [x] **[54]** Agent definition — Leo (Architecture reviewer)
+- [x] **[55]** Team config — team-security-focus
+- [x] **[56]** Team config — team-performance
+- [x] **[57]** Team config — team-full-review
+- [x] **[58]** Team config — team-quick
+- [x] **[59]** Team config — team-kotlin-android
+- [x] **[60]** Team config — team-python
+- [x] **[61]** Team config — team-typescript
 
 ### Epic E4 — Sage: The Resolver Agent (5/5 ✅)
 - [x] **[28]** Sage fixability classifier — categorise each finding as fixable or needs-human
@@ -55,11 +68,26 @@
 - [x] **[35]** Environment variable handling and BYOK support
 - [x] **[36]** Custom agent support — load project-specific agent definitions
 
+### Epic E7 — Post-MVP Tech Debt & Improvements (8/8 ✅)
+- [x] **[70]** FileChange model: add language field + centralise diff parser + edge case tests
+- [x] **[71]** Align agent timeout — AC says 90s, impl uses 120s
+- [x] **[72]** Noise filters — implement DI-pattern/language-aware suppression per AC
+- [x] **[73]** Add verify_webhook_signature() to VCSAdapter protocol
+- [x] **[74]** Standardise adapter method names + test pagination + MR approval
+- [x] **[75]** Publish GitHub Actions as proper revue-io/action@v1
+- [x] **[76]** Fix Cleo size heuristic thresholds + add team-quick routing
+- [x] **[77]** Extract team configs to standalone YAML files
+
 ---
 
-## 📋 To Do (12)
+## 📋 To Do (11)
 
-### Epic E6 — Onboarding, Observability & Launch (0/6, In Progress 🔜)
+### Epic E6 — Onboarding, Observability & Launch (0/11, Not started 🔜)
+- [ ] **[39]** Self-service workspace onboarding — web UI
+- [ ] **[40]** Free tier enforcement — 100 review runs per workspace per month
+- [ ] **[41]** Stripe billing integration — Pro and Team tier
+- [ ] **[42]** Basic analytics — review run history and issue trends
+- [ ] **[43]** Documentation site
 - [ ] **[62]** Workspace onboarding UI — sign-up, connect VCS, install app
 - [ ] **[63]** Free tier enforcement — BYOK, 100 runs/month cap
 - [ ] **[64]** Stripe billing — Pro and Team tier subscription management
@@ -67,30 +95,7 @@
 - [ ] **[66]** Basic analytics — finding trends by category and severity
 - [ ] **[67]** Documentation site — getting started guide and .revue.yml reference
 
-### ⚠️ Orphan Stories — No Epic Assigned (6)
-> These stories exist on Taiga but are not linked to any epic. Needs triage — assign to an epic or close as duplicate/superseded.
-
-- [ ] **[37]** Configurable blocking behaviour
-- [ ] **[38]** Review summary comment — structured output with all agent contributions
-- [ ] **[39]** Self-service workspace onboarding — web UI
-- [ ] **[40]** Free tier enforcement — 100 review runs per workspace per month
-- [ ] **[41]** Stripe billing integration — Pro and Team tier
-- [ ] **[42]** Basic analytics — review run history and issue trends
-
-> Note: Stories 37–42 appear to be earlier versions of E6 stories (62–67). Likely created before E6 was structured. Recommend closing as duplicates after confirming scope overlap.
-
----
-
-## ✅ E7 — Post-MVP Tech Debt (8/8 ✅)
-
-- [x] **[70]** FileChange model: add language field + centralise diff parser + edge case tests *(Story 7)*
-- [x] **[71]** Align agent timeout — AC says 90s, impl uses 120s *(Story 10)*
-- [x] **[72]** Noise filters — implement DI-pattern/language-aware suppression per AC *(Story 14)*
-- [x] **[73]** Add verify_webhook_signature() to VCSAdapter protocol *(Story 15)*
-- [x] **[74]** Standardise adapter method names + test pagination + MR approval *(Stories 18+19)*
-- [x] **[75]** Publish GitHub Actions as proper revue-io/action@v1 *(Story 20)*
-- [x] **[76]** Fix Cleo size heuristic thresholds + add team-quick routing *(Story 23)*
-- [x] **[77]** Extract team configs to standalone YAML files *(Story 26)*
+> Note: Stories 39–43 and 62–67 cover overlapping scope (E6 was expanded). Triage required at sprint planning to de-duplicate before implementation begins.
 
 ---
 
@@ -98,10 +103,10 @@
 
 | Epic | Stories | Done | Status |
 |------|---------|------|--------|
-| E1 — Core Review Engine | 8 | 8/8 | ✅ Done |
-| E2 — VCS Platform Integration | 7 | 7/7 | ✅ Done |
-| E3 — Agent System & Routing | 6 | 6/6 | ✅ Done |
+| E1 — Core Review Engine | 9 | 9/9 | ✅ Done |
+| E2 — VCS Platform Integration | 9 | 9/9 | ✅ Done |
+| E3 — Agent System & Routing | 16 | 16/16 | ✅ Done |
 | E4 — Sage: The Resolver Agent | 5 | 5/5 | ✅ Done |
 | E5 — AI Backend & Configuration | 4 | 4/4 | ✅ Done |
-| E6 — Onboarding, Observability & Launch | 6 | 0/6 | 🔜 Not started |
+| E6 — Onboarding, Observability & Launch | 11 | 0/11 | 🔜 Not started |
 | E7 — Post-MVP Tech Debt & Improvements | 8 | 8/8 | ✅ Done |
