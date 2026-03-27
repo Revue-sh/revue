@@ -10,9 +10,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import urllib.error
 import urllib.request
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from AIReviewer.core.models import FileChange
 from AIReviewer.core.vcs_adapter import (
@@ -85,13 +88,18 @@ class GitHubAdapter:
     # ------------------------------------------------------------------
 
     def get_diff(self, pr_id: int) -> list[FileChange]:
-        """Fetch PR diff from GitHub API. Parse into FileChange objects."""
+        """Fetch PR diff from GitHub Files API. Parse into FileChange objects.
+
+        Binary files (no ``patch`` field) are skipped.
+        """
         files: list[dict[str, Any]] = self._request(
             "GET", f"/repos/{self._repo}/pulls/{pr_id}/files"
         )
         changes: list[FileChange] = []
         for f in files:
-            patch = f.get("patch", "")
+            if "patch" not in f:
+                # Binary or otherwise unpatchable file — skip
+                continue
             status = f.get("status", "modified")
             change_type = {
                 "added": "added",
@@ -104,7 +112,7 @@ class GitHubAdapter:
                     change_type=change_type,
                     additions=f.get("additions", 0),
                     deletions=f.get("deletions", 0),
-                    diff=patch,
+                    diff=f["patch"],
                 )
             )
         return changes
@@ -112,35 +120,65 @@ class GitHubAdapter:
     def post_inline_comment(
         self, pr_id: int, position: DiffPosition, body: str
     ) -> bool:
-        """Post a review comment at the given diff position."""
+        """Post an inline review comment via the GitHub Review API.
+
+        Uses ``POST /repos/{owner}/{repo}/pulls/{pr_id}/reviews`` with
+        ``event=COMMENT`` so the comment is published immediately without
+        requiring a pending review.
+
+        Returns True on success, False on any error (logs the exception).
+        """
         payload: dict[str, Any] = {
-            "body": body,
-            "path": position.file_path,
-            "position": position.position,
+            "event": "COMMENT",
+            "comments": [
+                {
+                    "path": position.file_path,
+                    "position": position.position,
+                    "body": body,
+                }
+            ],
         }
-        if position.commit_id:
-            payload["commit_id"] = position.commit_id
-        self._request(
-            "POST",
-            f"/repos/{self._repo}/pulls/{pr_id}/comments",
-            payload,
-        )
-        return True
+        try:
+            self._request(
+                "POST",
+                f"/repos/{self._repo}/pulls/{pr_id}/reviews",
+                payload,
+            )
+            return True
+        except Exception as exc:
+            logger.error("post_inline_comment failed for PR %d: %s", pr_id, exc)
+            return False
 
     def post_summary_comment(self, pr_id: int, body: str) -> bool:
-        """Post a top-level PR comment with the full review summary."""
-        self._request(
-            "POST",
-            f"/repos/{self._repo}/issues/{pr_id}/comments",
-            {"body": body},
-        )
-        return True
+        """Post a top-level PR comment (not a review comment).
+
+        Uses ``POST /repos/{owner}/{repo}/issues/{pr_id}/comments``.
+
+        Returns True on success, False on any error (logs the exception).
+        """
+        try:
+            self._request(
+                "POST",
+                f"/repos/{self._repo}/issues/{pr_id}/comments",
+                {"body": body},
+            )
+            return True
+        except Exception as exc:
+            logger.error("post_summary_comment failed for PR %d: %s", pr_id, exc)
+            return False
 
     def get_existing_comments(self, pr_id: int) -> list[dict]:
-        """Return existing review comments on the PR."""
-        return self._request(
-            "GET", f"/repos/{self._repo}/pulls/{pr_id}/comments"
-        )
+        """Return existing review comments on the PR.
+
+        Returns empty list on any error (logs the exception).
+        """
+        try:
+            return self._request(
+                "GET", f"/repos/{self._repo}/pulls/{pr_id}/comments"
+            )
+        except Exception as exc:
+            logger.error("get_existing_comments failed for PR %d: %s", pr_id, exc)
+            return []
 
     def resolve_position(
         self, file_path: str, line_number: int, diff: str

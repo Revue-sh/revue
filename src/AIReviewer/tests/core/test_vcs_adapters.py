@@ -14,7 +14,7 @@ import pytest
 from AIReviewer.core.github_adapter import GitHubAdapter
 from AIReviewer.core.gitlab_adapter import GitLabAdapter
 from AIReviewer.core.models import FileChange
-from AIReviewer.core.vcs_adapter import VCSAdapter
+from AIReviewer.core.vcs_adapter import DiffPosition, VCSAdapter
 
 
 # =====================================================================
@@ -307,9 +307,288 @@ def test_github_500_raises_runtimeerror() -> None:
             adapter.get_diff(1)
 
 
-def test_gitlab_403_raises_valueerror() -> None:
-    """GitLab 403 raises ValueError."""
+def test_gitlab_403_returns_empty_list() -> None:
+    """GitLab 403 on get_diff is caught — returns [] rather than raising."""
     adapter = GitLabAdapter(token="bad", project_id=1)
     with patch("urllib.request.urlopen", side_effect=_make_http_error(403)):
-        with pytest.raises(ValueError, match="auth error"):
-            adapter.get_diff(1)
+        result = adapter.get_diff(1)
+    assert result == []
+
+
+# =====================================================================
+# GitHub — Story 12: get_diff, post_inline_comment, post_summary_comment,
+#                    get_existing_comments, binary file handling
+# =====================================================================
+
+
+def _make_resp(body: bytes) -> MagicMock:
+    """Build a reusable context-manager mock for urlopen."""
+    resp = MagicMock()
+    resp.read.return_value = body
+    resp.__enter__ = lambda s: s
+    resp.__exit__ = MagicMock(return_value=False)
+    return resp
+
+
+def test_github_get_diff_multiple_files() -> None:
+    """3 files with patches → 3 FileChange objects with correct metadata."""
+    payload = json.dumps(
+        [
+            {
+                "filename": "src/app.py",
+                "status": "modified",
+                "additions": 2,
+                "deletions": 1,
+                "patch": "@@ -1,2 +1,3 @@\n context\n-old\n+new\n+extra",
+            },
+            {
+                "filename": "lib/utils.py",
+                "status": "added",
+                "additions": 5,
+                "deletions": 0,
+                "patch": "@@ -0,0 +1,5 @@\n+a\n+b\n+c\n+d\n+e",
+            },
+            {
+                "filename": "old_module.py",
+                "status": "removed",
+                "additions": 0,
+                "deletions": 3,
+                "patch": "@@ -1,3 +0,0 @@\n-x\n-y\n-z",
+            },
+        ]
+    ).encode()
+
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    with patch("urllib.request.urlopen", return_value=_make_resp(payload)):
+        changes = adapter.get_diff(5)
+
+    assert len(changes) == 3
+    assert all(isinstance(c, FileChange) for c in changes)
+    assert changes[0].file_path == "src/app.py"
+    assert changes[0].change_type == "modified"
+    assert changes[0].additions == 2
+    assert changes[1].file_path == "lib/utils.py"
+    assert changes[1].change_type == "added"
+    assert changes[2].file_path == "old_module.py"
+    assert changes[2].change_type == "deleted"
+
+
+def test_github_get_diff_skips_binary_files() -> None:
+    """Files without 'patch' field (binary) are skipped; text files retained."""
+    payload = json.dumps(
+        [
+            {
+                "filename": "assets/logo.png",
+                "status": "added",
+                "additions": 0,
+                "deletions": 0,
+                # no 'patch' key — binary file
+            },
+            {
+                "filename": "src/main.py",
+                "status": "modified",
+                "additions": 1,
+                "deletions": 1,
+                "patch": "@@ -1,2 +1,2 @@\n context\n-old\n+new",
+            },
+        ]
+    ).encode()
+
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    with patch("urllib.request.urlopen", return_value=_make_resp(payload)):
+        changes = adapter.get_diff(7)
+
+    assert len(changes) == 1
+    assert changes[0].file_path == "src/main.py"
+
+
+def test_github_post_inline_comment_success() -> None:
+    """post_inline_comment returns True when Review API responds successfully."""
+    review_body = json.dumps({"id": 10, "state": "COMMENTED"}).encode()
+
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    position = DiffPosition(file_path="src/app.py", line_number=5, position=3)
+
+    with patch("urllib.request.urlopen", return_value=_make_resp(review_body)):
+        result = adapter.post_inline_comment(10, position, "Looks good!")
+
+    assert result is True
+
+
+def test_github_post_summary_comment_success() -> None:
+    """post_summary_comment returns True when issue comments API succeeds."""
+    comment_body = json.dumps({"id": 99, "body": "summary"}).encode()
+
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+
+    with patch("urllib.request.urlopen", return_value=_make_resp(comment_body)):
+        result = adapter.post_summary_comment(10, "Overall LGTM.")
+
+    assert result is True
+
+
+def test_github_get_existing_comments() -> None:
+    """get_existing_comments returns the raw list of comment dicts."""
+    comments_body = json.dumps(
+        [
+            {"id": 1, "body": "First comment", "path": "src/app.py"},
+            {"id": 2, "body": "Second comment", "path": "README.md"},
+        ]
+    ).encode()
+
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+
+    with patch("urllib.request.urlopen", return_value=_make_resp(comments_body)):
+        comments = adapter.get_existing_comments(10)
+
+    assert len(comments) == 2
+    assert comments[0]["id"] == 1
+    assert comments[1]["body"] == "Second comment"
+
+
+# =====================================================================
+# GitLab — Story 13: get_diff, post_inline_comment, post_summary_comment,
+#                    get_existing_comments (discussions), renamed file
+# =====================================================================
+
+_GITLAB_3_CHANGES_RESPONSE = json.dumps(
+    {
+        "changes": [
+            {
+                "old_path": "lib/a.rb",
+                "new_path": "lib/a.rb",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+                "diff": "@@ -1,3 +1,4 @@\n context\n+added\n context2\n context3",
+            },
+            {
+                "old_path": "lib/b.rb",
+                "new_path": "lib/b.rb",
+                "new_file": False,
+                "deleted_file": True,
+                "renamed_file": False,
+                "diff": "@@ -1,2 +0,0 @@\n-line1\n-line2",
+            },
+            {
+                "old_path": "/dev/null",
+                "new_path": "lib/c.rb",
+                "new_file": True,
+                "deleted_file": False,
+                "renamed_file": False,
+                "diff": "@@ -0,0 +1,3 @@\n+x\n+y\n+z",
+            },
+        ]
+    }
+).encode()
+
+_GITLAB_RENAMED_RESPONSE = json.dumps(
+    {
+        "changes": [
+            {
+                "old_path": "lib/old_name.rb",
+                "new_path": "lib/new_name.rb",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": True,
+                "diff": "@@ -1,2 +1,2 @@\n context\n-old\n+new",
+            }
+        ]
+    }
+).encode()
+
+_GITLAB_DISCUSSIONS_RESPONSE = json.dumps(
+    [
+        {
+            "id": "d1",
+            "notes": [
+                {"id": 1, "body": "Note A"},
+                {"id": 2, "body": "Note B"},
+            ],
+        },
+        {
+            "id": "d2",
+            "notes": [
+                {"id": 3, "body": "Note C"},
+            ],
+        },
+    ]
+).encode()
+
+
+def test_gitlab_get_diff_multiple_changes() -> None:
+    """3 change entries → 3 FileChange objects with correct types."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch("urllib.request.urlopen", return_value=_make_resp(_GITLAB_3_CHANGES_RESPONSE)):
+        changes = adapter.get_diff(5)
+
+    assert len(changes) == 3
+    assert all(isinstance(c, FileChange) for c in changes)
+    assert changes[0].file_path == "lib/a.rb"
+    assert changes[0].change_type == "modified"
+    assert changes[0].additions == 1
+    assert changes[1].file_path == "lib/b.rb"
+    assert changes[1].change_type == "deleted"
+    assert changes[1].deletions == 2
+    assert changes[2].file_path == "lib/c.rb"
+    assert changes[2].change_type == "added"
+    assert changes[2].additions == 3
+
+
+def test_gitlab_get_diff_handles_renamed_file() -> None:
+    """Renamed file uses new_path and change_type='modified'."""
+    adapter = GitLabAdapter(token="tok", project_id=1)
+    with patch("urllib.request.urlopen", return_value=_make_resp(_GITLAB_RENAMED_RESPONSE)):
+        changes = adapter.get_diff(1)
+
+    assert len(changes) == 1
+    assert changes[0].file_path == "lib/new_name.rb"
+    assert changes[0].change_type == "modified"
+
+
+def test_gitlab_post_inline_comment_with_position() -> None:
+    """post_inline_comment sends correct position structure and returns True."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    pos = DiffPosition(
+        file_path="src/app.py",
+        line_number=10,
+        commit_id="abc123def456",
+        new_line=10,
+    )
+
+    with patch.object(adapter, "_request", return_value={}) as mock_req:
+        result = adapter.post_inline_comment(1, pos, "Fix this!")
+
+    assert result is True
+    method, path, body = mock_req.call_args[0]
+    assert method == "POST"
+    assert path.endswith("/discussions")
+    assert body["body"] == "Fix this!"
+    pos_obj = body["position"]
+    assert pos_obj["base_sha"] == "abc123def456"
+    assert pos_obj["head_sha"] == "abc123def456"
+    assert pos_obj["new_path"] == "src/app.py"
+    assert pos_obj["old_path"] == "src/app.py"
+    assert pos_obj["new_line"] == 10
+    assert pos_obj["position_type"] == "text"
+
+
+def test_gitlab_post_summary_comment_success() -> None:
+    """post_summary_comment returns True on success."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch.object(adapter, "_request", return_value={"id": 1}):
+        result = adapter.post_summary_comment(1, "Overall LGTM")
+
+    assert result is True
+
+
+def test_gitlab_get_existing_comments_flattens_discussions() -> None:
+    """get_existing_comments flattens all notes from discussions into one list."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch("urllib.request.urlopen", return_value=_make_resp(_GITLAB_DISCUSSIONS_RESPONSE)):
+        comments = adapter.get_existing_comments(1)
+
+    assert len(comments) == 3
+    assert comments[0]["body"] == "Note A"
+    assert comments[1]["body"] == "Note B"
+    assert comments[2]["body"] == "Note C"

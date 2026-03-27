@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
+
+_LOG = logging.getLogger(__name__)
 
 from AIReviewer.core.models import FileChange
 from AIReviewer.core.vcs_adapter import (
@@ -91,10 +94,20 @@ class GitLabAdapter:
     # ------------------------------------------------------------------
 
     def get_diff(self, pr_id: int) -> list[FileChange]:
-        """Fetch MR diff from GitLab API (MR IID). Parse into FileChange objects."""
-        resp = self._request("GET", f"/merge_requests/{pr_id}/changes")
-        raw_changes: list[dict[str, Any]] = resp.get("changes", [])
+        """Fetch MR diff from GitLab API (MR IID). Parse into FileChange objects.
 
+        GET /projects/{project_id}/merge_requests/{iid}/changes
+        Returns {changes: [{old_path, new_path, diff, new_file, deleted_file, renamed_file, ...}]}
+        Each changes[].diff is a unified diff hunk fragment; additions/deletions are
+        counted directly since the fragment is not a full git-diff header.
+        """
+        try:
+            resp = self._request("GET", f"/merge_requests/{pr_id}/changes")
+        except Exception as exc:
+            _LOG.warning("get_diff failed for MR %s: %s", pr_id, exc)
+            return []
+
+        raw_changes: list[dict[str, Any]] = resp.get("changes", [])
         changes: list[FileChange] = []
         for c in raw_changes:
             diff_text = c.get("diff", "")
@@ -104,8 +117,6 @@ class GitLabAdapter:
                 change_type = "added"
             elif c.get("deleted_file"):
                 change_type = "deleted"
-            elif c.get("renamed_file"):
-                change_type = "modified"
             else:
                 change_type = "modified"
 
@@ -123,37 +134,67 @@ class GitLabAdapter:
     def post_inline_comment(
         self, pr_id: int, position: DiffPosition, body: str
     ) -> bool:
-        """Post a discussion note at the given diff position."""
-        payload: dict[str, Any] = {
-            "body": body,
-            "position": {
-                "position_type": "text",
-                "new_path": position.file_path,
-                "old_path": position.file_path,
-                "new_line": position.new_line or position.line_number,
-            },
+        """Post an inline discussion note on the MR.
+
+        POST /projects/{project_id}/merge_requests/{iid}/discussions
+        Returns True on success, False on error.
+        """
+        pos_obj: dict[str, Any] = {
+            "base_sha": position.commit_id,
+            "head_sha": position.commit_id,
+            "position_type": "text",
+            "old_path": position.file_path,
+            "new_path": position.file_path,
+            "new_line": position.new_line or position.line_number,
         }
         if position.line_code:
-            payload["position"]["line_code"] = position.line_code
-        self._request(
-            "POST",
-            f"/merge_requests/{pr_id}/discussions",
-            payload,
-        )
-        return True
+            pos_obj["line_code"] = position.line_code
+        try:
+            self._request(
+                "POST",
+                f"/merge_requests/{pr_id}/discussions",
+                {"body": body, "position": pos_obj},
+            )
+            return True
+        except Exception as exc:
+            _LOG.warning("post_inline_comment failed for MR %s: %s", pr_id, exc)
+            return False
 
     def post_summary_comment(self, pr_id: int, body: str) -> bool:
-        """Post a top-level MR note with the full review summary."""
-        self._request(
-            "POST",
-            f"/merge_requests/{pr_id}/notes",
-            {"body": body},
-        )
-        return True
+        """Post a top-level MR note (not a discussion).
+
+        POST /projects/{project_id}/merge_requests/{iid}/notes
+        Returns True on success, False on error.
+        """
+        try:
+            self._request(
+                "POST",
+                f"/merge_requests/{pr_id}/notes",
+                {"body": body},
+            )
+            return True
+        except Exception as exc:
+            _LOG.warning("post_summary_comment failed for MR %s: %s", pr_id, exc)
+            return False
 
     def get_existing_comments(self, pr_id: int) -> list[dict]:
-        """Return existing discussion notes on the MR."""
-        return self._request("GET", f"/merge_requests/{pr_id}/notes")
+        """Fetch all discussion notes on the MR, flattened from discussions.
+
+        GET /projects/{project_id}/merge_requests/{iid}/discussions
+        Each discussion has a notes[] array; all notes are collected into a
+        single flat list.  Returns [] on error.
+        """
+        try:
+            discussions: list[dict[str, Any]] = self._request(
+                "GET", f"/merge_requests/{pr_id}/discussions"
+            )
+            notes: list[dict] = []
+            for discussion in discussions:
+                notes.extend(discussion.get("notes", []))
+            return notes
+        except Exception as exc:
+            _LOG.warning("get_existing_comments failed for MR %s: %s", pr_id, exc)
+            return []
 
     def resolve_position(
         self, file_path: str, line_number: int, diff: str
