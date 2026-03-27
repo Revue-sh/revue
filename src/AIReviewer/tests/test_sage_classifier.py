@@ -9,6 +9,7 @@ from AIReviewer.core.sage_classifier import (
     _is_line_in_diff,
     _match_fixable_patterns,
     _apply_agent_rules,
+    DEFAULT_MIN_CONFIDENCE,
 )
 from AIReviewer.core.models import AIReview, FixabilityResult
 
@@ -240,9 +241,8 @@ class TestClassifyFinding:
         assert result.confidence == 50.0
         assert result.category == "context-dependent"
     
-    def test_confidence_threshold(self):
-        """Only mark fixable if confidence >= 70."""
-        # Create a finding that matches a pattern with confidence < 70
+    def test_confidence_threshold_default(self):
+        """Default threshold (70) — missing_null_check at confidence 70 is fixable."""
         finding = AIReview(
             file_path="app/auth.py",
             line_number=12,
@@ -252,13 +252,41 @@ class TestClassifyFinding:
             confidence=0.60,
             category="code-quality-expert"
         )
-        
-        # missing_null_check pattern has confidence 70
+        # missing_null_check pattern has confidence 70, equals DEFAULT_MIN_CONFIDENCE
         result = classify_finding(finding, SAMPLE_DIFF)
-        
-        # Should be fixable because pattern confidence is exactly 70
         assert result.is_fixable is True
+        assert result.confidence == float(DEFAULT_MIN_CONFIDENCE)
+
+    def test_confidence_threshold_configurable_strict(self):
+        """Raising min_confidence to 90 blocks patterns below that threshold."""
+        finding = AIReview(
+            file_path="app/auth.py",
+            line_number=12,
+            severity="minor",
+            issue="Missing null check",
+            suggestion="Add if not username check",
+            confidence=0.60,
+            category="code-quality-expert"
+        )
+        # missing_null_check confidence is 70 — below strict threshold of 90
+        result = classify_finding(finding, SAMPLE_DIFF, min_confidence=90)
+        assert result.is_fixable is False
         assert result.confidence == 70.0
+
+    def test_confidence_threshold_configurable_strict_high_confidence_pattern(self):
+        """At min_confidence=90, hardcoded_secret (confidence 90) is still fixable."""
+        finding = AIReview(
+            file_path="app/auth.py",
+            line_number=11,
+            severity="critical",
+            issue="Hardcoded API key detected",
+            suggestion="Move to environment variable",
+            confidence=0.95,
+            category="security-analyst"
+        )
+        result = classify_finding(finding, SAMPLE_DIFF, min_confidence=90)
+        assert result.is_fixable is True
+        assert result.confidence == 90.0
 
 
 class TestFixabilityResult:

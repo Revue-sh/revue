@@ -9,6 +9,21 @@ Categorizes code review findings as:
 
 No AI calls — fast, deterministic pattern matching.
 
+Confidence threshold
+--------------------
+The ``min_confidence`` parameter in ``classify_finding()`` controls when Sage
+marks a finding as fixable.  The PRD originally recommended 90 % as the
+default, but the pattern registry includes patterns with confidence as low as
+70 % (e.g. ``missing_null_check``).  Setting the threshold at 90 % would make
+those patterns permanently unreachable, so the shipped default is **70 %**.
+
+This is a deliberate, project-level decision — not a bug.  The value is
+configurable per project via ``.revue.yml`` → ``review.min_confidence``.
+Teams that want stricter behaviour (fewer but higher-confidence suggestions)
+can raise it to 90 or above.
+
+See: docs/sage-confidence-threshold.md for customer-facing explanation.
+
 TODO (future):
 - Precompile regex patterns for performance (currently minor, but matters at scale)
 - Support context diff format (currently assumes unified diff)
@@ -19,6 +34,10 @@ TODO (future):
 import re
 from typing import Optional
 from .models import AIReview, FixabilityResult
+
+# Default confidence threshold — configurable via .revue.yml (review.min_confidence)
+# See module docstring for rationale on 70 vs the PRD's original 90 recommendation.
+DEFAULT_MIN_CONFIDENCE: int = 70
 
 
 # Pattern registry for known auto-fixable issues
@@ -176,26 +195,29 @@ def _apply_agent_rules(finding: AIReview) -> Optional[dict]:
 def classify_finding(
     finding: AIReview,
     diff: str,
-    file_content: str = ""
+    file_content: str = "",
+    min_confidence: int = DEFAULT_MIN_CONFIDENCE,
 ) -> FixabilityResult:
     """
     Classify if a code review finding can be auto-fixed by Sage.
-    
+
     Args:
-        finding: The AI review finding to classify
-        diff: The full diff string (unified diff format)
-        file_content: Optional full file content for pattern matching
-    
+        finding: The AI review finding to classify.
+        diff: The full diff string (unified diff format).
+        file_content: Optional full file content for pattern matching.
+        min_confidence: Minimum confidence score (0–100) for a finding to be
+            marked ``is_fixable=True``.  Defaults to ``DEFAULT_MIN_CONFIDENCE``
+            (70).  Pass the value from ``AIConfig.min_confidence`` so teams can
+            override it via ``.revue.yml`` → ``review.min_confidence``.
+
     Returns:
-        FixabilityResult with classification, confidence, and reasoning
-    
+        FixabilityResult with classification, confidence, and reasoning.
+
     Classification logic:
-    1. If finding line not in diff → unfixable (100% confidence)
-    2. If matches known fixable pattern → self-contained (pattern confidence)
-    3. If agent-specific rule applies → apply rule
-    4. Default → context-dependent (50% confidence)
-    
-    Only marks is_fixable=True if confidence >= 70.
+    1. If finding line not in diff → unfixable (confidence 100, is_fixable False)
+    2. If matches known fixable pattern → self-contained if confidence >= min_confidence
+    3. If agent-specific rule applies → context-dependent (never auto-fixed)
+    4. Default → context-dependent (confidence 50)
     """
     # Step 1: Check if line is in the diff
     if not _is_line_in_diff(finding.file_path, finding.line_number, diff):
@@ -205,29 +227,29 @@ def classify_finding(
             category="unfixable",
             reason="finding line not in diff (unchanged code)"
         )
-    
+
     # Step 2: Check for known fixable patterns
     pattern_match = _match_fixable_patterns(finding, file_content)
     if pattern_match:
         confidence = pattern_match["confidence"]
         return FixabilityResult(
-            is_fixable=(confidence >= 70),
+            is_fixable=(confidence >= min_confidence),
             confidence=float(confidence),
             category=pattern_match["category"],
             reason="matched known fixable pattern"
         )
-    
-    # Step 3: Apply agent-specific rules
+
+    # Step 3: Apply agent-specific rules (always context-dependent — never auto-fixed)
     agent_rule = _apply_agent_rules(finding)
     if agent_rule:
         confidence = agent_rule["default_confidence"]
         return FixabilityResult(
-            is_fixable=False,  # Agent rules are for context-dependent findings
+            is_fixable=False,
             confidence=float(confidence),
             category=agent_rule["default_category"],
             reason=agent_rule["reason"]
         )
-    
+
     # Step 4: Default to context-dependent
     return FixabilityResult(
         is_fixable=False,
