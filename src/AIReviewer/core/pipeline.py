@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from .ai_config import AIConfig
 from .ai_client import AIClient, create_ai_client
 from .diff_parser import parse_diff_file, filter_changes
+from .diff_limit import check_diff_limit, DiffLimitResult
 from .models import FileChange
 
 
@@ -35,6 +36,17 @@ class ReviewPipeline:
     def run(self, diff_path: str) -> tuple[list[ReviewResult], list[FileChange]]:
         """Returns (results, excluded_files)."""
         changes = parse_diff_file(diff_path)
+
+        # Hard diff limit check — runs before any AI call (non-blocking warning per PRD)
+        limit_result = check_diff_limit(changes, self.config.max_diff_lines)
+        if limit_result.exceeded:
+            warning = ReviewResult(
+                file_path="[diff-limit]",
+                response=limit_result.suggestion,
+                error="",
+            )
+            return [warning], []
+
         included, excluded = filter_changes(
             changes, self.config.ignore_patterns, self.config.max_diff_lines
         )

@@ -126,3 +126,24 @@ def test_pipeline_result_success_property():
 
     assert ok.success is True
     assert err.success is False
+
+
+def test_pipeline_stops_at_diff_limit():
+    """When diff exceeds limit, pipeline returns a single warning result without calling client."""
+    mock_client = MagicMock()
+    config = _config(max_diff_lines=100)
+    pipeline = ReviewPipeline(config, client=mock_client)
+
+    # 2 files × 100 lines each = 200 lines > limit 100
+    big_files = [
+        FileChange(file_path=f"big{i}.py", change_type="modified",
+                   additions=60, deletions=40, diff="")
+        for i in range(2)
+    ]
+    with patch("AIReviewer.core.pipeline.parse_diff_file", return_value=big_files):
+        results, excluded = pipeline.run("fake.diff")
+
+    assert not mock_client.complete.called
+    assert len(results) == 1
+    assert results[0].file_path == "[diff-limit]"
+    assert "too large" in results[0].response.lower()
