@@ -97,7 +97,7 @@
 - [ ] **[68]** Conversion analytics dashboard — Free→Indie→Pro funnel, reviews/month buckets, referral source tracking *(M, ~2 days)*
 - [ ] **[69]** GitHub Action + GitLab Component install documentation — "how to add Revue to your repo" quickstart guide included in marketplace listing *(S, ~1 day)*
 - [x] **[70]** Bitbucket repository setup — create revue.io repo on Bitbucket, push existing codebase, configure branch protection and access *(S, ~1 day)* ✅ Done — git@bitbucket.org:cbscd/revue.git
-- [ ] **[71]** Nuitka build pipeline — compile orchestrator core to native binaries (.so), build matrix (Linux x86_64, ARM64, macOS ARM64), package as platform-specific .whl and Docker image for Enterprise *(M, ~3–5 days)*
+- [ ] **[71]** Nuitka build pipeline — compile orchestrator core (`pipeline`, `agent_runner`, `cleo_router`, `nova_consolidator`, `sage_*`, `shared_analysis`, `contradiction_*`) to native `.so` binaries; agent `.md`/`.yaml` definitions distributed as-is (readable by design); build matrix: Linux x86_64, ARM64 + macOS ARM64; package as platform-specific `.whl` (Free/Indie/Pro) and Docker image (Enterprise) *(M, ~3–5 days)*
 - [ ] **[72]** Runtime license key validation — POST /api/license/validate on orchestrator startup, returns tier + agents allowed + reviews remaining, hard stop on invalid key, 72h offline grace period for Enterprise *(M, ~2–3 days)*
 
 ### 🗄️ Archived (5 — superseded, do not implement)
