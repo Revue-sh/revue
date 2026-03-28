@@ -124,7 +124,7 @@
 | [014] | CI runner integration — GitHub Actions step | M |
 | [015] | CI runner integration — GitLab CI include template | S |
 | [033] | Self-service workspace onboarding — web UI | L |
-| [034] | Free tier enforcement — 100 runs/month | M |
+| [034] | Free tier enforcement — 25 runs/month cap + license key validation | M |
 | [037] | Documentation site | M |
 | **Total** | | **18pts** |
 
@@ -136,7 +136,7 @@
 
 | Story | Subject | Size |
 |-------|---------|------|
-| [035] | Stripe billing integration — Pro and Team tier | L |
+| [035] | Stripe billing integration — Indie, Pro, and Enterprise tiers | L |
 | [036] | Basic analytics — review run history and issue trends | M |
 | **Total** | | **8pts** |
 

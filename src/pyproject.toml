@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-revue = "AIReviewer.cli:main"
+revue = "revue.cli:main"
 
 [tool.pytest.ini_options]
-testpaths = ["AIReviewer/tests"]
+testpaths = ["revue/tests"]

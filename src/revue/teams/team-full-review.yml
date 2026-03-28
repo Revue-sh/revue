@@ -1,0 +1,28 @@
+team:
+  name: Full Review
+  id: team-full-review
+  icon: 🔍
+  description: |
+    Comprehensive multi-agent review engaging all specialist agents in parallel.
+    Best for complex features, large diffs, or when maximum coverage is needed.
+  when_to_use: |
+    - Complex feature changes
+    - Diffs between 50–500 lines with no dominant language
+    - Unknown or mixed tech stacks
+    - Architectural changes
+  timeout_seconds: 90
+
+agents:
+  primary:
+    - cleo
+    - maya
+    - nova
+  secondary:
+    - zara
+    - kai
+    - leo
+
+triggers:
+  languages: []       # matches any language
+  file_patterns: []   # matches any file
+  keywords: []        # no keyword filter — always eligible as fallback

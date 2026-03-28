@@ -108,48 +108,70 @@ Based on 2024/2025 developer surveys (Stack Overflow, JetBrains, Octoverse):
 - Complex billing, unpredictable for customers
 - Suitable range: $0.05–0.50/review run
 
-### Option D: Hybrid Tier Model (Recommended)
+### Option D: Hybrid Tier Model (Adopted)
+
+> **Critical differentiator:** Revue uses BYOK (Bring Your Own Key) — users pay their AI provider directly. Revue charges only for orchestration, not AI compute. Pricing must be evaluated as Total Cost of Ownership (TCO = Revue price + user's AI spend), not compared directly to competitor sticker prices.
 
 ```
-Free Tier (OSS / solo devs):
-  - Single-agent mode only
+Free Tier (Hobbyists / OSS maintainers):
+  - Basic agent only (1 agent)
+  - 25 review runs/month
+  - GitHub + GitLab
+  - BYOK only (user's own AI API key)
+  - Community support
+  - Typical TCO: ~$0.50/month (AI cost only)
+
+Indie Tier ($9/month | $79/year):
+  - All 6 agents
   - 100 review runs/month
   - GitHub + GitLab
-  - BYOK (bring your own key) only
-  - Community support
-
-Pro Tier ($29/month per workspace):
-  - Multi-agent BMAD mode
-  - Unlimited review runs
-  - All platforms (GitHub, GitLab, Bitbucket, AzDO)
-  - Built-in AI (Revue-managed, fair use)
-  - BYOK supported
-  - Configurable blocking rules
+  - BYOK only
   - Email support
+  - Typical TCO: ~$19/month (Revue $9 + ~$10 AI cost)
 
-Team Tier ($99/month per workspace, up to 20 repos):
-  - Everything in Pro
-  - Custom agents
+Pro Tier ($29/month | $249/year):
+  - All 6 agents
+  - Unlimited review runs
+  - All platforms (GitHub, GitLab; Bitbucket + AzDO post-MVP)
+  - BYOK only
   - Priority support
-  - Review analytics dashboard
-  - Slack/Teams notifications
+  - Typical TCO: ~$59–79/month (team of 5)
 
-Enterprise (Custom pricing):
-  - Self-hosted Revue backend option
-  - SSO/SAML
-  - Custom AI Gateway support
-  - SLA + dedicated support
-  - Audit logs + compliance exports
+Enterprise Starter ($59/month | $499/year — self-serve, 1–10 seats):
+  - All 6 agents + custom rules
+  - Unlimited reviews
+  - Offline license option (Post-MVP)
+  - Email support + setup call
+
+Enterprise Growth ($149/month | $1,249/year — light-touch, 11–50 seats):
+  - Everything in Starter
+  - Dedicated support
+  - SLA
+
+Enterprise Plus (Custom — high-touch sales, 51+ seats):
+  - Everything in Growth
+  - Docker image (Cython-compiled, hardware-bound license)
+  - SSO/SAML, audit logs, compliance exports
+  - Custom integrations, dedicated account manager
 ```
 
-**Rationale for hybrid model:**
-- Free tier drives bottom-up adoption (developers install it, companies pay)
-- Workspace pricing avoids per-seat friction
-- BYOK in free tier lowers barrier to entry
-- Usage is naturally capped by the team's CI activity, not per-dev counting
+**Rationale for this tier structure:**
+- Free tier (25 runs) creates urgency without blocking evaluation
+- Indie ($9) is an impulse purchase; removes price friction for solo devs
+- Pro ($29) differentiates on unlimited volume — no anxiety about CI costs
+- Enterprise flat-rate eliminates the per-seat growth tax
+- Custom agents and custom models deferred to Post-MVP to protect launch timeline
+
+**TCO Competitiveness vs CodeRabbit (the closest direct competitor):**
+
+| User | CodeRabbit | Revue TCO | Revue advantage |
+|------|-----------|-----------|-----------------|
+| Solo dev | $12/dev/mo | ~$19/mo (Indie) | Multi-agent, code stays in CI |
+| Team of 5 | $60/mo | ~$59–79/mo (Pro) | Parity on TCO, massively better reviews |
+| Team of 20 | $240/mo | ~$149–199/mo (Enterprise) | Cheaper + enterprise features |
 
 **Monetisation signal from competitors:**
-CodeRabbit charges ~$12/dev/month and is reportedly growing fast with a freemium strategy. Revue can compete on deeper specialisation (multi-agent), more open AI backend, and better hybrid deployment.
+CodeRabbit charges ~$12/dev/month and is reportedly growing fast with a freemium strategy. Revue can compete on deeper specialisation (multi-agent), more open AI backend, and better hybrid deployment. The BYOK model also means Revue's margins are structurally higher than any competitor absorbing AI costs.
 
 ---
 
@@ -184,13 +206,13 @@ CodeRabbit charges ~$12/dev/month and is reportedly growing fast with a freemium
 - GitHub App for one-click install
 - Free tier with generous limits
 - Write content around the "4 layers" framework and agentic review loop
-- Target: 500 free installs → 50 paid conversions
+- Target: 500 free installs → 50 paid conversions (Free → Indie or Pro)
 
 ### Phase 2 — Bottom-Up Enterprise (Months 6–12)
-- Self-service upgrade path to Team tier
+- Self-service upgrade path to Indie → Pro tiers
 - Integrations: Slack, Linear, Jira notifications
 - Review analytics (track issue trends, false positive rates)
-- Target: 200 paying workspaces, $50K MRR
+- Target: 200 paying workspaces (Indie + Pro), $12K MRR (avg $60/workspace)
 
 ### Phase 3 — Enterprise Expansion (12–24 months)
 - Enterprise tier with SSO, audit logs, SLA

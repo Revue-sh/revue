@@ -1,5 +1,5 @@
 # Revue.io — Product Requirements Document
-**Version:** 1.3  
+**Version:** 1.4  
 **Date:** March 2026  
 **Status:** Draft  
 **Owner:** Revue Team
@@ -109,49 +109,44 @@ Layer 3: CI/CD PR review ──────────── Revue multi-agent 
 Layer 4: Human review ─────────────── Human decision (Revue output informs this)
 ```
 
-### 4.2 Deployment Model (Hybrid)
+### 4.2 Deployment Model (On-Premise Orchestrator)
+
+Revue's orchestrator runs **entirely inside the customer's CI environment**. Source code and diffs never leave the customer's infrastructure.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     Revue Cloud                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ Orchestration│  │  Agent Store │  │  Analytics   │  │
-│  │   Service    │  │  & Config    │  │  Dashboard   │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-└────────────────────────┬────────────────────────────────┘
-                         │  config + webhooks
-                         │  (no source code)
-┌────────────────────────▼────────────────────────────────┐
-│              Customer's CI Runner                       │
-│                                                         │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │              Revue Agent Runner                 │   │
-│  │  (checked out by CI pipeline, runs locally)     │   │
-│  │                                                 │   │
-│  │  Fetches diff via VCS API                       │   │
-│  │  Runs agents locally against AI backend         │   │
-│  │  Posts comments back via VCS API                │   │
-│  └───────────────────┬─────────────────────────────┘   │
-└──────────────────────│──────────────────────────────────┘
-                       │  API calls only
-          ┌────────────▼─────────────┐
-          │      AI Backend          │
-          │  (customer's choice)     │
-          │  OpenAI / Anthropic /    │
-          │  Azure / OpenRouter /    │
-          │  Custom Gateway          │
-          └──────────────────────────┘
+User's Repo → CI Trigger → Revue Orchestrator (runs on CI runner)
+                                    │
+                          Validates license key
+                                    │
+                             ┌──────▼──────┐
+                             │  Revue API  │  ← license validation + usage
+                             │  (cloud)    │    tracking only (no code)
+                             └─────────────┘
+                                    │
+                          User's AI Provider API Key
+                                    │
+                    ┌───────────────▼───────────────┐
+                    │  OpenAI / Anthropic / Azure /  │
+                    │  OpenRouter / Custom Gateway   │
+                    └───────────────┬───────────────┘
+                                    │
+                         Review Results → PR/MR Comment
 ```
 
-**Key point — data flows explained clearly:**
-- **Revue's cloud** receives only configuration and webhook triggers — never source code or diffs
-- **The diff** is sent directly from the CI runner to the customer's chosen AI backend (OpenAI, Anthropic, Azure, etc.) under the customer's own API key and that provider's data terms
-- Teams using Azure OpenAI with zero data retention, or a self-hosted model, have full data sovereignty
-- Teams using public OpenAI/Anthropic should review their provider's data handling policies
+**What Revue's cloud sees (license + usage API only):**
+- License key validation: `{ key, repo_id, ci_run_id }` — **no source code**
+- Usage tracking: `{ key, agents_used, duration_ms }` — **no source code**
+
+**What Revue's cloud never sees:**
+- PR/MR diffs
+- Source code
+- Review findings
+
+**IP Protection:**
+- **Free / Indie / Pro tiers:** Orchestrator distributed as a **PyArmor-encrypted Python wheel** (`.whl`) — source cannot be decompiled or read
+- **Enterprise tier:** Orchestrator distributed as a **Docker image with Cython-compiled binaries** — binary-level protection, hardware-bound license keys available
 
 **Webhook security:** All incoming webhooks are verified using platform-native secret tokens (GitHub webhook secrets, GitLab secret tokens). Requests with invalid signatures are rejected before processing.
-
-This is consistent with the current design of the existing GitLab implementation and extends it cleanly.
 
 ### 4.3 Multi-Agent BMAD Architecture
 
@@ -652,7 +647,68 @@ A consolidated summary posted to the PR/MR:
 
 ---
 
-## 11. Phased Roadmap
+## 11. Pricing & Tiers
+
+### 11.1 Tier Comparison
+
+> **BYOK model:** Users pay their AI provider directly (OpenAI, Anthropic, etc.). Revue charges only for orchestration, prompt engineering, and agent coordination — not AI compute. This is structurally different from competitors who absorb AI costs, and must be communicated clearly in all pricing pages.
+
+| Feature | Free | Indie | Pro | Enterprise |
+|---------|------|-------|-----|------------|
+| **Reviews/month** | 25 | 100 | Unlimited | Unlimited |
+| **Agents** | Basic (1) | All 6 | All 6 | All 6 |
+| **Code location** | User's CI | User's CI | User's CI | User's CI or self-hosted |
+| **AI API keys** | User-provided | User-provided | User-provided | User-provided |
+| **Orchestrator** | PyArmor wheel | PyArmor wheel | PyArmor wheel | Docker image (Cython) |
+| **License validation** | Online | Online | Online | Online or offline |
+| **Custom rules** | ✅ | ✅ | ✅ | ✅ |
+| **Custom agents** | ❌ | ❌ | ❌ | ❌ (Post-MVP) |
+| **Custom models** | ❌ | ❌ | ❌ (Post-MVP) | ❌ (Post-MVP) |
+| **Support** | Community | Email | Priority | Dedicated + SLA |
+
+### 11.2 Pricing
+
+| Tier | Monthly | Annual | Target |
+|------|---------|--------|--------|
+| **Free** | $0 | $0 | Hobbyists, OSS maintainers |
+| **Indie** | $9/mo | $79/yr ($6.58/mo) | Solo devs, micro-teams |
+| **Pro** | $29/mo | $249/yr ($20.75/mo) | Startups, agencies (5–20 devs) |
+| **Enterprise Starter** (1–10 seats, self-serve) | $59/mo | $499/yr | Small enterprises |
+| **Enterprise Growth** (11–50 seats, light-touch) | $149/mo | $1,249/yr | Mid-size enterprises |
+| **Enterprise Plus** (51+ seats, high-touch sales) | Custom | Required annual | Large enterprises |
+
+**Total Cost of Ownership (TCO = Revue price + user's AI provider cost):**
+
+| Tier | Revue price | Typical AI cost (GPT-4o BYOK) | Monthly TCO |
+|------|-------------|-------------------------------|-------------|
+| Free | $0 | ~$0.50 | ~$0.50 |
+| Indie | $9 | ~$10 | ~$19 |
+| Pro | $29 | ~$30–50 (team of 5) | ~$59–79 |
+| Enterprise Starter | $59 | ~$50–80 | ~$109–139 |
+
+At Indie TCO (~$19/month), Revue is competitively positioned against CodeRabbit ($12/dev/month) for the value delivered: multi-agent specialised review, code staying on customer infrastructure, and BYOK data sovereignty.
+
+### 11.3 Free Tier Strategy
+
+Launch with **25 reviews/month** to create urgency to upgrade while still delivering value. Track conversion metrics for 6 months post-launch:
+
+- **Free → Indie conversion target:** >5% within 90 days
+- **Decision trigger:** If <3% convert → lower to 15/month. If >7% convert → limit is working, hold.
+- **Viral growth metric:** Track referral source on signup ("How did you hear about us?")
+
+A conversion tracking dashboard (Epic E6) will provide the data needed to make this decision with confidence.
+
+### 11.4 Enterprise Sales Process
+
+**Enterprise Starter (1–10 seats):** Fully self-serve. Auto-verify email domain + GitHub/GitLab org activity. Instant license key. No human involvement.
+
+**Enterprise Growth (11–50 seats):** Self-serve form + automated Slack alert to sales. Sales reviews within 4 hours, approves 99% of cases. Optional setup call offered in welcome email.
+
+**Enterprise Plus (51+ seats):** Smart chatbot pre-qualification (Intercom, ~$99/month) routes qualified leads to Calendly. Full 45-min discovery/demo/close call. 30-day 10-seat trial before full commitment. See `docs/enterprise-sales-playbook.md` for full call script.
+
+---
+
+## 12. Phased Roadmap
 
 ### Phase 1: Foundation — MVP (Months 1–3)
 **Goal:** Ship a working multi-agent CI reviewer for GitHub + GitLab
@@ -669,8 +725,8 @@ A consolidated summary posted to the PR/MR:
 | Inline + summary comments | P0 | |
 | Configurable blocking | P0 | |
 | Self-service workspace onboarding | P0 | Web UI |
-| Free tier (BYOK, 100 runs/month) | P1 | |
-| Pro tier billing | P1 | Stripe |
+| Free tier enforcement (BYOK, 25 runs/month cap, license key) | P1 | |
+| Indie + Pro tier billing | P1 | Stripe |
 | Basic analytics (run history, issue counts) | P1 | |
 | Documentation site | P1 | |
 
@@ -698,7 +754,7 @@ A consolidated summary posted to the PR/MR:
 
 ---
 
-## 12. Technical Constraints & Non-Goals
+## 13. Technical Constraints & Non-Goals
 
 ### Constraints
 - Source code and diffs must never be stored by Revue's cloud backend
@@ -719,13 +775,13 @@ A consolidated summary posted to the PR/MR:
 
 ---
 
-## 13. Open Questions
+## 14. Open Questions
 
 1. **Agent Marketplace:** Should community-contributed agents be hosted on revue.io or distributed via GitHub? → Recommend GitHub-hosted with a curated index on revue.io.
 2. **Cross-model review:** Priority for Phase 2 or 3? → High value differentiator, suggest Phase 2.
 3. **Sage v2 auto-commit:** When Sage pushes a fix autonomously — same commit on same branch, or a new commit? → New commit on same branch, clearly attributed to Revue (e.g. `[revue] fix: parameterise SQL query`).
 4. **Confidentiality of findings:** Should review comments be private (visible only to the PR author) or public by default? → Public by default, configurable.
-5. **Free tier limits:** 100 runs/month or time-based (30 days)? → 100 runs/month, resets monthly.
+5. **Free tier limits:** 25 runs/month, resets monthly. Rationale: enough to evaluate, not enough to avoid upgrading. Viral growth tracked via conversion metrics for 6 months post-launch before adjusting.
 6. **Sage confidence threshold:** Is 90% the right cutoff, or should teams be able to configure it? → Recommend 90% default, configurable per project in `.revue.yml`.
 
 ---

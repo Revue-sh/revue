@@ -1,14 +1,14 @@
 # Kanban Board — Revue.io
-**Last Updated:** 2026-03-27 16:46 GMT
+**Last Updated:** 2026-03-28 22:31 GMT
 **Source of Truth:** Taiga — http://localhost:9000/project/revueio/kanban
 **⚠️ This file is a mirror. If Taiga is available, prefer Taiga. Update this file whenever a story is closed.**
 
 ---
 
 ## Story Status Summary
-**Total:** 62 stories (51 Done + 6 open + 5 archived)
+**Total:** 64 stories (51 Done + 8 open + 5 archived)
 **Done:** 51 (82%)
-**To Do:** 6 (E6 active backlog)
+**To Do:** 8 (E6 active backlog)
 **Archived:** 5 (E6 duplicates — superseded by [62]–[67])
 **In Progress:** 0
 
@@ -83,22 +83,24 @@
 
 ## 📋 To Do — E6 Active Backlog (6 stories)
 
-### Epic E6 — Onboarding, Observability & Launch (0/6, Not started 🔜)
+### Epic E6 — Onboarding, Observability & Launch (0/8, Not started 🔜)
 
 **Recommended delivery order (per architecture dependencies):**
 1. [62] → [63] + [64] (parallel) → [65] → [66] | [67] anytime
 
 - [ ] **[62]** Workspace onboarding UI — sign-up, connect VCS, install app *(L, ~1 week)*
-- [ ] **[63]** Free tier enforcement — BYOK, 100 runs/month cap *(M, ~2 days)*
-- [ ] **[64]** Stripe billing — Pro and Team tier subscription management *(L, ~1 week)*
+- [ ] **[63]** Free tier enforcement — BYOK, 25 runs/month cap, license key validation *(M, ~2 days)*
+- [ ] **[64]** Stripe billing — Indie ($9), Pro ($29), Enterprise Starter ($59), Enterprise Growth ($149) tier subscription management *(L, ~1 week)*
 - [ ] **[65]** Run history dashboard — list reviews with status and findings summary *(M, ~2 days)*
 - [ ] **[66]** Basic analytics — finding trends by category and severity *(M, ~2 days)*
 - [ ] **[67]** Documentation site — getting started guide and .revue.yml reference *(M, ~2 days)*
+- [ ] **[68]** Conversion analytics dashboard — Free→Indie→Pro funnel, reviews/month buckets, referral source tracking *(M, ~2 days)*
+- [ ] **[69]** GitHub Action + GitLab Component install documentation — "how to add Revue to your repo" quickstart guide included in marketplace listing *(S, ~1 day)*
 
 ### 🗄️ Archived (5 — superseded, do not implement)
 - ~~[39]~~ Self-service workspace onboarding web UI → superseded by **[62]**
-- ~~[40]~~ Free tier enforcement 100 runs/month → superseded by **[63]**
-- ~~[41]~~ Stripe billing Pro and Team tier → superseded by **[64]**
+- ~~[40]~~ Free tier enforcement 100 runs/month → superseded by **[63]** (now 25 runs/month)
+- ~~[41]~~ Stripe billing Pro and Team tier → superseded by **[64]** (Indie/Pro/Enterprise tiers)
 - ~~[42]~~ Basic analytics run history + trends → split into **[65]** + **[66]**
 - ~~[43]~~ Documentation site → superseded by **[67]**
 
@@ -113,5 +115,5 @@
 | E3 — Agent System & Routing | 16 | 16/16 | ✅ Done |
 | E4 — Sage: The Resolver Agent | 5 | 5/5 | ✅ Done |
 | E5 — AI Backend & Configuration | 4 | 4/4 | ✅ Done |
-| E6 — Onboarding, Observability & Launch | 6 active (5 archived) | 0/6 | 🔜 Not started |
+| E6 — Onboarding, Observability & Launch | 8 active (5 archived) | 0/8 | 🔜 Not started |
 | E7 — Post-MVP Tech Debt & Improvements | 8 | 8/8 | ✅ Done |
