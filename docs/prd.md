@@ -143,8 +143,8 @@ User's Repo → CI Trigger → Revue Orchestrator (runs on CI runner)
 - Review findings
 
 **IP Protection:**
-- **Free / Indie / Pro tiers:** Orchestrator distributed as a **PyArmor-encrypted Python wheel** (`.whl`) — source cannot be decompiled or read
-- **Enterprise tier:** Orchestrator distributed as a **Docker image with Cython-compiled binaries** — binary-level protection, hardware-bound license keys available
+- **All tiers:** Orchestrator compiled to native C binaries using **Nuitka** — source cannot be decompiled or read. Distributed as platform-specific `.whl` (Free/Indie/Pro) or Docker image (Enterprise)
+- **Runtime enforcement:** License key validated on orchestrator startup via `POST /api/license/validate` — returns tier, agents allowed, reviews remaining. Hard stop on invalid key. 72h offline grace period for Enterprise airgapped environments
 
 **Webhook security:** All incoming webhooks are verified using platform-native secret tokens (GitHub webhook secrets, GitLab secret tokens). Requests with invalid signatures are rejected before processing.
 
@@ -659,7 +659,7 @@ A consolidated summary posted to the PR/MR:
 | **Agents** | Basic (1) | All 6 | All 6 | All 6 |
 | **Code location** | User's CI | User's CI | User's CI | User's CI or self-hosted |
 | **AI API keys** | User-provided | User-provided | User-provided | User-provided |
-| **Orchestrator** | PyArmor wheel | PyArmor wheel | PyArmor wheel | Docker image (Cython) |
+| **Orchestrator** | Nuitka .whl | Nuitka .whl | Nuitka .whl | Nuitka Docker image |
 | **License validation** | Online | Online | Online | Online or offline |
 | **Custom rules** | ✅ | ✅ | ✅ | ✅ |
 | **Custom agents** | ❌ | ❌ | ❌ | ❌ (Post-MVP) |

@@ -6,9 +6,9 @@
 ---
 
 ## Story Status Summary
-**Total:** 64 stories (51 Done + 8 open + 5 archived)
+**Total:** 67 stories (51 Done + 11 open + 5 archived)
 **Done:** 51 (82%)
-**To Do:** 8 (E6 active backlog)
+**To Do:** 11 (E6 active backlog)
 **Archived:** 5 (E6 duplicates — superseded by [62]–[67])
 **In Progress:** 0
 
@@ -83,7 +83,7 @@
 
 ## 📋 To Do — E6 Active Backlog (6 stories)
 
-### Epic E6 — Onboarding, Observability & Launch (0/8, Not started 🔜)
+### Epic E6 — Onboarding, Observability & Launch (0/11, Not started 🔜)
 
 **Recommended delivery order (per architecture dependencies):**
 1. [62] → [63] + [64] (parallel) → [65] → [66] | [67] anytime
@@ -96,6 +96,9 @@
 - [ ] **[67]** Documentation site — getting started guide and .revue.yml reference *(M, ~2 days)*
 - [ ] **[68]** Conversion analytics dashboard — Free→Indie→Pro funnel, reviews/month buckets, referral source tracking *(M, ~2 days)*
 - [ ] **[69]** GitHub Action + GitLab Component install documentation — "how to add Revue to your repo" quickstart guide included in marketplace listing *(S, ~1 day)*
+- [ ] **[70]** Bitbucket repository setup — create revue.io repo on Bitbucket, push existing codebase, configure branch protection and access *(S, ~1 day)*
+- [ ] **[71]** Nuitka build pipeline — compile orchestrator core to native binaries (.so), build matrix (Linux x86_64, ARM64, macOS ARM64), package as platform-specific .whl and Docker image for Enterprise *(M, ~3–5 days)*
+- [ ] **[72]** Runtime license key validation — POST /api/license/validate on orchestrator startup, returns tier + agents allowed + reviews remaining, hard stop on invalid key, 72h offline grace period for Enterprise *(M, ~2–3 days)*
 
 ### 🗄️ Archived (5 — superseded, do not implement)
 - ~~[39]~~ Self-service workspace onboarding web UI → superseded by **[62]**
@@ -115,5 +118,5 @@
 | E3 — Agent System & Routing | 16 | 16/16 | ✅ Done |
 | E4 — Sage: The Resolver Agent | 5 | 5/5 | ✅ Done |
 | E5 — AI Backend & Configuration | 4 | 4/4 | ✅ Done |
-| E6 — Onboarding, Observability & Launch | 8 active (5 archived) | 0/8 | 🔜 Not started |
+| E6 — Onboarding, Observability & Launch | 11 active (5 archived) | 0/11 | 🔜 Not started |
 | E7 — Post-MVP Tech Debt & Improvements | 8 | 8/8 | ✅ Done |

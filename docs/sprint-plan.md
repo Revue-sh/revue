@@ -126,7 +126,10 @@
 | [033] | Self-service workspace onboarding — web UI | L |
 | [034] | Free tier enforcement — 25 runs/month cap + license key validation | M |
 | [037] | Documentation site | M |
-| **Total** | | **18pts** |
+| [070] | Bitbucket repository setup — create repo, push codebase, branch protection, access config | S |
+| [071] | Nuitka build pipeline — compile orchestrator core to native binaries, build matrix (Linux x86_64/ARM64, macOS ARM64), package as .whl + Docker image | M |
+| [072] | Runtime license key validation — startup validation, tier/agent enforcement, 72h offline grace period | M |
+| **Total** | | **24pts** |
 
 ---
 
@@ -158,6 +161,9 @@
 [012][013] Adapters ─────────────────────────────────────► [022] [023] [024] [025]
 [022][023] Sage core ────────────────────────────────────► [024] [025] [026]
 [033] Onboarding ────────────────────────────────────────► [034] [035]
+[070] Bitbucket repo ──────────────────────────────────────► [071] (Nuitka CI needs a repo)
+[071] Nuitka pipeline ─────────────────────────────────────► Launch artefacts (.whl, Docker)
+[072] License validation ────────────────────────────────── ► [034] (free tier enforcement uses license API)
 ```
 
 ---

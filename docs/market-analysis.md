@@ -150,7 +150,7 @@ Enterprise Growth ($149/month | $1,249/year — light-touch, 11–50 seats):
 
 Enterprise Plus (Custom — high-touch sales, 51+ seats):
   - Everything in Growth
-  - Docker image (Cython-compiled, hardware-bound license)
+  - Docker image (Nuitka-compiled native binaries, hardware-bound license)
   - SSO/SAML, audit logs, compliance exports
   - Custom integrations, dedicated account manager
 ```
