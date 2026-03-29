@@ -4,12 +4,17 @@ Accepts injected AIClient for testability (DIP).
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
+from typing import Optional
+
 from .ai_config import AIConfig
 from .ai_client import AIClient, create_ai_client
 from .diff_parser import parse_diff_file, filter_changes
 from .diff_limit import check_diff_limit, DiffLimitResult
+from .license_validator import LicenseInfo, validate as validate_license
 from .models import FileChange
+from .usage_tracker import check_reviews_left, track as track_usage
 
 
 @dataclass
@@ -27,14 +32,32 @@ class ReviewPipeline:
     """Orchestrates a single diff review run.
 
     Pass client= to inject a mock for testing (DIP).
+    Pass license_info= to inject a pre-validated LicenseInfo (avoids API call in tests).
     """
 
-    def __init__(self, config: AIConfig, client: AIClient | None = None) -> None:
+    def __init__(
+        self,
+        config: AIConfig,
+        client: AIClient | None = None,
+        license_info: LicenseInfo | None = None,
+    ) -> None:
         self.config = config
         self._client: AIClient = client if client is not None else create_ai_client(config)
+        self._license_info: LicenseInfo | None = license_info
 
     def run(self, diff_path: str) -> tuple[list[ReviewResult], list[FileChange]]:
-        """Returns (results, excluded_files)."""
+        """Returns (results, excluded_files).
+
+        Validates license and checks review limits before running agents.
+        Tracks usage after a successful review (fire-and-forget).
+        """
+        # --- License validation ---
+        license_info = self._license_info or validate_license(
+            repo_id=self.config.gitlab_project_id,
+        )
+        check_reviews_left(license_info.reviews_left)
+
+        # --- Diff parsing ---
         changes = parse_diff_file(diff_path)
 
         # Hard diff limit check — runs before any AI call (non-blocking warning per PRD)
@@ -50,6 +73,10 @@ class ReviewPipeline:
         included, excluded = filter_changes(
             changes, self.config.ignore_patterns, self.config.max_diff_lines
         )
+
+        start_ms = int(time.time() * 1000)
+        agents_used: list[str] = ["orchestrator"]
+
         results: list[ReviewResult] = []
         for fc in included:
             try:
@@ -63,6 +90,20 @@ class ReviewPipeline:
                     temperature=self.config.ai_temp,
                 )
                 results.append(ReviewResult(file_path=fc.file_path, response=response))
+                if "code-quality-expert" not in agents_used:
+                    agents_used.append("code-quality-expert")
             except Exception as exc:
                 results.append(ReviewResult(file_path=fc.file_path, response="", error=str(exc)))
+
+        duration_ms = int(time.time() * 1000) - start_ms
+
+        # --- Usage tracking (fire-and-forget) ---
+        if license_info.key:
+            track_usage(
+                key=license_info.key,
+                repo_id=self.config.gitlab_project_id,
+                agents_used=agents_used,
+                duration_ms=duration_ms,
+            )
+
         return results, excluded

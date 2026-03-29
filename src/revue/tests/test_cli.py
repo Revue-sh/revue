@@ -11,8 +11,18 @@ import pytest
 
 from revue.cli import build_parser, cmd_init, cmd_review, cmd_validate
 from revue.core.config_loader import DEFAULT_REVUE_YML
+from revue.core.license_validator import LicenseInfo
 from revue.core.models import FileChange
 from revue.core.pipeline import ReviewPipeline, ReviewResult
+
+
+def _stub_license_info() -> LicenseInfo:
+    return LicenseInfo(
+        valid=True, tier="pro",
+        agents_allowed=["orchestrator", "code-quality-expert", "consolidator"],
+        reviews_left=None, expires_at="2027-01-01T00:00:00Z",
+        key="test-license-key",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +121,9 @@ def test_review_calls_ai_client(tmp_path, capsys):
     def _factory(config):
         return ReviewPipeline(config, client=mock_client)
 
-    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key-123"}):
+    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key-123"}), \
+         patch("revue.core.pipeline.validate_license", return_value=_stub_license_info()), \
+         patch("revue.core.pipeline.track_usage"):
         args = _parse_args(["review", f"--diff={diff_file}", f"--config={config_file}"])
         rc = cmd_review(args, pipeline_factory=_factory)
 
@@ -142,7 +154,9 @@ def test_review_filter_excludes_files(mock_parse, tmp_path, capsys):
     def _factory(config):
         return ReviewPipeline(config, client=mock_client)
 
-    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key-123"}):
+    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key-123"}), \
+         patch("revue.core.pipeline.validate_license", return_value=_stub_license_info()), \
+         patch("revue.core.pipeline.track_usage"):
         args = _parse_args(["review", f"--diff={diff_file}", f"--config={config_file}"])
         rc = cmd_review(args, pipeline_factory=_factory)
 
@@ -176,7 +190,9 @@ def test_review_cli_provider_override(mock_parse, tmp_path, capsys):
         captured_config["provider"] = config.provider
         return ReviewPipeline(config, client=mock_client)
 
-    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key-123"}):
+    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key-123"}), \
+         patch("revue.core.pipeline.validate_license", return_value=_stub_license_info()), \
+         patch("revue.core.pipeline.track_usage"):
         args = _parse_args([
             "review",
             f"--diff={diff_file}",
