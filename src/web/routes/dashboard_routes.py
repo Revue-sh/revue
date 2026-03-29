@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from auth import get_session
 from database import get_db
-from models import get_license_for_user, get_recent_reviews
+from models import get_license_for_user, get_recent_reviews, get_all_runs_for_user
 from config import templates
 
 router = APIRouter()
@@ -72,6 +72,41 @@ async def onboarding(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "onboarding.html", {
         "session": session,
         "license_key": license_key,
+    })
+
+
+@router.get("/runs", response_class=HTMLResponse)
+async def run_history(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse("/login", status_code=303)
+
+    user_id = session["user_id"]
+    page = int(request.query_params.get("page", 1))
+    repo_filter = request.query_params.get("repo", "")
+    status_filter = request.query_params.get("status", "")
+    limit = 25
+    offset = (page - 1) * limit
+
+    with get_db() as conn:
+        runs, total = get_all_runs_for_user(
+            conn,
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+            repo_id=repo_filter or None,
+            status=status_filter or None,
+        )
+
+    total_pages = max(1, (total + limit - 1) // limit)
+    return templates.TemplateResponse(request, "runs.html", {
+        "session": session,
+        "runs": runs,
+        "total": total,
+        "page": page,
+        "total_pages": total_pages,
+        "repo_filter": repo_filter,
+        "status_filter": status_filter,
     })
 
 
