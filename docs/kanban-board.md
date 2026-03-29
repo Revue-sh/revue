@@ -100,6 +100,9 @@
 - [ ] **[71]** Nuitka build pipeline — compile orchestrator core (`pipeline`, `agent_runner`, `cleo_router`, `nova_consolidator`, `sage_*`, `shared_analysis`, `contradiction_*`) to native `.so` binaries; agent `.md`/`.yaml` definitions distributed as-is (readable by design); build matrix: Linux x86_64, ARM64 + macOS ARM64; package as platform-specific `.whl` (Free/Indie/Pro) and Docker image (Enterprise) *(M, ~3–5 days)*
 - [x] **[72]** Runtime license key validation — POST /api/license/validate on orchestrator startup, 72h offline grace period, hard stop on invalid key *(M, ~2–3 days)* ✅
 
+- [x] **[83]** BitbucketAdapter — Bitbucket Cloud VCS integration (get_diff, post comments, webhook sig, commit status) *(M)* ✅ — *Note: SDLC violation, committed directly to main. Story created retroactively.*
+- [x] **[84]** Bitbucket Pipe + dogfood bitbucket-pipelines.yml + CLI --platform bitbucket flags *(M)* ✅ — *Note: SDLC violation, committed directly to main. Story created retroactively.*
+
 ### 🗄️ Archived (5 — superseded, do not implement)
 - ~~[39]~~ Self-service workspace onboarding web UI → superseded by **[62]**
 - ~~[40]~~ Free tier enforcement 100 runs/month → superseded by **[63]** (now 25 runs/month)
