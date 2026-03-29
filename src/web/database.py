@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     tier TEXT DEFAULT 'free',
     stripe_customer_id TEXT,
+    stripe_subscription_id TEXT,
     is_active INTEGER DEFAULT 1
 );
 
@@ -97,6 +98,10 @@ MIGRATIONS_SQL = """
 -- These are safe to run multiple times; they fail silently if the column already exists.
 """
 
+_USERS_MIGRATIONS = [
+    ("stripe_subscription_id", "ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT"),
+]
+
 _REVIEW_RUNS_MIGRATIONS = [
     ("pr_title", "ALTER TABLE review_runs ADD COLUMN pr_title TEXT"),
     ("pr_number", "ALTER TABLE review_runs ADD COLUMN pr_number INTEGER"),
@@ -106,9 +111,14 @@ _REVIEW_RUNS_MIGRATIONS = [
 
 def _run_migrations(conn: sqlite3.Connection) -> None:
     """Apply idempotent column migrations. SQLite doesn't support ADD COLUMN IF NOT EXISTS."""
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(review_runs)").fetchall()}
+    user_cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+    for col_name, sql in _USERS_MIGRATIONS:
+        if col_name not in user_cols:
+            conn.execute(sql)
+
+    run_cols = {row[1] for row in conn.execute("PRAGMA table_info(review_runs)").fetchall()}
     for col_name, sql in _REVIEW_RUNS_MIGRATIONS:
-        if col_name not in existing:
+        if col_name not in run_cols:
             conn.execute(sql)
 
 
