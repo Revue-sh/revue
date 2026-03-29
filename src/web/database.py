@@ -42,12 +42,18 @@ CREATE TABLE IF NOT EXISTS review_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     license_key_id INTEGER NOT NULL REFERENCES license_keys(id),
     repo_id TEXT,
+    pr_title TEXT,
+    pr_number INTEGER,
     ci_run_id TEXT,
     agents_used TEXT,
+    findings_count INTEGER DEFAULT 0,
     duration_ms INTEGER,
     status TEXT DEFAULT 'completed',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_review_runs_license_key ON review_runs(license_key_id);
+CREATE INDEX IF NOT EXISTS idx_review_runs_created_at ON review_runs(created_at DESC);
 """
 
 REVIEWS_LIMIT_BY_TIER: dict[str, int | None] = {
@@ -86,6 +92,27 @@ def get_db(db_path: str | None = None) -> Generator[sqlite3.Connection, None, No
         conn.close()
 
 
+MIGRATIONS_SQL = """
+-- Idempotent column additions for review_runs (SQLite doesn't support IF NOT EXISTS for columns)
+-- These are safe to run multiple times; they fail silently if the column already exists.
+"""
+
+_REVIEW_RUNS_MIGRATIONS = [
+    ("pr_title", "ALTER TABLE review_runs ADD COLUMN pr_title TEXT"),
+    ("pr_number", "ALTER TABLE review_runs ADD COLUMN pr_number INTEGER"),
+    ("findings_count", "ALTER TABLE review_runs ADD COLUMN findings_count INTEGER DEFAULT 0"),
+]
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Apply idempotent column migrations. SQLite doesn't support ADD COLUMN IF NOT EXISTS."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(review_runs)").fetchall()}
+    for col_name, sql in _REVIEW_RUNS_MIGRATIONS:
+        if col_name not in existing:
+            conn.execute(sql)
+
+
 def init_db(db_path: str | None = None) -> None:
     with get_db(db_path) as conn:
         conn.executescript(SCHEMA_SQL)
+        _run_migrations(conn)

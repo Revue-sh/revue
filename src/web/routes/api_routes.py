@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from database import get_db
-from models import get_license_by_key, increment_usage, reset_monthly_counter, create_review_run
+from auth import get_session
+from models import get_license_by_key, increment_usage, reset_monthly_counter, create_review_run, get_all_runs_for_user
 
 router = APIRouter()
 
@@ -37,7 +38,10 @@ class ValidateRequest(BaseModel):
 class TrackRequest(BaseModel):
     key: str
     repo_id: str = ""
+    pr_title: str = ""
+    pr_number: int = 0
     agents_used: list[str] = []
+    findings_count: int = 0
     duration_ms: int = 0
 
 
@@ -108,8 +112,61 @@ async def track_usage(body: TrackRequest) -> Response:
             conn,
             license_key_id=lic.id,
             repo_id=body.repo_id or None,
+            pr_title=body.pr_title or None,
+            pr_number=body.pr_number or None,
             agents_used=body.agents_used,
+            findings_count=body.findings_count,
             duration_ms=body.duration_ms,
         )
 
     return Response(status_code=204)
+
+
+@router.get("/runs")
+async def list_runs(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    repo_id: str = "",
+    status: str = "",
+) -> JSONResponse:
+    """GET /api/runs — paginated run history for the authenticated user.
+
+    Internal telemetry endpoint. Requires session auth (cookie).
+    Returns JSON suitable for dashboards and metrics scripts.
+    """
+    session = get_session(request)
+    if not session:
+        return JSONResponse({"error": "Unauthorised"}, status_code=401)
+
+    user_id = session["user_id"]
+    with get_db() as conn:
+        runs, total = get_all_runs_for_user(
+            conn,
+            user_id=user_id,
+            limit=min(limit, 200),  # cap at 200 per page
+            offset=offset,
+            repo_id=repo_id or None,
+            status=status or None,
+        )
+
+    return JSONResponse({
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "runs": [
+            {
+                "id": r.id,
+                "repo_id": r.repo_id,
+                "pr_title": r.pr_title,
+                "pr_number": r.pr_number,
+                "ci_run_id": r.ci_run_id,
+                "agents_used": r.agents_used,
+                "findings_count": r.findings_count,
+                "duration_ms": r.duration_ms,
+                "status": r.status,
+                "created_at": r.created_at,
+            }
+            for r in runs
+        ],
+    })

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Run History — Revue.io{% endblock %}
+{% block body %}
+<div class="min-h-full">
+    <!-- Nav -->
+    <nav class="border-b border-gray-800">
+        <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+            <a href="/dashboard" class="text-2xl font-bold text-brand-400">Revue<span class="text-gray-500">.io</span></a>
+            <div class="flex items-center gap-4">
+                <span class="text-gray-400 text-sm">{{ session.email }}</span>
+                <a href="/logout" class="text-gray-400 hover:text-white text-sm">Log out</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-6xl mx-auto px-6 py-8">
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h1 class="text-2xl font-bold">Run History</h1>
+                <p class="text-gray-400 text-sm mt-1">{{ total }} total review run{{ 's' if total != 1 else '' }}</p>
+            </div>
+            <a href="/dashboard" class="text-gray-400 hover:text-white text-sm">← Dashboard</a>
+        </div>
+
+        <!-- Filters -->
+        <form method="GET" action="/runs" class="flex gap-3 mb-6">
+            <input
+                type="text"
+                name="repo"
+                value="{{ repo_filter }}"
+                placeholder="Filter by repository…"
+                class="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 w-64"
+            >
+            <select name="status" class="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
+                <option value="" {% if not status_filter %}selected{% endif %}>All statuses</option>
+                <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completed</option>
+                <option value="failed" {% if status_filter == 'failed' %}selected{% endif %}>Failed</option>
+                <option value="skipped" {% if status_filter == 'skipped' %}selected{% endif %}>Skipped</option>
+            </select>
+            <button type="submit" class="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-lg text-sm font-medium">Filter</button>
+            {% if repo_filter or status_filter %}
+            <a href="/runs" class="text-gray-400 hover:text-white text-sm self-center">Clear</a>
+            {% endif %}
+        </form>
+
+        <!-- Table -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl">
+            {% if runs %}
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="text-gray-500 text-left">
+                        <tr>
+                            <th class="px-6 py-3 font-medium">Date</th>
+                            <th class="px-6 py-3 font-medium">Repository</th>
+                            <th class="px-6 py-3 font-medium">PR</th>
+                            <th class="px-6 py-3 font-medium">Findings</th>
+                            <th class="px-6 py-3 font-medium">Agents</th>
+                            <th class="px-6 py-3 font-medium">Duration</th>
+                            <th class="px-6 py-3 font-medium">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-800">
+                        {% for run in runs %}
+                        <tr class="hover:bg-gray-800/50">
+                            <td class="px-6 py-3 text-gray-300 whitespace-nowrap">{{ run.created_at[:16].replace('T', ' ') }}</td>
+                            <td class="px-6 py-3 text-gray-300">
+                                {% if run.repo_id %}
+                                <span class="font-mono text-xs">{{ run.repo_id }}</span>
+                                {% else %}
+                                <span class="text-gray-600">—</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-3 text-gray-300 max-w-xs truncate">
+                                {% if run.pr_title %}
+                                <span title="{{ run.pr_title }}">
+                                    {% if run.pr_number %}#{{ run.pr_number }} — {% endif %}
+                                    {{ run.pr_title[:50] }}{% if run.pr_title|length > 50 %}…{% endif %}
+                                </span>
+                                {% elif run.pr_number %}
+                                #{{ run.pr_number }}
+                                {% else %}
+                                <span class="text-gray-600">—</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-3">
+                                {% if run.findings_count > 0 %}
+                                <span class="text-yellow-400 font-medium">{{ run.findings_count }}</span>
+                                {% else %}
+                                <span class="text-green-400 font-medium">0</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-3 text-gray-500 text-xs">
+                                {{ run.agents_used | join(', ') or '—' }}
+                            </td>
+                            <td class="px-6 py-3 text-gray-400 whitespace-nowrap">
+                                {% if run.duration_ms %}
+                                {{ (run.duration_ms / 1000) | round(1) }}s
+                                {% else %}
+                                <span class="text-gray-600">—</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-3">
+                                {% if run.status == 'completed' %}
+                                <span class="text-green-400 text-xs font-medium">✓ completed</span>
+                                {% elif run.status == 'failed' %}
+                                <span class="text-red-400 text-xs font-medium">✗ failed</span>
+                                {% elif run.status == 'skipped' %}
+                                <span class="text-gray-500 text-xs font-medium">— skipped</span>
+                                {% else %}
+                                <span class="text-gray-400 text-xs">{{ run.status }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if total_pages > 1 %}
+            <div class="px-6 py-4 border-t border-gray-800 flex items-center justify-between">
+                <p class="text-gray-500 text-sm">Page {{ page }} of {{ total_pages }}</p>
+                <div class="flex gap-2">
+                    {% if page > 1 %}
+                    <a href="/runs?page={{ page - 1 }}&repo={{ repo_filter }}&status={{ status_filter }}"
+                       class="bg-gray-800 hover:bg-gray-700 text-white px-3 py-1.5 rounded text-sm">← Prev</a>
+                    {% endif %}
+                    {% if page < total_pages %}
+                    <a href="/runs?page={{ page + 1 }}&repo={{ repo_filter }}&status={{ status_filter }}"
+                       class="bg-gray-800 hover:bg-gray-700 text-white px-3 py-1.5 rounded text-sm">Next →</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% else %}
+            <div class="px-6 py-16 text-center text-gray-500">
+                {% if repo_filter or status_filter %}
+                <p>No runs match your filters.</p>
+                <a href="/runs" class="text-brand-400 hover:underline text-sm mt-2 inline-block">Clear filters</a>
+                {% else %}
+                <p>No review runs yet.</p>
+                <p class="text-sm mt-2">Follow the <a href="/onboarding" class="text-brand-400 hover:underline">setup guide</a> to run your first review.</p>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

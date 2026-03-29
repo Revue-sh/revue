@@ -67,8 +67,9 @@
 
         <!-- Recent reviews -->
         <div class="bg-gray-900 border border-gray-800 rounded-xl">
-            <div class="px-6 py-4 border-b border-gray-800">
+            <div class="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
                 <h2 class="font-semibold">Recent reviews</h2>
+                <a href="/runs" class="text-brand-400 hover:underline text-sm">View all →</a>
             </div>
             {% if reviews %}
             <div class="overflow-x-auto">
@@ -77,7 +78,7 @@
                         <tr>
                             <th class="px-6 py-3 font-medium">Date</th>
                             <th class="px-6 py-3 font-medium">Repository</th>
-                            <th class="px-6 py-3 font-medium">Agents</th>
+                            <th class="px-6 py-3 font-medium">Findings</th>
                             <th class="px-6 py-3 font-medium">Duration</th>
                             <th class="px-6 py-3 font-medium">Status</th>
                         </tr>
@@ -85,12 +86,18 @@
                     <tbody class="divide-y divide-gray-800">
                         {% for review in reviews %}
                         <tr class="hover:bg-gray-800/50">
-                            <td class="px-6 py-3 text-gray-300">{{ review.created_at[:16] }}</td>
-                            <td class="px-6 py-3 text-gray-300">{{ review.repo_id or '—' }}</td>
-                            <td class="px-6 py-3 text-gray-400">{{ review.agents_used | join(', ') }}</td>
+                            <td class="px-6 py-3 text-gray-300 whitespace-nowrap">{{ review.created_at[:16].replace('T', ' ') }}</td>
+                            <td class="px-6 py-3 text-gray-300 font-mono text-xs">{{ review.repo_id or '—' }}</td>
+                            <td class="px-6 py-3">
+                                {% if review.findings_count > 0 %}
+                                <span class="text-yellow-400 font-medium">{{ review.findings_count }}</span>
+                                {% else %}
+                                <span class="text-green-400 font-medium">0</span>
+                                {% endif %}
+                            </td>
                             <td class="px-6 py-3 text-gray-400">{% if review.duration_ms %}{{ (review.duration_ms / 1000) | round(1) }}s{% else %}—{% endif %}</td>
                             <td class="px-6 py-3">
-                                <span class="text-green-400 text-xs font-medium">{{ review.status }}</span>
+                                <span class="{% if review.status == 'completed' %}text-green-400{% elif review.status == 'failed' %}text-red-400{% else %}text-gray-400{% endif %} text-xs font-medium">{{ review.status }}</span>
                             </td>
                         </tr>
                         {% endfor %}
