@@ -1,0 +1,60 @@
+name: Revue.io AI Code Review
+image: revueio/revue-pipe:latest
+
+inputs:
+  - name: REVUE_TOKEN
+    description: "Revue.io workspace API token (from app.revue.io/settings/tokens)"
+    required: false
+    default: ""
+
+  - name: AI_API_KEY
+    description: "API key for your chosen AI provider (BYOK — never stored by Revue)"
+    required: true
+
+  - name: AI_PROVIDER
+    description: "AI provider: anthropic | openai | azure | openrouter | custom"
+    required: false
+    default: "anthropic"
+
+  - name: AI_MODEL
+    description: "Model name for the chosen provider"
+    required: false
+    default: "claude-sonnet-4-5-20250929"
+
+  - name: AI_BASE_URL
+    description: "Custom base URL for Azure or self-hosted gateways"
+    required: false
+    default: ""
+
+  - name: MODE
+    description: "Review mode: multi-agent | single-agent"
+    required: false
+    default: "multi-agent"
+
+  - name: CONFIG_PATH
+    description: "Path to .revue.yml config file (default: .revue.yml in repo root)"
+    required: false
+    default: ".revue.yml"
+
+  - name: MIN_CONFIDENCE
+    description: "Minimum confidence threshold for Sage fix suggestions (0–100)"
+    required: false
+    default: "70"
+
+  - name: FAIL_ON_CRITICAL
+    description: "Exit with non-zero code if critical findings are found"
+    required: false
+    default: "false"
+
+  - name: BITBUCKET_USERNAME
+    description: "Bitbucket account username for posting comments"
+    required: true
+
+  - name: BITBUCKET_API_TOKEN
+    description: "Bitbucket API token for posting comments (use a repository variable)"
+    required: true
+
+  - name: WEBHOOK_SECRET
+    description: "Bitbucket webhook secret for signature verification"
+    required: false
+    default: ""

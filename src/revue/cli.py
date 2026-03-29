@@ -54,6 +54,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Parse diff and validate config without calling AI",
     )
+    review.add_argument(
+        "--format",
+        choices=["markdown", "json", "text"],
+        default=None,
+        dest="format",
+        help="Alias for --output (used by CI pipes)",
+    )
+
+    # Bitbucket-specific flags (used by the Bitbucket Pipe)
+    review.add_argument(
+        "--platform",
+        choices=["github", "gitlab", "bitbucket"],
+        default=None,
+        help="VCS platform — enables posting comments back to the PR/MR",
+    )
+    review.add_argument("--pr-id", type=int, default=None, help="PR/MR ID (required for --platform)")
+    review.add_argument("--workspace", default=None, help="Bitbucket workspace slug")
+    review.add_argument("--repo-slug", default=None, help="Bitbucket repository slug")
+    review.add_argument("--bb-username", default=None, help="Bitbucket username for API auth")
+    review.add_argument("--bb-token", default=None, help="Bitbucket API token")
+
     review.set_defaults(func=cmd_review)
 
     # -- init --
@@ -87,13 +108,15 @@ def cmd_review(
         return 1
 
     # 2. Build overrides from CLI flags
+    # --format is an alias for --output used by CI pipes
+    effective_output = getattr(args, "output", None) or getattr(args, "format", None)
     overrides: dict[str, object] = {}
     if args.provider:
         overrides["provider"] = args.provider
     if args.model:
         overrides["model"] = args.model
-    if args.output:
-        overrides["output_format"] = args.output
+    if effective_output:
+        overrides["output_format"] = effective_output
 
     # 3. Load config
     try:
@@ -159,6 +182,11 @@ def cmd_review(
         else:
             results.append({"file": rr.file_path, "review": rr.response})
 
+    # 9b. Post comments back to Bitbucket if --platform bitbucket
+    platform = getattr(args, "platform", None)
+    if platform == "bitbucket":
+        _post_to_bitbucket(args, review_results)
+
     fmt = config.output_format
     if fmt == "json":
         print(json.dumps(results, indent=2))
@@ -175,6 +203,54 @@ def cmd_review(
             print()
 
     return 0
+
+
+def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
+    """Post review findings as inline comments to a Bitbucket PR."""
+    from revue.core.bitbucket_adapter import BitbucketAdapter
+
+    pr_id = getattr(args, "pr_id", None)
+    workspace = getattr(args, "workspace", None)
+    repo_slug = getattr(args, "repo_slug", None)
+    bb_username = getattr(args, "bb_username", None)
+    bb_token = getattr(args, "bb_token", None)
+
+    missing = [n for n, v in [
+        ("--pr-id", pr_id), ("--workspace", workspace),
+        ("--repo-slug", repo_slug), ("--bb-username", bb_username),
+        ("--bb-token", bb_token),
+    ] if not v]
+    if missing:
+        print(f"Warning: Bitbucket posting skipped — missing: {', '.join(missing)}", file=sys.stderr)
+        return
+
+    adapter = BitbucketAdapter(
+        api_token=bb_token,
+        username=bb_username,
+        workspace=workspace,
+        repo_slug=repo_slug,
+    )
+
+    posted = 0
+    summary_lines = ["## 🤖 Revue.io AI Review\n"]
+
+    for rr in review_results:
+        if rr.error or not rr.response:
+            continue
+        # Post a summary comment per file (inline anchoring requires finding-level
+        # line numbers which are extracted from the review response in a future story)
+        summary_lines.append(f"### `{rr.file_path}`\n{rr.response}\n")
+        posted += 1
+
+    if posted == 0:
+        summary_lines.append("*No findings — looks good! ✅*")
+
+    summary_body = "\n".join(summary_lines)
+    ok = adapter.post_summary_comment(pr_id=int(pr_id), body=summary_body)
+    if ok:
+        print(f"Revue.io — review posted to PR #{pr_id} on Bitbucket ({posted} file(s) reviewed)")
+    else:
+        print("Warning: Failed to post review summary to Bitbucket", file=sys.stderr)
 
 
 def cmd_init(args: argparse.Namespace) -> int:

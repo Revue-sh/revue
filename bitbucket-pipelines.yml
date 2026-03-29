@@ -1,0 +1,59 @@
+image: python:3.12-slim
+
+definitions:
+  steps:
+    - step: &revue-review
+        name: "Revue.io AI Code Review"
+        script:
+          - pip install revue-io --quiet
+          # Fetch the PR diff via Bitbucket API
+          - |
+            AUTH=$(echo -n "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}" | base64)
+            curl -s \
+              -H "Authorization: Basic ${AUTH}" \
+              -H "Accept: text/plain" \
+              "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests/${BITBUCKET_PR_ID}/diff" \
+              -o /tmp/revue_pr.diff
+          # Run the review
+          - |
+            AI_API_KEY="${AI_API_KEY}" revue review \
+              --diff /tmp/revue_pr.diff \
+              --platform bitbucket \
+              --pr-id "${BITBUCKET_PR_ID}" \
+              --workspace "${BITBUCKET_WORKSPACE}" \
+              --repo-slug "${BITBUCKET_REPO_SLUG}" \
+              --bb-username "${BITBUCKET_USERNAME}" \
+              --bb-token "${BITBUCKET_API_TOKEN}" \
+              --provider "${AI_PROVIDER:-anthropic}" \
+              --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" \
+              --mode multi-agent \
+              --config .revue.yml \
+              || echo "Review completed with warnings"
+        services:
+          - docker
+
+pipelines:
+  # Run tests on every push to main or develop
+  branches:
+    main:
+      - step:
+          name: "Run Tests"
+          script:
+            - pip install -r src/revue/requirements.txt --quiet 2>/dev/null || true
+            - cd src/revue && python3 -m pytest tests/ -q
+    develop:
+      - step:
+          name: "Run Tests"
+          script:
+            - pip install -r src/revue/requirements.txt --quiet 2>/dev/null || true
+            - cd src/revue && python3 -m pytest tests/ -q
+
+  # AI review runs on every pull request — this is the dogfood pipeline
+  pull-requests:
+    "**":
+      - step:
+          name: "Run Tests"
+          script:
+            - pip install -r src/revue/requirements.txt --quiet 2>/dev/null || true
+            - cd src/revue && python3 -m pytest tests/ -q
+      - step: *revue-review
