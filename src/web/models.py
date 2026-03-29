@@ -51,6 +51,7 @@ class ReviewRun:
     ci_run_id: Optional[str]
     agents_used: list[str]
     findings_count: int
+    findings_by_severity: dict  # {"critical": 0, "high": 0, "medium": 0, "low": 0}
     duration_ms: Optional[int]
     status: str
     created_at: str
@@ -84,10 +85,15 @@ def row_to_license_key(row: sqlite3.Row) -> LicenseKey:
     )
 
 
+_DEFAULT_SEVERITY: dict = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+
+
 def row_to_review_run(row: sqlite3.Row) -> ReviewRun:
     agents_raw = row["agents_used"]
     agents = json.loads(agents_raw) if agents_raw else []
     keys = row.keys()
+    sev_raw = row["findings_by_severity"] if "findings_by_severity" in keys else None
+    severity = json.loads(sev_raw) if sev_raw else dict(_DEFAULT_SEVERITY)
     return ReviewRun(
         id=row["id"],
         license_key_id=row["license_key_id"],
@@ -97,6 +103,7 @@ def row_to_review_run(row: sqlite3.Row) -> ReviewRun:
         ci_run_id=row["ci_run_id"],
         agents_used=agents,
         findings_count=row["findings_count"] if "findings_count" in keys else 0,
+        findings_by_severity=severity,
         duration_ms=row["duration_ms"],
         status=row["status"],
         created_at=row["created_at"],
@@ -201,14 +208,17 @@ def create_review_run(
     ci_run_id: Optional[str] = None,
     agents_used: Optional[list[str]] = None,
     findings_count: int = 0,
+    findings_by_severity: Optional[dict] = None,
     duration_ms: Optional[int] = None,
 ) -> int:
+    sev = findings_by_severity or {"critical": 0, "high": 0, "medium": 0, "low": 0}
     cur = conn.execute(
         """INSERT INTO review_runs
-           (license_key_id, repo_id, pr_title, pr_number, ci_run_id, agents_used, findings_count, duration_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+           (license_key_id, repo_id, pr_title, pr_number, ci_run_id, agents_used,
+            findings_count, findings_by_severity, duration_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (license_key_id, repo_id, pr_title, pr_number, ci_run_id,
-         json.dumps(agents_used or []), findings_count, duration_ms),
+         json.dumps(agents_used or []), findings_count, json.dumps(sev), duration_ms),
     )
     return cur.lastrowid  # type: ignore[return-value]
 
@@ -223,6 +233,102 @@ def get_recent_reviews(conn: sqlite3.Connection, user_id: int, limit: int = 10) 
         (user_id, limit),
     ).fetchall()
     return [row_to_review_run(r) for r in rows]
+
+
+def get_analytics(
+    conn: sqlite3.Connection,
+    user_id: int,
+    days: int = 30,
+) -> dict:
+    """Return aggregate analytics for a user over the last N days.
+
+    Returns:
+        {
+          "reviews_over_time":   [{"date": "YYYY-MM-DD", "count": N, "findings": N}],
+          "severity_totals":     {"critical": N, "high": N, "medium": N, "low": N},
+          "top_repos":           [{"repo_id": str, "reviews": N, "findings": N}],
+          "status_breakdown":    {"completed": N, "failed": N, "skipped": N},
+          "total_reviews":       N,
+          "total_findings":      N,
+          "avg_duration_ms":     N,
+          "period_days":         N,
+        }
+    """
+    rows = conn.execute(
+        """SELECT rr.created_at, rr.findings_count, rr.findings_by_severity,
+                  rr.repo_id, rr.status, rr.duration_ms
+           FROM review_runs rr
+           JOIN license_keys lk ON rr.license_key_id = lk.id
+           JOIN workspaces w ON lk.workspace_id = w.id
+           WHERE w.user_id = ?
+             AND rr.created_at >= datetime('now', ?)
+           ORDER BY rr.created_at ASC""",
+        (user_id, f"-{days} days"),
+    ).fetchall()
+
+    # Aggregate
+    reviews_by_date: dict[str, dict] = {}
+    severity_totals = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    repos: dict[str, dict] = {}
+    status_counts: dict[str, int] = {}
+    total_findings = 0
+    total_duration = 0
+    duration_count = 0
+
+    for row in rows:
+        date = str(row["created_at"])[:10]
+        findings = row["findings_count"] or 0
+        status = row["status"] or "completed"
+        repo = row["repo_id"] or "unknown"
+        dur = row["duration_ms"]
+
+        # Reviews over time
+        if date not in reviews_by_date:
+            reviews_by_date[date] = {"date": date, "count": 0, "findings": 0}
+        reviews_by_date[date]["count"] += 1
+        reviews_by_date[date]["findings"] += findings
+
+        # Severity
+        sev_raw = row["findings_by_severity"]
+        if sev_raw:
+            try:
+                sev = json.loads(sev_raw)
+                for k in severity_totals:
+                    severity_totals[k] += sev.get(k, 0)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Repos
+        if repo not in repos:
+            repos[repo] = {"repo_id": repo, "reviews": 0, "findings": 0}
+        repos[repo]["reviews"] += 1
+        repos[repo]["findings"] += findings
+
+        # Status
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+        total_findings += findings
+        if dur:
+            total_duration += dur
+            duration_count += 1
+
+    top_repos = sorted(repos.values(), key=lambda r: r["findings"], reverse=True)[:5]
+    avg_duration = total_duration // duration_count if duration_count else 0
+
+    return {
+        "reviews_over_time": list(reviews_by_date.values()),
+        "severity_totals": severity_totals,
+        "top_repos": top_repos,
+        "status_breakdown": {
+            "completed": status_counts.get("completed", 0),
+            "failed": status_counts.get("failed", 0),
+            "skipped": status_counts.get("skipped", 0),
+        },
+        "total_reviews": len(rows),
+        "total_findings": total_findings,
+        "avg_duration_ms": avg_duration,
+        "period_days": days,
+    }
 
 
 def get_user_by_stripe_customer(conn: sqlite3.Connection, customer_id: str) -> Optional[User]:

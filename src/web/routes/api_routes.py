@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from database import get_db
 from auth import get_session
-from models import get_license_by_key, increment_usage, reset_monthly_counter, create_review_run, get_all_runs_for_user
+from models import get_license_by_key, increment_usage, reset_monthly_counter, create_review_run, get_all_runs_for_user, get_analytics
 
 router = APIRouter()
 
@@ -42,6 +42,7 @@ class TrackRequest(BaseModel):
     pr_number: int = 0
     agents_used: list[str] = []
     findings_count: int = 0
+    findings_by_severity: dict = {}
     duration_ms: int = 0
 
 
@@ -116,6 +117,7 @@ async def track_usage(body: TrackRequest) -> Response:
             pr_number=body.pr_number or None,
             agents_used=body.agents_used,
             findings_count=body.findings_count,
+            findings_by_severity=body.findings_by_severity or None,
             duration_ms=body.duration_ms,
         )
 
@@ -154,7 +156,7 @@ async def list_runs(
         "total": total,
         "limit": limit,
         "offset": offset,
-        "runs": [
+        "runs": [  # type: ignore[misc]
             {
                 "id": r.id,
                 "repo_id": r.repo_id,
@@ -163,6 +165,7 @@ async def list_runs(
                 "ci_run_id": r.ci_run_id,
                 "agents_used": r.agents_used,
                 "findings_count": r.findings_count,
+                "findings_by_severity": r.findings_by_severity,
                 "duration_ms": r.duration_ms,
                 "status": r.status,
                 "created_at": r.created_at,
@@ -170,3 +173,24 @@ async def list_runs(
             for r in runs
         ],
     })
+
+
+@router.get("/analytics")
+async def analytics_data(
+    request: Request,
+    days: int = 30,
+) -> JSONResponse:
+    """GET /api/analytics — aggregate finding trends for the authenticated user.
+
+    Query params:
+        days: lookback window in days (7–365, default 30)
+    """
+    session = get_session(request)
+    if not session:
+        return JSONResponse({"error": "Unauthorised"}, status_code=401)
+
+    days = max(7, min(days, 365))
+    user_id = session["user_id"]
+    with get_db() as conn:
+        data = get_analytics(conn, user_id, days=days)
+    return JSONResponse(data)
