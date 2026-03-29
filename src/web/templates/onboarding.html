@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block title %}Setup Guide — Revue.io{% endblock %}
+{% block body %}
+<div class="min-h-full">
+    <!-- Nav -->
+    <nav class="border-b border-gray-800">
+        <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+            <a href="/dashboard" class="text-2xl font-bold text-brand-400">Revue<span class="text-gray-500">.io</span></a>
+            <div class="flex items-center gap-4">
+                <span class="text-gray-400 text-sm">{{ session.email }}</span>
+                <a href="/logout" class="text-gray-400 hover:text-white text-sm">Log out</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-3xl mx-auto px-6 py-8">
+        <h1 class="text-2xl font-bold mb-2">Setup Guide</h1>
+        <p class="text-gray-400 mb-8">Get Revue running on your repository in 4 steps.</p>
+
+        <!-- Platform tabs -->
+        <div class="flex gap-1 mb-8" id="platform-tabs">
+            <button onclick="switchTab('github')" id="tab-github"
+                    class="px-4 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white">
+                GitHub Actions
+            </button>
+            <button onclick="switchTab('gitlab')" id="tab-gitlab"
+                    class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-800 text-gray-400 hover:text-white">
+                GitLab CI
+            </button>
+        </div>
+
+        <!-- Steps -->
+        <div class="space-y-6">
+            <!-- Step 1 -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bg-brand-600 text-white text-sm font-bold w-8 h-8 flex items-center justify-center rounded-full">1</span>
+                    <h2 class="font-semibold text-lg">Add your license key as a CI secret</h2>
+                </div>
+                <p class="text-gray-400 text-sm mb-3">Copy your license key and add it as <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">REVUE_LICENSE_KEY</code> in your repository's CI secrets.</p>
+                <div class="bg-gray-950 border border-gray-800 rounded-lg p-4 flex items-center justify-between">
+                    <code class="text-brand-300 text-sm break-all">{% if license_key %}{{ license_key.key }}{% else %}No key found{% endif %}</code>
+                    {% if license_key %}
+                    <button id="copy-key" onclick="copyToClipboard('{{ license_key.key }}', 'copy-key')"
+                            class="copy-btn ml-4 bg-gray-800 hover:bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg whitespace-nowrap">
+                        Copy
+                    </button>
+                    {% endif %}
+                </div>
+                <div id="github-step1" class="mt-3 text-gray-500 text-sm">
+                    Go to <strong>Settings &rarr; Secrets and variables &rarr; Actions &rarr; New repository secret</strong>
+                </div>
+                <div id="gitlab-step1" class="mt-3 text-gray-500 text-sm hidden">
+                    Go to <strong>Settings &rarr; CI/CD &rarr; Variables &rarr; Add variable</strong>
+                </div>
+            </div>
+
+            <!-- Step 2 -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bg-brand-600 text-white text-sm font-bold w-8 h-8 flex items-center justify-center rounded-full">2</span>
+                    <h2 class="font-semibold text-lg">Add your AI provider API key</h2>
+                </div>
+                <p class="text-gray-400 text-sm">Add <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">ANTHROPIC_API_KEY</code> or <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">OPENAI_API_KEY</code> as another CI secret.</p>
+            </div>
+
+            <!-- Step 3 -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bg-brand-600 text-white text-sm font-bold w-8 h-8 flex items-center justify-center rounded-full">3</span>
+                    <h2 class="font-semibold text-lg">Add the workflow file</h2>
+                </div>
+
+                <!-- GitHub workflow -->
+                <div id="github-step3">
+                    <p class="text-gray-400 text-sm mb-3">Create <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">.github/workflows/revue.yml</code> in your repository:</p>
+                    <div class="relative">
+                        <pre class="bg-gray-950 border border-gray-800 rounded-lg p-4 text-sm text-gray-300 overflow-x-auto"><code>name: Revue AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  revue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Revue
+        run: pip install revue
+
+      - name: Run Revue review
+        env:
+          REVUE_LICENSE_KEY: ${{ "{{" }} secrets.REVUE_LICENSE_KEY {{ "}}" }}
+          ANTHROPIC_API_KEY: ${{ "{{" }} secrets.ANTHROPIC_API_KEY {{ "}}" }}
+          GITHUB_TOKEN: ${{ "{{" }} secrets.GITHUB_TOKEN {{ "}}" }}
+          GITHUB_REPOSITORY: ${{ "{{" }} github.repository {{ "}}" }}
+          GITHUB_PR_NUMBER: ${{ "{{" }} github.event.pull_request.number {{ "}}" }}
+        run: |
+          git diff origin/${{ "{{" }} github.base_ref {{ "}}" }}...HEAD > /tmp/pr.diff
+          revue review --diff /tmp/pr.diff --post-comments</code></pre>
+                        <button id="copy-gh-yaml" onclick="copyToClipboard(document.getElementById('gh-yaml-text').textContent, 'copy-gh-yaml')"
+                                class="copy-btn absolute top-3 right-3 bg-gray-800 hover:bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg">
+                            Copy
+                        </button>
+                    </div>
+                    <pre id="gh-yaml-text" class="hidden">name: Revue AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  revue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Revue
+        run: pip install revue
+
+      - name: Run Revue review
+        env:
+          REVUE_LICENSE_KEY: ${{ "{{" }} secrets.REVUE_LICENSE_KEY {{ "}}" }}
+          ANTHROPIC_API_KEY: ${{ "{{" }} secrets.ANTHROPIC_API_KEY {{ "}}" }}
+          GITHUB_TOKEN: ${{ "{{" }} secrets.GITHUB_TOKEN {{ "}}" }}
+          GITHUB_REPOSITORY: ${{ "{{" }} github.repository {{ "}}" }}
+          GITHUB_PR_NUMBER: ${{ "{{" }} github.event.pull_request.number {{ "}}" }}
+        run: |
+          git diff origin/${{ "{{" }} github.base_ref {{ "}}" }}...HEAD > /tmp/pr.diff
+          revue review --diff /tmp/pr.diff --post-comments</pre>
+                </div>
+
+                <!-- GitLab CI -->
+                <div id="gitlab-step3" class="hidden">
+                    <p class="text-gray-400 text-sm mb-3">Add to your <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">.gitlab-ci.yml</code>:</p>
+                    <div class="relative">
+                        <pre class="bg-gray-950 border border-gray-800 rounded-lg p-4 text-sm text-gray-300 overflow-x-auto"><code>revue-review:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - pip install revue
+    - git diff origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME...HEAD > /tmp/mr.diff
+    - revue review --diff /tmp/mr.diff --post-comments
+  variables:
+    REVUE_LICENSE_KEY: $REVUE_LICENSE_KEY
+    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+  rules:
+    - if: $CI_MERGE_REQUEST_IID</code></pre>
+                        <button id="copy-gl-yaml" onclick="copyToClipboard(document.getElementById('gl-yaml-text').textContent, 'copy-gl-yaml')"
+                                class="copy-btn absolute top-3 right-3 bg-gray-800 hover:bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg">
+                            Copy
+                        </button>
+                    </div>
+                    <pre id="gl-yaml-text" class="hidden">revue-review:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - pip install revue
+    - git diff origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME...HEAD > /tmp/mr.diff
+    - revue review --diff /tmp/mr.diff --post-comments
+  variables:
+    REVUE_LICENSE_KEY: $REVUE_LICENSE_KEY
+    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+  rules:
+    - if: $CI_MERGE_REQUEST_IID</pre>
+                </div>
+            </div>
+
+            <!-- Step 4 -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bg-brand-600 text-white text-sm font-bold w-8 h-8 flex items-center justify-center rounded-full">4</span>
+                    <h2 class="font-semibold text-lg">Open a pull request</h2>
+                </div>
+                <p class="text-gray-400 text-sm">Push a branch, open a PR, and watch Revue review it. You'll see inline comments and a summary directly on the PR.</p>
+            </div>
+        </div>
+
+        <div class="mt-8 text-center">
+            <a href="/dashboard" class="text-brand-400 hover:underline text-sm">&larr; Back to dashboard</a>
+        </div>
+    </div>
+</div>
+
+<script>
+function switchTab(platform) {
+    const tabs = ['github', 'gitlab'];
+    tabs.forEach(t => {
+        const tab = document.getElementById('tab-' + t);
+        const step1 = document.getElementById(t + '-step1');
+        const step3 = document.getElementById(t + '-step3');
+        if (t === platform) {
+            tab.className = 'px-4 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white';
+            if (step1) step1.classList.remove('hidden');
+            if (step3) step3.classList.remove('hidden');
+        } else {
+            tab.className = 'px-4 py-2 rounded-lg text-sm font-medium bg-gray-800 text-gray-400 hover:text-white';
+            if (step1) step1.classList.add('hidden');
+            if (step3) step3.classList.add('hidden');
+        }
+    });
+}
+</script>
+{% endblock %}

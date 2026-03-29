@@ -1,0 +1,27 @@
+{% if license_key %}
+<h3 class="font-semibold mb-3">Reviews this month</h3>
+{% set used = license_key.reviews_used_this_month %}
+{% set limit = license_key.reviews_limit %}
+{% if limit %}
+    {% set pct = ((used / limit) * 100) | round | int %}
+    {% set pct = [pct, 100] | min %}
+    <div class="flex justify-between text-sm mb-2">
+        <span class="text-gray-400">{{ used }} / {{ limit }} reviews used</span>
+        <span class="text-gray-500">{{ limit - used }} left</span>
+    </div>
+    <div class="w-full bg-gray-800 rounded-full h-3">
+        <div class="h-3 rounded-full {% if pct >= 90 %}bg-red-500{% elif pct >= 70 %}bg-yellow-500{% else %}bg-brand-500{% endif %}"
+             style="width: {{ pct }}%"></div>
+    </div>
+{% else %}
+    <div class="flex justify-between text-sm mb-2">
+        <span class="text-gray-400">{{ used }} reviews used</span>
+        <span class="text-brand-400">Unlimited</span>
+    </div>
+    <div class="w-full bg-gray-800 rounded-full h-3">
+        <div class="bg-brand-500 h-3 rounded-full" style="width: 5%"></div>
+    </div>
+{% endif %}
+{% else %}
+<p class="text-gray-500 text-sm">No license key found.</p>
+{% endif %}

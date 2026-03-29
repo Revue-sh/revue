@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Revue.io{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f5f3ff',
+                            100: '#ede9fe',
+                            200: '#ddd6fe',
+                            300: '#c4b5fd',
+                            400: '#a78bfa',
+                            500: '#8b5cf6',
+                            600: '#7c3aed',
+                            700: '#6d28d9',
+                            800: '#5b21b6',
+                            900: '#4c1d95',
+                            950: '#2e1065',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .copy-btn:active { transform: scale(0.95); }
+    </style>
+</head>
+<body class="h-full bg-gray-950 text-gray-100">
+    {% block body %}{% endblock %}
+
+    <script>
+    function copyToClipboard(text, btnId) {
+        navigator.clipboard.writeText(text).then(() => {
+            const btn = document.getElementById(btnId);
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = orig; }, 2000);
+        });
+    }
+    </script>
+</body>
+</html>

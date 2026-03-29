@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Revue.io{% endblock %}
+{% block body %}
+<div class="min-h-full">
+    <!-- Nav -->
+    <nav class="border-b border-gray-800">
+        <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+            <a href="/dashboard" class="text-2xl font-bold text-brand-400">Revue<span class="text-gray-500">.io</span></a>
+            <div class="flex items-center gap-4">
+                <span class="text-gray-400 text-sm">{{ session.email }}</span>
+                <a href="/logout" class="text-gray-400 hover:text-white text-sm">Log out</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-6xl mx-auto px-6 py-8">
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h1 class="text-2xl font-bold">Dashboard</h1>
+                <div class="flex items-center gap-3 mt-2">
+                    <span class="inline-block bg-brand-600/20 text-brand-400 text-xs font-semibold px-3 py-1 rounded-full uppercase">{{ tier_label }}</span>
+                    <span class="text-gray-500 text-sm">{{ tier_price }}</span>
+                </div>
+            </div>
+            <a href="/onboarding" class="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                Setup guide
+            </a>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6 mb-8">
+            <!-- License key card -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6"
+                 hx-get="/partials/license_card" hx-trigger="load" hx-swap="innerHTML">
+                {% include "partials/license_card.html" %}
+            </div>
+
+            <!-- Usage bar -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6"
+                 hx-get="/partials/usage_bar" hx-trigger="every 60s" hx-swap="innerHTML">
+                {% include "partials/usage_bar.html" %}
+            </div>
+        </div>
+
+        <!-- Upgrade CTA -->
+        {% if session.tier == 'free' %}
+        <div class="bg-brand-950 border border-brand-800 rounded-xl p-6 mb-8">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="font-semibold text-brand-300">Upgrade to Indie</h3>
+                    <p class="text-gray-400 text-sm mt-1">Get 100 reviews/month and all 6 specialised agents for $9/mo</p>
+                </div>
+                <span class="text-gray-500 text-sm italic">Coming soon</span>
+            </div>
+        </div>
+        {% elif session.tier == 'indie' %}
+        <div class="bg-brand-950 border border-brand-800 rounded-xl p-6 mb-8">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="font-semibold text-brand-300">Upgrade to Pro</h3>
+                    <p class="text-gray-400 text-sm mt-1">Unlimited reviews and priority support for $29/mo</p>
+                </div>
+                <span class="text-gray-500 text-sm italic">Coming soon</span>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Recent reviews -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl">
+            <div class="px-6 py-4 border-b border-gray-800">
+                <h2 class="font-semibold">Recent reviews</h2>
+            </div>
+            {% if reviews %}
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="text-gray-500 text-left">
+                        <tr>
+                            <th class="px-6 py-3 font-medium">Date</th>
+                            <th class="px-6 py-3 font-medium">Repository</th>
+                            <th class="px-6 py-3 font-medium">Agents</th>
+                            <th class="px-6 py-3 font-medium">Duration</th>
+                            <th class="px-6 py-3 font-medium">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-800">
+                        {% for review in reviews %}
+                        <tr class="hover:bg-gray-800/50">
+                            <td class="px-6 py-3 text-gray-300">{{ review.created_at[:16] }}</td>
+                            <td class="px-6 py-3 text-gray-300">{{ review.repo_id or '—' }}</td>
+                            <td class="px-6 py-3 text-gray-400">{{ review.agents_used | join(', ') }}</td>
+                            <td class="px-6 py-3 text-gray-400">{% if review.duration_ms %}{{ (review.duration_ms / 1000) | round(1) }}s{% else %}—{% endif %}</td>
+                            <td class="px-6 py-3">
+                                <span class="text-green-400 text-xs font-medium">{{ review.status }}</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="px-6 py-12 text-center text-gray-500">
+                <p>No reviews yet. Follow the <a href="/onboarding" class="text-brand-400 hover:underline">setup guide</a> to run your first review.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% if license_key %}
+<h3 class="font-semibold mb-3">License Key</h3>
+<div class="bg-gray-950 border border-gray-800 rounded-lg p-3 flex items-center justify-between">
+    <code class="text-sm text-gray-300" id="license-display">{{ license_key.key[:8] }}...{{ license_key.key[-6:] }}</code>
+    <div class="flex gap-2">
+        <button id="toggle-key" onclick="toggleKey()" class="text-gray-500 hover:text-white text-xs px-2 py-1 rounded">Show</button>
+        <button id="copy-lic" onclick="copyToClipboard('{{ license_key.key }}', 'copy-lic')"
+                class="copy-btn bg-gray-800 hover:bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg">Copy</button>
+    </div>
+</div>
+<script>
+    var _keyVisible = false;
+    function toggleKey() {
+        var el = document.getElementById('license-display');
+        var btn = document.getElementById('toggle-key');
+        if (_keyVisible) {
+            el.textContent = '{{ license_key.key[:8] }}...{{ license_key.key[-6:] }}';
+            btn.textContent = 'Show';
+        } else {
+            el.textContent = '{{ license_key.key }}';
+            btn.textContent = 'Hide';
+        }
+        _keyVisible = !_keyVisible;
+    }
+</script>
+{% else %}
+<p class="text-gray-500 text-sm">No license key found.</p>
+{% endif %}

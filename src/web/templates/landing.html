@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Revue.io — AI Code Review{% endblock %}
+{% block body %}
+<div class="min-h-full">
+    <!-- Nav -->
+    <nav class="border-b border-gray-800">
+        <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+            <a href="/" class="text-2xl font-bold text-brand-400">Revue<span class="text-gray-500">.io</span></a>
+            <div class="flex gap-4">
+                <a href="/login" class="text-gray-300 hover:text-white px-4 py-2">Log in</a>
+                <a href="/signup" class="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-lg font-medium">Sign up free</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero -->
+    <section class="max-w-4xl mx-auto px-6 pt-24 pb-16 text-center">
+        <h1 class="text-5xl font-extrabold tracking-tight mb-6">
+            AI code review that catches<br>
+            <span class="text-brand-400">what humans miss</span>
+        </h1>
+        <p class="text-xl text-gray-400 mb-10 max-w-2xl mx-auto">
+            Multi-agent AI reviews every pull request in your CI pipeline.
+            Your code never leaves your infrastructure.
+        </p>
+        <a href="/signup" class="inline-block bg-brand-600 hover:bg-brand-700 text-white text-lg px-8 py-3 rounded-lg font-semibold">
+            Get started free
+        </a>
+        <p class="text-gray-500 text-sm mt-3">25 free reviews/month &middot; No credit card required</p>
+    </section>
+
+    <!-- Benefits -->
+    <section class="max-w-5xl mx-auto px-6 pb-24">
+        <div class="grid md:grid-cols-3 gap-8">
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <div class="text-brand-400 text-3xl mb-3">&#x1f9e0;</div>
+                <h3 class="text-lg font-semibold mb-2">Multi-Agent Review</h3>
+                <p class="text-gray-400 text-sm">Specialised agents for security, performance, architecture, and code quality review your code in parallel.</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <div class="text-brand-400 text-3xl mb-3">&#x1f512;</div>
+                <h3 class="text-lg font-semibold mb-2">Your Code Stays Private</h3>
+                <p class="text-gray-400 text-sm">Revue runs inside your CI runner. Source code never leaves your infrastructure. Only license checks go to our API.</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <div class="text-brand-400 text-3xl mb-3">&#x1f511;</div>
+                <h3 class="text-lg font-semibold mb-2">Bring Your Own Key</h3>
+                <p class="text-gray-400 text-sm">Use your own OpenAI, Anthropic, or Azure API key. You control the AI provider and the cost.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing -->
+    <section class="max-w-5xl mx-auto px-6 pb-24">
+        <h2 class="text-3xl font-bold text-center mb-12">Simple, transparent pricing</h2>
+        <div class="grid md:grid-cols-3 gap-8">
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 text-center">
+                <h3 class="text-lg font-semibold mb-1">Free</h3>
+                <div class="text-4xl font-bold mb-1">$0</div>
+                <p class="text-gray-500 text-sm mb-6">25 reviews/month</p>
+                <ul class="text-sm text-gray-400 space-y-2 mb-6 text-left">
+                    <li>&#10003; Basic agent (code quality)</li>
+                    <li>&#10003; GitHub &amp; GitLab</li>
+                    <li>&#10003; BYOK — bring your own AI key</li>
+                </ul>
+                <a href="/signup" class="block w-full border border-brand-600 text-brand-400 hover:bg-brand-600 hover:text-white py-2 rounded-lg font-medium">Get started</a>
+            </div>
+            <div class="bg-gray-900 border-2 border-brand-600 rounded-xl p-6 text-center relative">
+                <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-brand-600 text-white text-xs px-3 py-1 rounded-full font-medium">Popular</div>
+                <h3 class="text-lg font-semibold mb-1">Indie</h3>
+                <div class="text-4xl font-bold mb-1">$9<span class="text-lg text-gray-500">/mo</span></div>
+                <p class="text-gray-500 text-sm mb-6">100 reviews/month</p>
+                <ul class="text-sm text-gray-400 space-y-2 mb-6 text-left">
+                    <li>&#10003; All 6 specialised agents</li>
+                    <li>&#10003; GitHub &amp; GitLab</li>
+                    <li>&#10003; Email support</li>
+                </ul>
+                <a href="/signup" class="block w-full bg-brand-600 hover:bg-brand-700 text-white py-2 rounded-lg font-medium">Get started</a>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 text-center">
+                <h3 class="text-lg font-semibold mb-1">Pro</h3>
+                <div class="text-4xl font-bold mb-1">$29<span class="text-lg text-gray-500">/mo</span></div>
+                <p class="text-gray-500 text-sm mb-6">Unlimited reviews</p>
+                <ul class="text-sm text-gray-400 space-y-2 mb-6 text-left">
+                    <li>&#10003; All 6 specialised agents</li>
+                    <li>&#10003; Priority support</li>
+                    <li>&#10003; Unlimited reviews</li>
+                </ul>
+                <a href="/signup" class="block w-full border border-brand-600 text-brand-400 hover:bg-brand-600 hover:text-white py-2 rounded-lg font-medium">Get started</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-gray-800 py-8 text-center text-gray-500 text-sm">
+        &copy; 2026 Revue.io. All rights reserved.
+    </footer>
+</div>
+{% endblock %}
