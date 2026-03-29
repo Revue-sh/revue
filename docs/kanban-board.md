@@ -6,9 +6,9 @@
 ---
 
 ## Story Status Summary
-**Total:** 67 stories (52 Done + 10 open + 5 archived)
+**Total:** 67 stories (55 Done + 7 open + 5 archived)
 **Done:** 51 (82%)
-**To Do:** 10 (E6 active backlog)
+**To Do:** 7 (E6 active backlog)
 **Archived:** 5 (E6 duplicates — superseded by [62]–[67])
 **In Progress:** 0
 
@@ -83,22 +83,22 @@
 
 ## 📋 To Do — E6 Active Backlog (6 stories)
 
-### Epic E6 — Onboarding, Observability & Launch (1/11, In Progress 🟡)
+### Epic E6 — Onboarding, Observability & Launch (4/11, In Progress 🟡)
 
 **Recommended delivery order (per architecture dependencies):**
 1. [62] → [63] + [64] (parallel) → [65] → [66] | [67] anytime
 
 - [ ] **[62]** Workspace onboarding UI — sign-up, connect VCS, install app *(L, ~1 week)*
-- [ ] **[63]** Free tier enforcement — BYOK, 25 runs/month cap, license key validation *(M, ~2 days)*
+- [x] **[63]** Free tier enforcement — BYOK, 25 runs/month cap, license key validation *(M, ~2 days)* ✅
 - [ ] **[64]** Stripe billing — Indie ($9), Pro ($29), Enterprise Starter ($59), Enterprise Growth ($149) tier subscription management *(L, ~1 week)*
 - [ ] **[65]** Run history dashboard — list reviews with status and findings summary *(M, ~2 days)*
 - [ ] **[66]** Basic analytics — finding trends by category and severity *(M, ~2 days)*
 - [ ] **[67]** Documentation site — getting started guide and .revue.yml reference *(M, ~2 days)*
 - [ ] **[68]** Conversion analytics dashboard — Free→Indie→Pro funnel, reviews/month buckets, referral source tracking *(M, ~2 days)*
-- [ ] **[69]** GitHub Action + GitLab Component install documentation — "how to add Revue to your repo" quickstart guide included in marketplace listing *(S, ~1 day)*
+- [x] **[69]** GitHub Action + GitLab Component install documentation — quickstart guides + .revue.yml reference *(S, ~1 day)* ✅
 - [x] **[70]** Bitbucket repository setup — create revue.io repo on Bitbucket, push existing codebase, configure branch protection and access *(S, ~1 day)* ✅ Done — git@bitbucket.org:cbscd/revue.git
 - [ ] **[71]** Nuitka build pipeline — compile orchestrator core (`pipeline`, `agent_runner`, `cleo_router`, `nova_consolidator`, `sage_*`, `shared_analysis`, `contradiction_*`) to native `.so` binaries; agent `.md`/`.yaml` definitions distributed as-is (readable by design); build matrix: Linux x86_64, ARM64 + macOS ARM64; package as platform-specific `.whl` (Free/Indie/Pro) and Docker image (Enterprise) *(M, ~3–5 days)*
-- [ ] **[72]** Runtime license key validation — POST /api/license/validate on orchestrator startup, returns tier + agents allowed + reviews remaining, hard stop on invalid key, 72h offline grace period for Enterprise *(M, ~2–3 days)*
+- [x] **[72]** Runtime license key validation — POST /api/license/validate on orchestrator startup, 72h offline grace period, hard stop on invalid key *(M, ~2–3 days)* ✅
 
 ### 🗄️ Archived (5 — superseded, do not implement)
 - ~~[39]~~ Self-service workspace onboarding web UI → superseded by **[62]**
@@ -118,5 +118,5 @@
 | E3 — Agent System & Routing | 16 | 16/16 | ✅ Done |
 | E4 — Sage: The Resolver Agent | 5 | 5/5 | ✅ Done |
 | E5 — AI Backend & Configuration | 4 | 4/4 | ✅ Done |
-| E6 — Onboarding, Observability & Launch | 11 active (5 archived) | 1/11 | 🟡 In Progress |
+| E6 — Onboarding, Observability & Launch | 11 active (5 archived) | 4/11 | 🟡 In Progress |
 | E7 — Post-MVP Tech Debt & Improvements | 8 | 8/8 | ✅ Done |
