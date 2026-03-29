@@ -27,3 +27,7 @@ htmlcov/
 
 # Revue local
 .revue/cache/
+
+# Web app
+src/web/revue.db
+src/web/.venv/

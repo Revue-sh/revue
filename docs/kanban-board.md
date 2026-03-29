@@ -6,9 +6,9 @@
 ---
 
 ## Story Status Summary
-**Total:** 67 stories (55 Done + 7 open + 5 archived)
+**Total:** 67 stories (56 Done + 6 open + 5 archived)
 **Done:** 51 (82%)
-**To Do:** 7 (E6 active backlog)
+**To Do:** 6 (E6 active backlog)
 **Archived:** 5 (E6 duplicates — superseded by [62]–[67])
 **In Progress:** 0
 
@@ -83,12 +83,12 @@
 
 ## 📋 To Do — E6 Active Backlog (6 stories)
 
-### Epic E6 — Onboarding, Observability & Launch (4/11, In Progress 🟡)
+### Epic E6 — Onboarding, Observability & Launch (5/11, In Progress 🟡)
 
 **Recommended delivery order (per architecture dependencies):**
 1. [62] → [63] + [64] (parallel) → [65] → [66] | [67] anytime
 
-- [ ] **[62]** Workspace onboarding UI — sign-up, connect VCS, install app *(L, ~1 week)*
+- [x] **[62]** Workspace onboarding UI — FastAPI+HTMX+SQLite, email signup, license key display, dashboard, onboarding guide, API endpoints *(L, ~1 week)* ✅
 - [x] **[63]** Free tier enforcement — BYOK, 25 runs/month cap, license key validation *(M, ~2 days)* ✅
 - [ ] **[64]** Stripe billing — Indie ($9), Pro ($29), Enterprise Starter ($59), Enterprise Growth ($149) tier subscription management *(L, ~1 week)*
 - [ ] **[65]** Run history dashboard — list reviews with status and findings summary *(M, ~2 days)*
@@ -118,5 +118,5 @@
 | E3 — Agent System & Routing | 16 | 16/16 | ✅ Done |
 | E4 — Sage: The Resolver Agent | 5 | 5/5 | ✅ Done |
 | E5 — AI Backend & Configuration | 4 | 4/4 | ✅ Done |
-| E6 — Onboarding, Observability & Launch | 11 active (5 archived) | 4/11 | 🟡 In Progress |
+| E6 — Onboarding, Observability & Launch | 11 active (5 archived) | 5/11 | 🟡 In Progress |
 | E7 — Post-MVP Tech Debt & Improvements | 8 | 8/8 | ✅ Done |
