@@ -16,6 +16,7 @@ class User:
     created_at: str
     tier: str
     stripe_customer_id: Optional[str]
+    stripe_subscription_id: Optional[str]
     is_active: bool
 
 
@@ -56,6 +57,7 @@ class ReviewRun:
 
 
 def row_to_user(row: sqlite3.Row) -> User:
+    keys = row.keys()
     return User(
         id=row["id"],
         email=row["email"],
@@ -63,6 +65,7 @@ def row_to_user(row: sqlite3.Row) -> User:
         created_at=row["created_at"],
         tier=row["tier"],
         stripe_customer_id=row["stripe_customer_id"],
+        stripe_subscription_id=row["stripe_subscription_id"] if "stripe_subscription_id" in keys else None,
         is_active=bool(row["is_active"]),
     )
 
@@ -220,6 +223,43 @@ def get_recent_reviews(conn: sqlite3.Connection, user_id: int, limit: int = 10) 
         (user_id, limit),
     ).fetchall()
     return [row_to_review_run(r) for r in rows]
+
+
+def get_user_by_stripe_customer(conn: sqlite3.Connection, customer_id: str) -> Optional[User]:
+    row = conn.execute(
+        "SELECT * FROM users WHERE stripe_customer_id = ?", (customer_id,)
+    ).fetchone()
+    return row_to_user(row) if row else None
+
+
+def update_user_tier(conn: sqlite3.Connection, user_id: int, tier: str) -> None:
+    from database import REVIEWS_LIMIT_BY_TIER
+    conn.execute("UPDATE users SET tier = ? WHERE id = ?", (tier, user_id))
+    # Sync license key limit for this user
+    limit = REVIEWS_LIMIT_BY_TIER.get(tier)
+    conn.execute(
+        """UPDATE license_keys SET tier = ?, reviews_limit = ?
+           WHERE workspace_id IN (SELECT id FROM workspaces WHERE user_id = ?)""",
+        (tier, limit, user_id),
+    )
+
+
+def update_stripe_customer_id(
+    conn: sqlite3.Connection, user_id: int, customer_id: str
+) -> None:
+    conn.execute(
+        "UPDATE users SET stripe_customer_id = ? WHERE id = ?",
+        (customer_id, user_id),
+    )
+
+
+def update_stripe_subscription_id(
+    conn: sqlite3.Connection, user_id: int, subscription_id: str
+) -> None:
+    conn.execute(
+        "UPDATE users SET stripe_subscription_id = ? WHERE id = ?",
+        (subscription_id, user_id),
+    )
 
 
 def get_all_runs_for_user(

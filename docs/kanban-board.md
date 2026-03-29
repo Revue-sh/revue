@@ -90,7 +90,7 @@
 
 - [x] **[62]** Workspace onboarding UI — FastAPI+HTMX+SQLite, email signup, license key display, dashboard, onboarding guide, API endpoints *(L, ~1 week)* ✅
 - [x] **[63]** Free tier enforcement — BYOK, 25 runs/month cap, license key validation *(M, ~2 days)* ✅
-- [ ] **[64]** Stripe billing — Indie ($9), Pro ($29), Enterprise Starter ($59), Enterprise Growth ($149) tier subscription management *(L, ~1 week)*
+- [x] **[64]** Stripe billing — Indie ($9), Pro ($29), Enterprise Starter ($59), Enterprise Growth ($149) tier subscription management *(L, ~1 week)* ✅
 - [x] **[65]** Run history dashboard — list reviews with status and findings summary *(M, ~2 days)* ✅
 - [ ] **[66]** Basic analytics — finding trends by category and severity *(M, ~2 days)*
 - [ ] **[67]** Documentation site — getting started guide and .revue.yml reference *(M, ~2 days)*
