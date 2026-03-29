@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Analytics — Revue.io{% endblock %}
+{% block body %}
+<div class="min-h-full">
+    <!-- Nav -->
+    <nav class="border-b border-gray-800">
+        <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+            <a href="/dashboard" class="text-2xl font-bold text-brand-400">Revue<span class="text-gray-500">.io</span></a>
+            <div class="flex items-center gap-4">
+                <span class="text-gray-400 text-sm">{{ session.email }}</span>
+                <a href="/logout" class="text-gray-400 hover:text-white text-sm">Log out</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-6xl mx-auto px-6 py-8">
+        <!-- Header + date range -->
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h1 class="text-2xl font-bold">Analytics</h1>
+                <p class="text-gray-400 text-sm mt-1">Last {{ days }} days</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <a href="/dashboard" class="text-gray-400 hover:text-white text-sm mr-4">← Dashboard</a>
+                {% for d in [7, 30, 90] %}
+                <a href="/analytics?days={{ d }}"
+                   class="px-3 py-1.5 rounded text-sm font-medium {% if days == d %}bg-brand-600 text-white{% else %}bg-gray-800 text-gray-300 hover:bg-gray-700{% endif %}">
+                    {{ d }}d
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Summary cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs uppercase tracking-wide">Total reviews</p>
+                <p class="text-3xl font-bold mt-1">{{ analytics.total_reviews }}</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs uppercase tracking-wide">Total findings</p>
+                <p class="text-3xl font-bold mt-1 {% if analytics.total_findings > 0 %}text-yellow-400{% else %}text-green-400{% endif %}">
+                    {{ analytics.total_findings }}
+                </p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs uppercase tracking-wide">Avg duration</p>
+                <p class="text-3xl font-bold mt-1">
+                    {% if analytics.avg_duration_ms %}
+                    {{ (analytics.avg_duration_ms / 1000) | round(1) }}<span class="text-lg font-normal text-gray-400">s</span>
+                    {% else %}—{% endif %}
+                </p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs uppercase tracking-wide">Failed reviews</p>
+                <p class="text-3xl font-bold mt-1 {% if analytics.status_breakdown.failed > 0 %}text-red-400{% endif %}">
+                    {{ analytics.status_breakdown.failed }}
+                </p>
+            </div>
+        </div>
+
+        {% if analytics.total_reviews == 0 %}
+        <!-- Empty state -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl px-6 py-16 text-center text-gray-500">
+            <p class="text-lg mb-2">No reviews in the last {{ days }} days.</p>
+            <p class="text-sm">Run a review via GitHub Actions, GitLab CI, or the Bitbucket Pipe to see analytics here.</p>
+            <a href="/onboarding" class="text-brand-400 hover:underline text-sm mt-3 inline-block">Setup guide →</a>
+        </div>
+        {% else %}
+
+        <div class="grid md:grid-cols-2 gap-6 mb-6">
+            <!-- Severity breakdown -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <h2 class="font-semibold mb-4">Findings by severity</h2>
+                {% set sev = analytics.severity_totals %}
+                {% set sev_total = sev.critical + sev.high + sev.medium + sev.low %}
+                {% if sev_total == 0 %}
+                <p class="text-gray-500 text-sm">No severity data yet — pass <code class="text-brand-400">findings_by_severity</code> in your track payload.</p>
+                {% else %}
+                <div class="space-y-3">
+                    {% for label, key, colour in [
+                        ('Critical', 'critical', 'bg-red-500'),
+                        ('High',     'high',     'bg-orange-400'),
+                        ('Medium',   'medium',   'bg-yellow-400'),
+                        ('Low',      'low',      'bg-blue-400')
+                    ] %}
+                    {% set count = sev[key] %}
+                    {% set pct = ((count / sev_total) * 100) | round(1) if sev_total > 0 else 0 %}
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-300">{{ label }}</span>
+                            <span class="text-gray-400">{{ count }} ({{ pct }}%)</span>
+                        </div>
+                        <div class="bg-gray-800 rounded-full h-2">
+                            <div class="{{ colour }} rounded-full h-2" style="width: {{ pct }}%"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Status breakdown -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <h2 class="font-semibold mb-4">Review status</h2>
+                {% set st = analytics.status_breakdown %}
+                {% set st_total = st.completed + st.failed + st.skipped %}
+                <div class="space-y-3">
+                    {% for label, key, colour in [
+                        ('Completed', 'completed', 'bg-green-500'),
+                        ('Failed',    'failed',    'bg-red-500'),
+                        ('Skipped',   'skipped',   'bg-gray-500')
+                    ] %}
+                    {% set count = st[key] %}
+                    {% set pct = ((count / st_total) * 100) | round(1) if st_total > 0 else 0 %}
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-300">{{ label }}</span>
+                            <span class="text-gray-400">{{ count }} ({{ pct }}%)</span>
+                        </div>
+                        <div class="bg-gray-800 rounded-full h-2">
+                            <div class="{{ colour }} rounded-full h-2" style="width: {{ pct }}%"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Top repos -->
+        {% if analytics.top_repos %}
+        <div class="bg-gray-900 border border-gray-800 rounded-xl mb-6">
+            <div class="px-6 py-4 border-b border-gray-800">
+                <h2 class="font-semibold">Top repositories by findings</h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="text-gray-500 text-left">
+                        <tr>
+                            <th class="px-6 py-3 font-medium">Repository</th>
+                            <th class="px-6 py-3 font-medium">Reviews</th>
+                            <th class="px-6 py-3 font-medium">Findings</th>
+                            <th class="px-6 py-3 font-medium">Avg findings/review</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-800">
+                        {% for repo in analytics.top_repos %}
+                        <tr class="hover:bg-gray-800/50">
+                            <td class="px-6 py-3 font-mono text-xs text-gray-300">{{ repo.repo_id }}</td>
+                            <td class="px-6 py-3 text-gray-300">{{ repo.reviews }}</td>
+                            <td class="px-6 py-3 {% if repo.findings > 0 %}text-yellow-400{% else %}text-green-400{% endif %} font-medium">
+                                {{ repo.findings }}
+                            </td>
+                            <td class="px-6 py-3 text-gray-400">
+                                {{ (repo.findings / repo.reviews) | round(1) if repo.reviews > 0 else 0 }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Reviews over time -->
+        {% if analytics.reviews_over_time %}
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <h2 class="font-semibold mb-4">Reviews &amp; findings over time</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="text-gray-500 text-left">
+                        <tr>
+                            <th class="px-4 py-2 font-medium">Date</th>
+                            <th class="px-4 py-2 font-medium">Reviews</th>
+                            <th class="px-4 py-2 font-medium">Findings</th>
+                            <th class="px-4 py-2 font-medium w-48">Activity</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-800">
+                        {% set max_count = analytics.reviews_over_time | map(attribute='count') | max %}
+                        {% for day in analytics.reviews_over_time | reverse %}
+                        <tr class="hover:bg-gray-800/50">
+                            <td class="px-4 py-2 text-gray-300 whitespace-nowrap">{{ day.date }}</td>
+                            <td class="px-4 py-2 text-gray-300">{{ day.count }}</td>
+                            <td class="px-4 py-2 {% if day.findings > 0 %}text-yellow-400{% else %}text-green-400{% endif %}">
+                                {{ day.findings }}
+                            </td>
+                            <td class="px-4 py-2">
+                                <div class="bg-gray-800 rounded-full h-2 w-full">
+                                    <div class="bg-brand-500 rounded-full h-2"
+                                         style="width: {{ ((day.count / max_count) * 100) | round(0) if max_count > 0 else 0 }}%">
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        {% endif %} {# end if total_reviews > 0 #}
+    </div>
+</div>
+{% endblock %}

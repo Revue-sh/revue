@@ -106,6 +106,7 @@ _REVIEW_RUNS_MIGRATIONS = [
     ("pr_title", "ALTER TABLE review_runs ADD COLUMN pr_title TEXT"),
     ("pr_number", "ALTER TABLE review_runs ADD COLUMN pr_number INTEGER"),
     ("findings_count", "ALTER TABLE review_runs ADD COLUMN findings_count INTEGER DEFAULT 0"),
+    ("findings_by_severity", "ALTER TABLE review_runs ADD COLUMN findings_by_severity TEXT"),
 ]
 
 
