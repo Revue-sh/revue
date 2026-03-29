@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
@@ -60,7 +60,7 @@ async def validate_license(body: ValidateRequest) -> JSONResponse:
             )
 
         # Reset monthly counter if period_reset_at is in the past
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         if lic.period_reset_at:
             reset_time = datetime.fromisoformat(lic.period_reset_at)
             if now >= reset_time:

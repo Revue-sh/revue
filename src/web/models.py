@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -126,7 +126,7 @@ def create_workspace(conn: sqlite3.Connection, user_id: int, name: str) -> int:
 # --- License key queries ---
 
 def _next_month_first() -> str:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     if now.month == 12:
         return datetime(now.year + 1, 1, 1).isoformat()
     return datetime(now.year, now.month + 1, 1).isoformat()
@@ -173,7 +173,7 @@ def increment_usage(conn: sqlite3.Connection, license_key_id: int) -> None:
 
 
 def reset_monthly_counter(conn: sqlite3.Connection, license_key_id: int) -> None:
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     conn.execute(
         "UPDATE license_keys SET reviews_used_this_month = 0, period_reset_at = ? WHERE id = ?",
         (now, license_key_id),

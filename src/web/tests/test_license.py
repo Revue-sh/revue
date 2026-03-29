@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import AsyncClient
@@ -115,7 +115,7 @@ async def test_monthly_reset(client: AsyncClient):
         user = get_user_by_email(conn, "rst@test.com")
         lic = get_license_for_user(conn, user.id)
         # Simulate: used 20 reviews, reset time in the past
-        past = (datetime.utcnow() - timedelta(days=35)).isoformat()
+        past = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=35)).isoformat()
         conn.execute(
             "UPDATE license_keys SET reviews_used_this_month = 20, period_reset_at = ? WHERE id = ?",
             (past, lic.id),
