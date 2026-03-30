@@ -77,8 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument(
         "--comment-style",
         choices=["summary", "per-issue"],
-        default="per-issue",
-        help="How to post review findings: 'summary' = one comment per file, 'per-issue' = one inline comment per finding (default: per-issue)",
+        default=None,
+        help="How to post review findings: 'summary' = one comment per file, 'per-issue' = one inline comment per finding. Overrides .revue.yml output.comment_style.",
     )
 
     review.set_defaults(func=cmd_review)
@@ -195,11 +195,11 @@ def cmd_review(
             results.append({"file": rr.file_path, "review": rr.response})
 
     # 9b. Post comments back to Bitbucket if --platform bitbucket
-    # CLI --comment-style overrides config; config overrides default
-    if not getattr(args, "comment_style", None) or args.comment_style == "per-issue":
-        # Apply config value if CLI wasn't explicitly set to something different
-        if hasattr(config, "comment_style"):
-            args.comment_style = config.comment_style
+    # Priority: CLI flag > .revue.yml > hardcoded default (per-issue)
+    # CLI default is None so we can distinguish "not set" from "explicitly set"
+    if args.comment_style is None:
+        config_style = getattr(config, "comment_style", None)
+        args.comment_style = config_style if config_style in ("per-issue", "summary") else "per-issue"
     platform = getattr(args, "platform", None)
     if platform == "bitbucket":
         _post_to_bitbucket(args, review_results)
@@ -228,13 +228,13 @@ SEVERITY_ORDER = ["high", "medium", "low", "info"]
 
 def _parse_findings(response: str) -> tuple[list, str]:
     """Parse JSON findings from a review response. Returns (findings, summary)."""
-    import json as _json
+
     clean = response.strip()
     if clean.startswith("```"):
         clean = "\n".join(clean.split("\n")[1:])
     if clean.endswith("```"):
         clean = "\n".join(clean.split("\n")[:-1])
-    data = _json.loads(clean.strip())
+    data = json.loads(clean.strip())
     return data.get("findings", []), data.get("summary", "")
 
 
@@ -259,11 +259,11 @@ def _format_finding(f: dict) -> str:
 
 def _format_file_review(file_path: str, response: str) -> str:
     """Format a raw JSON review response into readable markdown with visual hierarchy."""
-    import json as _json
+
 
     try:
         findings, summary = _parse_findings(response)
-    except (_json.JSONDecodeError, TypeError, KeyError):
+    except (json.JSONDecodeError, TypeError, KeyError):
         return f"### `{file_path}`\n\n{response}\n"
 
     if not findings:
@@ -317,7 +317,7 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
       Allows developers to reply, create tasks, and apply fixes per issue.
     - 'summary': one comment per file with all findings grouped together.
     """
-    import json as _json
+
     from revue.core.bitbucket_adapter import BitbucketAdapter
     from revue.core.vcs_adapter import DiffPosition
 

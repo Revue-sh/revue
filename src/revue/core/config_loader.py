@@ -168,7 +168,13 @@ def load_config(
     # --- output section ---
     output: dict[str, object] = raw.get("output", {}) or {}  # type: ignore[assignment]
     _set_if(config, "output_format", output, "format")
-    _set_if(config, "comment_style", output, "comment_style")
+    raw_style = output.get("comment_style")
+    if raw_style is not None:
+        if raw_style not in ("per-issue", "summary"):
+            raise ValueError(
+                f"output.comment_style must be 'per-issue' or 'summary', got {raw_style!r}."
+            )
+        config.comment_style = raw_style
     _set_if(config, "output_file", output, "file")
 
     # --- overrides dict (CLI flags, etc.) ---

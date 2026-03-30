@@ -2,6 +2,7 @@
 API key resolution logic — separated from AIConfig data class (SRP).
 """
 import os
+import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,7 +19,6 @@ PROVIDER_DEFAULT_ENV_VARS: dict[str, str] = {
 
 def _debug_key_resolution(config: "AIConfig") -> None:
     """Print diagnostic info when no API key is found — helps debug CI issues."""
-    import sys
     print("[revue] ERROR: No API key resolved. Debug info:", file=sys.stderr, flush=True)
     print(f"[revue]   provider     = {config.provider!r}", file=sys.stderr, flush=True)
     print(f"[revue]   api_key_env  = {config.api_key_env!r}", file=sys.stderr, flush=True)
