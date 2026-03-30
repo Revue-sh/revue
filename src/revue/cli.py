@@ -212,65 +212,88 @@ def cmd_review(
 
 
 SEVERITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🔵", "info": "ℹ️"}
-CATEGORY_LABEL = {
-    "security": "Security",
-    "performance": "Performance",
-    "maintainability": "Maintainability",
-    "best-practice": "Best Practice",
-    "correctness": "Correctness",
-    "style": "Style",
-}
+SEVERITY_ORDER = ["high", "medium", "low", "info"]
+
+
+def _parse_findings(response: str) -> tuple[list, str]:
+    """Parse JSON findings from a review response. Returns (findings, summary)."""
+    import json as _json
+    clean = response.strip()
+    if clean.startswith("```"):
+        clean = "\n".join(clean.split("\n")[1:])
+    if clean.endswith("```"):
+        clean = "\n".join(clean.split("\n")[:-1])
+    data = _json.loads(clean.strip())
+    return data.get("findings", []), data.get("summary", "")
+
+
+def _format_finding(f: dict) -> str:
+    """Format a single finding as a readable markdown block."""
+    sev = f.get("severity", "info").lower()
+    emoji = SEVERITY_EMOJI.get(sev, "⚪")
+    issue = f.get("issue", "")
+    details = f.get("details", "")
+    rec = f.get("recommendation", "")
+    cat = f.get("category", "")
+
+    lines = [f"#### {emoji} {issue}"]
+    if cat:
+        lines.append(f"*{cat.replace('-', ' ').title()}*  ")
+    if details:
+        lines.append(f"\n{details}")
+    if rec:
+        lines.append(f"\n> 💡 {rec}")
+    return "\n".join(lines)
 
 
 def _format_file_review(file_path: str, response: str) -> str:
-    """Format a raw JSON review response into readable markdown."""
+    """Format a raw JSON review response into readable markdown with visual hierarchy."""
     import json as _json
 
-    lines = [f"### `{file_path}`\n"]
-
-    # Try to parse as JSON findings
     try:
-        # Strip markdown code fences if present
-        clean = response.strip()
-        if clean.startswith("```"):
-            clean = "\n".join(clean.split("\n")[1:])
-        if clean.endswith("```"):
-            clean = "\n".join(clean.split("\n")[:-1])
-        data = _json.loads(clean.strip())
+        findings, summary = _parse_findings(response)
+    except (_json.JSONDecodeError, TypeError, KeyError):
+        return f"### `{file_path}`\n\n{response}\n"
 
-        findings = data.get("findings", [])
-        summary = data.get("summary", "")
+    if not findings:
+        return f"### `{file_path}`\n\n✅ *No issues found.*\n"
 
-        if not findings and not summary:
-            lines.append(response)
-            return "\n".join(lines)
+    # Count by severity for the header badge line
+    counts = {}
+    for f in findings:
+        sev = f.get("severity", "info").lower()
+        counts[sev] = counts.get(sev, 0) + 1
 
-        if summary:
-            lines.append(f"**Summary:** {summary}\n")
+    badge_parts = []
+    for sev in SEVERITY_ORDER:
+        if sev in counts:
+            badge_parts.append(f"{SEVERITY_EMOJI[sev]} {counts[sev]} {sev}")
+    badge_line = " · ".join(badge_parts)
 
-        if findings:
-            for f in findings:
-                sev = f.get("severity", "info").lower()
-                emoji = SEVERITY_EMOJI.get(sev, "⚪")
-                cat = CATEGORY_LABEL.get(f.get("category", ""), f.get("category", ""))
-                issue = f.get("issue", "")
-                details = f.get("details", "")
-                rec = f.get("recommendation", "")
+    lines = [f"### `{file_path}`"]
+    lines.append(f"> {badge_line}\n")
 
-                lines.append(f"**{emoji} [{sev.upper()}] {issue}**")
-                if cat:
-                    lines.append(f"*Category: {cat}*")
-                if details:
-                    lines.append(f"\n{details}")
-                if rec:
-                    lines.append(f"\n> 💡 **Recommendation:** {rec}")
-                lines.append("")
-        else:
-            lines.append("*No findings — looks clean ✅*")
+    if summary:
+        lines.append(f"{summary}\n")
 
-    except (_json.JSONDecodeError, TypeError):
-        # Not JSON — just use the raw response as-is
-        lines.append(response)
+    # Group findings: high/medium inline, low collapsed
+    high_med = [f for f in findings if f.get("severity", "").lower() in ("high", "medium")]
+    low_info = [f for f in findings if f.get("severity", "").lower() in ("low", "info")]
+
+    for f in high_med:
+        lines.append(_format_finding(f))
+        lines.append("")
+
+    if low_info:
+        low_labels = " · ".join(
+            f"{SEVERITY_EMOJI.get(f.get('severity','info').lower(),'⚪')} {f.get('issue','')}"
+            for f in low_info
+        )
+        lines.append(f"<details><summary>Minor issues: {low_labels}</summary>\n")
+        for f in low_info:
+            lines.append(_format_finding(f))
+            lines.append("")
+        lines.append("</details>")
 
     return "\n".join(lines)
 
@@ -302,7 +325,29 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
     )
 
     posted = 0
-    summary_lines = ["## 🤖 Revue.io AI Review\n"]
+    total_findings = {"high": 0, "medium": 0, "low": 0}
+    for rr in review_results:
+        if rr.error or not rr.response:
+            continue
+        try:
+            findings, _ = _parse_findings(rr.response)
+            for f in findings:
+                sev = f.get("severity", "low").lower()
+                if sev in total_findings:
+                    total_findings[sev] += 1
+        except Exception:
+            pass
+
+    total = sum(total_findings.values())
+    verdict = "✅ Looks good!" if total == 0 else f"⚠️ {total} issue{'s' if total != 1 else ''} found"
+    counts_str = " · ".join(
+        f"{SEVERITY_EMOJI[s]} {n} {s}" for s, n in total_findings.items() if n > 0
+    )
+    header = f"## 🤖 Revue.io — Code Review\n\n> **{verdict}**"
+    if counts_str:
+        header += f" · {counts_str}"
+    header += f" · {len(review_results)} file{'s' if len(review_results) != 1 else ''} reviewed\n\n---\n"
+    summary_lines = [header]
 
     for rr in review_results:
         if rr.error or not rr.response:
