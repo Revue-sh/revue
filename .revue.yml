@@ -17,6 +17,10 @@ review:
     - "dist/**"
     - "*.whl"
 
+output:
+  comment_style: per-issue   # "per-issue" = one inline comment per finding (default)
+                              # "summary"   = one grouped comment per file
+
 noise_filters:
   disable: []
   low_confidence_threshold: 0.5

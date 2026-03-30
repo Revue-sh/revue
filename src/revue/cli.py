@@ -195,6 +195,11 @@ def cmd_review(
             results.append({"file": rr.file_path, "review": rr.response})
 
     # 9b. Post comments back to Bitbucket if --platform bitbucket
+    # CLI --comment-style overrides config; config overrides default
+    if not getattr(args, "comment_style", None) or args.comment_style == "per-issue":
+        # Apply config value if CLI wasn't explicitly set to something different
+        if hasattr(config, "comment_style"):
+            args.comment_style = config.comment_style
     platform = getattr(args, "platform", None)
     if platform == "bitbucket":
         _post_to_bitbucket(args, review_results)
