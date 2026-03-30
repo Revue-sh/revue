@@ -2,10 +2,21 @@ image: python:3.12-slim
 
 definitions:
   steps:
+    - step: &run-tests
+        name: "Run Tests"
+        caches:
+          - pip
+        script:
+          - pip install -e src/ --quiet
+          - pip install pytest --quiet
+          - cd src/revue && python3 -m pytest tests/ -q
+
     - step: &revue-review
         name: "Revue.io AI Code Review"
+        caches:
+          - pip
         script:
-          - pip install revue-io --quiet
+          - pip install -e src/ --quiet
           - |
             AUTH=$(echo -n "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}" | base64)
             curl -s \
@@ -27,74 +38,66 @@ definitions:
               --mode multi-agent \
               --config .revue.yml \
               || echo "Review completed with warnings"
-        services:
-          - docker
 
 pipelines:
   branches:
     main:
-      - step:
-          name: "Run Tests"
-          script:
-            - pip install -r src/revue/requirements.txt --quiet 2>/dev/null || true
-            - cd src/revue && python3 -m pytest tests/ -q
+      - step: *run-tests
       - parallel:
-          - step:
-              name: "Build Linux x86_64"
-              image: python:3.12-slim
-              script:
-                - apt-get update && apt-get install -y --no-install-recommends gcc patchelf
-                - pip install nuitka ordered-set zstandard
-                - pip install -e src/
-                - python build/build_nuitka.py
-                - python build/build_wheel.py
-              artifacts:
-                - dist/wheels/*.whl
-          - step:
-              name: "Build Linux ARM64"
-              image: python:3.12-slim
-              runs-on:
-                - self.hosted
-                - linux.arm64
-              script:
-                - apt-get update && apt-get install -y --no-install-recommends gcc patchelf
-                - pip install nuitka ordered-set zstandard
-                - pip install -e src/
-                - python build/build_nuitka.py
-                - python build/build_wheel.py
-              artifacts:
-                - dist/wheels/*.whl
-          - step:
-              name: "Build macOS ARM64"
-              runs-on:
-                - self.hosted
-                - macos.arm64
-              script:
-                - pip install nuitka ordered-set zstandard
-                - pip install -e src/
-                - python build/build_nuitka.py
-                - python build/build_wheel.py
-              artifacts:
-                - dist/wheels/*.whl
+          steps:
+            - step:
+                name: "Build Linux x86_64"
+                image: python:3.12-slim
+                caches:
+                  - pip
+                script:
+                  - apt-get update && apt-get install -y --no-install-recommends gcc patchelf
+                  - pip install nuitka ordered-set zstandard
+                  - pip install -e src/
+                  - python build/build_nuitka.py
+                  - python build/build_wheel.py
+                artifacts:
+                  - dist/wheels/*.whl
+            - step:
+                name: "Build Linux ARM64"
+                image: python:3.12-slim
+                runs-on:
+                  - self.hosted
+                  - linux.arm64
+                caches:
+                  - pip
+                script:
+                  - apt-get update && apt-get install -y --no-install-recommends gcc patchelf
+                  - pip install nuitka ordered-set zstandard
+                  - pip install -e src/
+                  - python build/build_nuitka.py
+                  - python build/build_wheel.py
+                artifacts:
+                  - dist/wheels/*.whl
+            - step:
+                name: "Build macOS ARM64"
+                runs-on:
+                  - self.hosted
+                  - macos.arm64
+                caches:
+                  - pip
+                script:
+                  - pip install nuitka ordered-set zstandard
+                  - pip install -e src/
+                  - python build/build_nuitka.py
+                  - python build/build_wheel.py
+                artifacts:
+                  - dist/wheels/*.whl
       - step:
           name: "Collect Artifacts"
           script:
-            - ls -la dist/wheels/
-            - echo "TODO: push wheels to package registry"
+            - ls -la dist/wheels/ || echo "No wheels built yet"
           artifacts:
             - dist/wheels/*.whl
     develop:
-      - step:
-          name: "Run Tests"
-          script:
-            - pip install -r src/revue/requirements.txt --quiet 2>/dev/null || true
-            - cd src/revue && python3 -m pytest tests/ -q
+      - step: *run-tests
 
   pull-requests:
     "**":
-      - step:
-          name: "Run Tests"
-          script:
-            - pip install -r src/revue/requirements.txt --quiet 2>/dev/null || true
-            - cd src/revue && python3 -m pytest tests/ -q
+      - step: *run-tests
       - step: *revue-review
