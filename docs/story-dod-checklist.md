@@ -1,5 +1,42 @@
 # Story Definition of Done (DoD) Checklist
 
+---
+
+## 📋 Jira Ticket Format (MANDATORY — applies to ALL new tickets)
+
+Every Jira ticket created for this project **must** include the following sections. No exceptions.
+
+```
+### User Story
+As a [role], I want [goal], so that [benefit].
+
+### Background
+2–4 sentences explaining the context, why this matters, and what exists today.
+
+### Acceptance Criteria
+Numbered list. Each item is specific, testable, and unambiguous.
+1. ...
+2. ...
+
+### Test Cases
+Named test cases that map to the ACs above.
+- test_[descriptive_name] — what it tests and what it asserts
+
+### Out of Scope
+Explicit list of what is NOT included in this ticket.
+
+### Dependencies
+Any other tickets that must be done first, or external blockers.
+Include a resolution plan for each dependency.
+
+### Notes (optional)
+Any design decisions, valid values for env vars, links to relevant code, etc.
+```
+
+**Minimum bar:** A ticket without a User Story, Acceptance Criteria, and Test Cases is **not ready for development**. Do not transition to In Progress until all three are present.
+
+---
+
 ## Instructions for Developer Agent
 
 Before marking a story as 'Review', please go through each item in this checklist. Report the status of each item (e.g., [x] Done, [ ] Not Done, [N/A] Not Applicable) and provide brief comments if necessary.
