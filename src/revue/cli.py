@@ -301,3 +301,7 @@ def main() -> None:
         parser.print_help()
         sys.exit(0)
     sys.exit(args.func(args) or 0)
+
+
+if __name__ == "__main__":
+    main()
