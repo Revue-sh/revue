@@ -12,17 +12,16 @@ definitions:
 
     - step: &revue-review
         name: "Revue.io AI Code Review"
+        image: python:3.12
         caches:
           - pip
         script:
           - pip install openai anthropic httpx pyyaml --quiet
-          - |
-            AUTH=$(echo -n "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}" | base64)
-            curl -s \
-              -H "Authorization: Basic ${AUTH}" \
-              -H "Accept: text/plain" \
-              "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests/${BITBUCKET_PR_ID}/diff" \
-              -o /tmp/revue_pr.diff
+          - git diff origin/${BITBUCKET_PR_DESTINATION_BRANCH}...HEAD > /tmp/revue_pr.diff
+          - echo "[revue] Diff size $(wc -l < /tmp/revue_pr.diff) lines"
+          - echo "[revue] Validating config..."
+          - PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
+          - echo "[revue] Starting AI code review..."
           - |
             AI_API_KEY="${AI_API_KEY}" PYTHONPATH="$(pwd)/src" python3 -m revue.cli review \
               --diff /tmp/revue_pr.diff \
@@ -34,9 +33,8 @@ definitions:
               --bb-token "${BITBUCKET_API_TOKEN}" \
               --provider "${AI_PROVIDER:-anthropic}" \
               --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" \
-              --mode multi-agent \
-              --config .revue.yml \
-              || echo "Review completed with warnings"
+              --config .revue.yml
+          - echo "[revue] Review complete"
 
 pipelines:
   branches:
