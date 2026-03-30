@@ -12,6 +12,7 @@ definitions:
 
     - step: &revue-review
         name: "Revue.io AI Code Review"
+        image: python:3.12
         caches:
           - pip
         script:
