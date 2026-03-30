@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-VALIDATE_URL = "https://api.revue.io/license/validate"
+VALIDATE_URL = "https://revue-io.fly.dev/api/license/validate"
 CACHE_PATH = Path("/tmp/.revue_license_cache.json")
 CACHE_TTL_SECONDS = 72 * 3600  # 72 hours
 
