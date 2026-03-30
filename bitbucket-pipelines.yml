@@ -7,6 +7,7 @@ definitions:
         caches:
           - pip
         script:
+          - pip install --upgrade setuptools pip --quiet
           - pip install -e src/ --quiet
           - pip install pytest --quiet
           - cd src/revue && python3 -m pytest tests/ -q
@@ -16,6 +17,7 @@ definitions:
         caches:
           - pip
         script:
+          - pip install --upgrade setuptools pip --quiet
           - pip install -e src/ --quiet
           - |
             AUTH=$(echo -n "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}" | base64)
