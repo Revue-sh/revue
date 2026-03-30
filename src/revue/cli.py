@@ -211,6 +211,70 @@ def cmd_review(
     return 0
 
 
+SEVERITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🔵", "info": "ℹ️"}
+CATEGORY_LABEL = {
+    "security": "Security",
+    "performance": "Performance",
+    "maintainability": "Maintainability",
+    "best-practice": "Best Practice",
+    "correctness": "Correctness",
+    "style": "Style",
+}
+
+
+def _format_file_review(file_path: str, response: str) -> str:
+    """Format a raw JSON review response into readable markdown."""
+    import json as _json
+
+    lines = [f"### `{file_path}`\n"]
+
+    # Try to parse as JSON findings
+    try:
+        # Strip markdown code fences if present
+        clean = response.strip()
+        if clean.startswith("```"):
+            clean = "\n".join(clean.split("\n")[1:])
+        if clean.endswith("```"):
+            clean = "\n".join(clean.split("\n")[:-1])
+        data = _json.loads(clean.strip())
+
+        findings = data.get("findings", [])
+        summary = data.get("summary", "")
+
+        if not findings and not summary:
+            lines.append(response)
+            return "\n".join(lines)
+
+        if summary:
+            lines.append(f"**Summary:** {summary}\n")
+
+        if findings:
+            for f in findings:
+                sev = f.get("severity", "info").lower()
+                emoji = SEVERITY_EMOJI.get(sev, "⚪")
+                cat = CATEGORY_LABEL.get(f.get("category", ""), f.get("category", ""))
+                issue = f.get("issue", "")
+                details = f.get("details", "")
+                rec = f.get("recommendation", "")
+
+                lines.append(f"**{emoji} [{sev.upper()}] {issue}**")
+                if cat:
+                    lines.append(f"*Category: {cat}*")
+                if details:
+                    lines.append(f"\n{details}")
+                if rec:
+                    lines.append(f"\n> 💡 **Recommendation:** {rec}")
+                lines.append("")
+        else:
+            lines.append("*No findings — looks clean ✅*")
+
+    except (_json.JSONDecodeError, TypeError):
+        # Not JSON — just use the raw response as-is
+        lines.append(response)
+
+    return "\n".join(lines)
+
+
 def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
     """Post review findings as inline comments to a Bitbucket PR."""
     from revue.core.bitbucket_adapter import BitbucketAdapter
@@ -243,9 +307,7 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
     for rr in review_results:
         if rr.error or not rr.response:
             continue
-        # Post a summary comment per file (inline anchoring requires finding-level
-        # line numbers which are extracted from the review response in a future story)
-        summary_lines.append(f"### `{rr.file_path}`\n{rr.response}\n")
+        summary_lines.append(_format_file_review(rr.file_path, rr.response))
         posted += 1
 
     if posted == 0:

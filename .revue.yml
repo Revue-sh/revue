@@ -3,7 +3,7 @@ version: "1"
 
 ai:
   provider: anthropic
-  model: claude-sonnet-4-5-20250929
+  model: claude-sonnet-4-5
   api_key_env: AI_API_KEY
 
 review:
