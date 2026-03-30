@@ -15,15 +15,18 @@ definitions:
         caches:
           - pip
         script:
-          - apt-get update -qq && apt-get install -y --no-install-recommends curl
           - pip install openai anthropic httpx pyyaml --quiet
           - |
-            AUTH=$(echo -n "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}" | base64)
-            curl -s \
-              -H "Authorization: Basic ${AUTH}" \
-              -H "Accept: text/plain" \
-              "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests/${BITBUCKET_PR_ID}/diff" \
-              -o /tmp/revue_pr.diff
+            python3 -c "
+            import httpx, os
+            r = httpx.get(
+              f'https://api.bitbucket.org/2.0/repositories/{os.environ[\"BITBUCKET_WORKSPACE\"]}/{os.environ[\"BITBUCKET_REPO_SLUG\"]}/pullrequests/{os.environ[\"BITBUCKET_PR_ID\"]}/diff',
+              auth=(os.environ['BITBUCKET_USERNAME'], os.environ['BITBUCKET_API_TOKEN']),
+              headers={'Accept': 'text/plain'}, follow_redirects=True
+            )
+            open('/tmp/revue_pr.diff', 'w').write(r.text)
+            print(f'Diff fetched: {len(r.text)} bytes')
+            "
           - |
             AI_API_KEY="${AI_API_KEY}" PYTHONPATH="$(pwd)/src" python3 -m revue.cli review \
               --diff /tmp/revue_pr.diff \
