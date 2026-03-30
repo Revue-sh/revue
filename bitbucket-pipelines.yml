@@ -22,6 +22,9 @@ definitions:
           - echo "[revue] Validating config..."
           - PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
           - echo "[revue] Starting AI code review..."
+          - echo "[revue] AI_API_KEY set=${AI_API_KEY:+yes}"
+          - echo "[revue] REVUE_LICENSE_KEY set=${REVUE_LICENSE_KEY:+yes}"
+          - PYTHONPATH="$(pwd)/src" python3 -u -c "from revue.core.config_loader import load_config; c=load_config('.revue.yml'); print('[revue] config ok, provider='+c.provider, 'api_key_env='+c.api_key_env)"
           - |
             AI_API_KEY="${AI_API_KEY}" \
             REVUE_LICENSE_KEY="${REVUE_LICENSE_KEY}" \
