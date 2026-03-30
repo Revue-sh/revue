@@ -16,17 +16,8 @@ definitions:
           - pip
         script:
           - pip install openai anthropic httpx pyyaml --quiet
-          - |
-            python3 -c "
-            import httpx, os
-            r = httpx.get(
-              f'https://api.bitbucket.org/2.0/repositories/{os.environ[\"BITBUCKET_WORKSPACE\"]}/{os.environ[\"BITBUCKET_REPO_SLUG\"]}/pullrequests/{os.environ[\"BITBUCKET_PR_ID\"]}/diff',
-              auth=(os.environ['BITBUCKET_USERNAME'], os.environ['BITBUCKET_API_TOKEN']),
-              headers={'Accept': 'text/plain'}, follow_redirects=True
-            )
-            open('/tmp/revue_pr.diff', 'w').write(r.text)
-            print(f'Diff fetched: {len(r.text)} bytes')
-            "
+          - git diff origin/${BITBUCKET_PR_DESTINATION_BRANCH}...HEAD > /tmp/revue_pr.diff
+          - echo "Diff size $(wc -l < /tmp/revue_pr.diff) lines"
           - |
             AI_API_KEY="${AI_API_KEY}" PYTHONPATH="$(pwd)/src" python3 -m revue.cli review \
               --diff /tmp/revue_pr.diff \
