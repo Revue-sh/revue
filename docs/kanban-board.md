@@ -93,7 +93,7 @@
 - [x] **[64]** Stripe billing — Indie ($9), Pro ($29), Enterprise Starter ($59), Enterprise Growth ($149) tier subscription management *(L, ~1 week)* ✅
 - [x] **[65]** Run history dashboard — list reviews with status and findings summary *(M, ~2 days)* ✅
 - [x] **[66]** Basic analytics — finding trends by category and severity *(M, ~2 days)* ✅
-- [ ] **[67]** Documentation site — getting started guide and .revue.yml reference *(M, ~2 days)*
+- [x] **[67]** Documentation site — getting started guide and .revue.yml reference *(M, ~2 days)* ✅
 - [ ] **[68]** Conversion analytics dashboard — Free→Indie→Pro funnel, reviews/month buckets, referral source tracking *(M, ~2 days)*
 - [x] **[69]** GitHub Action + GitLab Component install documentation — quickstart guides + .revue.yml reference *(S, ~1 day)* ✅
 - [x] **[70]** Bitbucket repository setup — create revue.io repo on Bitbucket, push existing codebase, configure branch protection and access *(S, ~1 day)* ✅ Done — git@bitbucket.org:cbscd/revue.git

@@ -19,3 +19,6 @@ revue = "revue.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["revue/tests"]
+markers = [
+    "e2e: End-to-end tests that require a live browser (Playwright)",
+]

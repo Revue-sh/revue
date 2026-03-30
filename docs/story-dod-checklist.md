@@ -58,7 +58,8 @@ The goal is quality delivery, not just checking boxes.]]
 
    - [ ] All required unit tests as per the story and `Operational Guidelines` Testing Strategy are implemented.
    - [ ] All required integration tests (if applicable) as per the story and `Operational Guidelines` Testing Strategy are implemented.
-   - [ ] All tests (unit, integration, E2E if applicable) pass successfully.
+   - [ ] **E2E tests pass** — run `pytest tests/e2e/ -v` from `src/web/`. All Playwright tests must be green before story is marked Done. If the story touches auth, dashboard, onboarding, runs, analytics, or billing flows — add or update the relevant E2E test in `tests/e2e/`.
+   - [ ] All tests (unit, integration, E2E) pass successfully.
    - [ ] Test coverage meets project standards (if defined).
 
 4. **Functionality & Verification:**
