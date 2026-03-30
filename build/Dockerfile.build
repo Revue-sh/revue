@@ -1,0 +1,35 @@
+# Dockerfile for building and running Revue with Nuitka-compiled core
+# Usage: docker build -f build/Dockerfile.build -t revue-io/revue:latest .
+
+# --- Build stage ---
+FROM python:3.12-slim AS builder
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc patchelf ccache && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir nuitka ordered-set zstandard
+
+WORKDIR /build
+COPY src/ src/
+COPY build/ build/
+
+# Install project dependencies
+RUN pip install --no-cache-dir -e src/
+
+# Compile core modules to .so
+RUN python build/build_nuitka.py
+
+# Build platform-specific wheel
+RUN python build/build_wheel.py
+
+# --- Runtime stage ---
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install the compiled wheel
+COPY --from=builder /build/dist/wheels/*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/*.whl && rm -f /tmp/*.whl
+
+CMD ["revue"]
