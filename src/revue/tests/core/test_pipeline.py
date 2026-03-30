@@ -246,3 +246,85 @@ def test_pipeline_calls_validate_license_when_none_injected(monkeypatch):
         pipeline.run("fake.diff")
 
     assert mock_val.called
+
+
+# ---------------------------------------------------------------------------
+# REVUE-81: agents_allowed enforcement
+# ---------------------------------------------------------------------------
+
+def test_pipeline_respects_free_tier_agents_allowed():
+    """Free tier: only orchestrator, code-quality-expert, consolidator allowed."""
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '{"findings": []}'
+    config = _config()
+    
+    free_license = _license_info(
+        tier="free",
+        agents_allowed=["orchestrator", "code-quality-expert", "consolidator"],
+    )
+    pipeline = ReviewPipeline(config, client=mock_client, license_info=free_license)
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage") as mock_track:
+        results, _ = pipeline.run("fake.diff")
+
+    # Verify agents_used sent to track_usage includes only allowed agents
+    call_kwargs = mock_track.call_args[1]
+    agents_used = call_kwargs["agents_used"]
+    
+    assert "orchestrator" in agents_used
+    assert "code-quality-expert" in agents_used
+    # Ensure no premium agents tracked
+    assert "security-expert" not in agents_used
+    assert "performance-expert" not in agents_used
+
+
+def test_pipeline_respects_pro_tier_agents_allowed():
+    """Pro tier: all 9 agents allowed."""
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '{"findings": []}'
+    config = _config()
+    
+    pro_license = _license_info(
+        tier="pro",
+        agents_allowed=[
+            "orchestrator", "code-quality-expert", "security-expert",
+            "performance-expert", "architecture-expert", "consolidator",
+            "sage", "cleo", "nova",
+        ],
+    )
+    pipeline = ReviewPipeline(config, client=mock_client, license_info=pro_license)
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage") as mock_track:
+        results, _ = pipeline.run("fake.diff")
+
+    call_kwargs = mock_track.call_args[1]
+    agents_used = call_kwargs["agents_used"]
+    
+    # At minimum, orchestrator and code-quality-expert should be used
+    assert "orchestrator" in agents_used
+    assert "code-quality-expert" in agents_used
+
+
+def test_pipeline_logs_active_agents(capsys):
+    """Pipeline logs active agents after license validation."""
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '{"findings": []}'
+    config = _config()
+    
+    license_info = _license_info(
+        agents_allowed=["orchestrator", "code-quality-expert"],
+    )
+    pipeline = ReviewPipeline(config, client=mock_client, license_info=license_info)
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage"):
+        pipeline.run("fake.diff")
+
+    captured = capsys.readouterr()
+    
+    # Verify log output contains active agents
+    assert "Active agents:" in captured.out
+    assert "orchestrator" in captured.out
+    assert "code-quality-expert" in captured.out

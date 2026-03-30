@@ -80,7 +80,11 @@ class ReviewPipeline:
             repo_id=self.config.gitlab_project_id,
         )
         check_reviews_left(license_info.reviews_left)
+        
+        # Extract allowed agents from license
+        agents_allowed = license_info.agents_allowed or ["orchestrator"]
         print(f"[revue] License valid — tier={license_info.tier}, reviews_left={license_info.reviews_left}", flush=True)
+        print(f"[revue] Active agents: {', '.join(agents_allowed)}", flush=True)
 
         # ── Step 1: Diff parsing ──────────────────────────────────────────────
         print("[revue] ── Step 1/4: Parsing diff", flush=True)
@@ -106,7 +110,9 @@ class ReviewPipeline:
         # ── Step 2: AI review (per file) ──────────────────────────────────────
         print(f"[revue] ── Step 2/4: AI review — {len(included)} file(s)", flush=True)
         start_ms = int(time.time() * 1000)
-        agents_used: list[str] = ["orchestrator"]
+        
+        # Track agents used — start with orchestrator if allowed
+        agents_used: list[str] = ["orchestrator"] if "orchestrator" in agents_allowed else []
 
         results: list[ReviewResult] = []
         for i, fc in enumerate(included, 1):
@@ -123,7 +129,9 @@ class ReviewPipeline:
                 )
                 results.append(ReviewResult(file_path=fc.file_path, response=response))
                 print(f"[revue]   ✓ {fc.file_path}", flush=True)
-                if "code-quality-expert" not in agents_used:
+                
+                # Track code-quality-expert if allowed and not already tracked
+                if "code-quality-expert" in agents_allowed and "code-quality-expert" not in agents_used:
                     agents_used.append("code-quality-expert")
             except Exception as exc:
                 print(f"[revue]   ✗ {fc.file_path}: {exc}", flush=True)
