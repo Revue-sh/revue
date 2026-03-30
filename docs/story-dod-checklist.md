@@ -96,18 +96,34 @@ The goal is quality delivery, not just checking boxes.]]
    - [ ] User-facing documentation updated, if changes impact users.
    - [ ] Technical documentation (e.g., READMEs, system diagrams) updated if significant architectural changes were made.
 
-8. **Board Sync (NON-NEGOTIABLE — story is NOT done until Taiga is updated):**
+8. **Git & PR Hygiene:**
 
-   [[LLM: Taiga sync is the final gate. A story is not Done until it is Done on Taiga. No exceptions. No deferrals without explicit human approval documented in writing.]]
+   [[LLM: All commits and PRs must follow Conventional Commits with ticket reference. No exceptions.]]
 
-   - [ ] Code review passes.
-   - [ ] QA passes (all tests green).
-   - [ ] Story status updated to **Done** on Taiga — confirm with the API response or screenshot.
-   - [ ] Any NEW stories created during this story's implementation are added to Taiga immediately.
-   - [ ] Epic status on Taiga updated if all stories in the epic are now Done.
-   - [ ] `docs/kanban-board.md` updated to mirror Taiga (secondary, never a substitute).
-   - [ ] **Taiga confirmation statement written in DoD summary** — e.g. "Story [X] marked Done on Taiga at HH:MM UTC. Epic status: In Progress."
-   - [ ] **If Taiga is unreachable:** STOP immediately. Notify the human. Do NOT mark the story Done. Wait for resolution or get explicit written approval to defer — document the deferral in the session notes.
+   - [ ] All commits follow Conventional Commits format with ticket number: `type(scope)[TICKET-ID]: description`
+     - Examples: `feat(auth)[PROJ-23]: add OAuth2 login`, `fix(billing)[PROJ-45]: correct Stripe webhook handler`
+     - Types: `feat`, `fix`, `chore`, `refactor`, `test`, `docs`, `ci`
+   - [ ] PR title follows the same format: `feat(scope)[TICKET-ID]: Short description`
+   - [ ] Branch name references the ticket: `feat/TICKET-ID-short-description` or `fix/TICKET-ID-short-description`
+   - [ ] PR links back to the ticket (in description or via smart commit if using Jira)
+
+9. **Board Sync (NON-NEGOTIABLE — story is NOT done until PR is merged AND Jira is updated):**
+
+   [[LLM: The correct SDLC order is strictly enforced. A story is not Done until ALL steps below are complete IN ORDER. Never mark Jira Done before the PR is merged. No exceptions.]]
+
+   **Required order — do not skip or reorder:**
+   1. [ ] All tests pass (unit, integration, E2E)
+   2. [ ] Branch pushed to origin with correct naming: `feat/REVUE-XX-short-description`
+   3. [ ] PR opened with title following Conventional Commits: `feat(scope)[REVUE-XX]: description`
+   4. [ ] PR passes CI (all builds green, no failures)
+   5. [ ] PR reviewed and **merged into main**
+   6. [ ] **Only after merge:** Jira ticket transitioned to **Done** via API — confirm with 204 response
+   7. [ ] Any NEW stories created during implementation are created in Jira immediately
+   8. [ ] Epic status in Jira updated if all stories in the epic are now Done
+   9. [ ] `docs/kanban-board.md` updated to mirror Jira (secondary mirror, never a substitute)
+   10. [ ] **Jira confirmation statement written in DoD summary** — e.g. "REVUE-65 marked Done on Jira after PR #12 merged at 14:30 UTC."
+
+   **If Jira is unreachable:** STOP. Notify the human. Do NOT mark the story Done. Wait for resolution or get explicit written approval to defer — document the deferral in the session notes.
 
 ## Final Confirmation
 
