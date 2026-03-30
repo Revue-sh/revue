@@ -144,6 +144,8 @@ def _call_api(
 ) -> dict:
     """POST to the license validation endpoint. Returns the parsed JSON response."""
     payload = {"key": key, "repo_id": repo_id, "ci_run_id": ci_run_id}
+    logger.debug("Calling license API: %s key=%s...", VALIDATE_URL, key[:8])
+    print(f"[revue] Calling {VALIDATE_URL} key={key[:8]}...", flush=True)
     try:
         if client is not None:
             resp = client.post(VALIDATE_URL, json=payload, timeout=10.0)
@@ -155,7 +157,8 @@ def _call_api(
 
     if resp.status_code == 401 or resp.status_code == 403:
         raise LicenseError(
-            "License key is invalid or has been revoked. "
+            f"License key is invalid or has been revoked (HTTP {resp.status_code}). "
+            f"Response: {resp.text[:200]}. "
             "Please check your REVUE_LICENSE_KEY or visit https://revue.io/account"
         )
     if resp.status_code != 200:
