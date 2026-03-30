@@ -3,7 +3,7 @@ version: "1"
 
 ai:
   provider: anthropic
-  model: claude-sonnet-4-5-20250929
+  model: claude-sonnet-4-5
   api_key_env: AI_API_KEY
 
 review:
@@ -16,6 +16,10 @@ review:
     - "*.min.js"
     - "dist/**"
     - "*.whl"
+
+output:
+  comment_style: per-issue   # "per-issue" = one inline comment per finding (default)
+                              # "summary"   = one grouped comment per file
 
 noise_filters:
   disable: []

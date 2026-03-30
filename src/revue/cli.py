@@ -74,6 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--repo-slug", default=None, help="Bitbucket repository slug")
     review.add_argument("--bb-username", default=None, help="Bitbucket username for API auth")
     review.add_argument("--bb-token", default=None, help="Bitbucket API token")
+    review.add_argument(
+        "--comment-style",
+        choices=["summary", "per-issue"],
+        default=None,
+        help="How to post review findings: 'summary' = one comment per file, 'per-issue' = one inline comment per finding. Overrides .revue.yml output.comment_style.",
+    )
 
     review.set_defaults(func=cmd_review)
 
@@ -169,9 +175,15 @@ def cmd_review(
         return 1
 
     # 8. Run pipeline
-    review_results, excluded = pipeline.run(str(diff_path))
+    print(f"[revue] Validating license...")
+    try:
+        review_results, excluded = pipeline.run(str(diff_path))
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
     total = len(review_results) + len(excluded)
-    print(f"Found {total} files ({len(excluded)} excluded by filters)")
+    print(f"[revue] Found {total} file(s) in diff ({len(excluded)} excluded by filters)")
 
     # 9. Output
     results: list[dict[str, str]] = []
@@ -183,6 +195,11 @@ def cmd_review(
             results.append({"file": rr.file_path, "review": rr.response})
 
     # 9b. Post comments back to Bitbucket if --platform bitbucket
+    # Priority: CLI flag > .revue.yml > hardcoded default (per-issue)
+    # CLI default is None so we can distinguish "not set" from "explicitly set"
+    if args.comment_style is None:
+        config_style = getattr(config, "comment_style", None)
+        args.comment_style = config_style if config_style in ("per-issue", "summary") else "per-issue"
     platform = getattr(args, "platform", None)
     if platform == "bitbucket":
         _post_to_bitbucket(args, review_results)
@@ -205,15 +222,111 @@ def cmd_review(
     return 0
 
 
+SEVERITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🔵", "info": "ℹ️"}
+SEVERITY_ORDER = ["high", "medium", "low", "info"]
+
+
+def _parse_findings(response: str) -> tuple[list, str]:
+    """Parse JSON findings from a review response. Returns (findings, summary)."""
+
+    clean = response.strip()
+    if clean.startswith("```"):
+        clean = "\n".join(clean.split("\n")[1:])
+    if clean.endswith("```"):
+        clean = "\n".join(clean.split("\n")[:-1])
+    data = json.loads(clean.strip())
+    return data.get("findings", []), data.get("summary", "")
+
+
+def _format_finding(f: dict) -> str:
+    """Format a single finding as a readable markdown block."""
+    sev = f.get("severity", "info").lower()
+    emoji = SEVERITY_EMOJI.get(sev, "⚪")
+    issue = f.get("issue", "")
+    details = f.get("details", "")
+    rec = f.get("recommendation", "")
+    cat = f.get("category", "")
+
+    lines = [f"#### {emoji} {issue}"]
+    if cat:
+        lines.append(f"*{cat.replace('-', ' ').title()}*  ")
+    if details:
+        lines.append(f"\n{details}")
+    if rec:
+        lines.append(f"\n> 💡 {rec}")
+    return "\n".join(lines)
+
+
+def _format_file_review(file_path: str, response: str) -> str:
+    """Format a raw JSON review response into readable markdown with visual hierarchy."""
+
+
+    try:
+        findings, summary = _parse_findings(response)
+    except (json.JSONDecodeError, TypeError, KeyError):
+        return f"### `{file_path}`\n\n{response}\n"
+
+    if not findings:
+        return f"### `{file_path}`\n\n✅ *No issues found.*\n"
+
+    # Count by severity for the header badge line
+    counts = {}
+    for f in findings:
+        sev = f.get("severity", "info").lower()
+        counts[sev] = counts.get(sev, 0) + 1
+
+    badge_parts = []
+    for sev in SEVERITY_ORDER:
+        if sev in counts:
+            badge_parts.append(f"{SEVERITY_EMOJI[sev]} {counts[sev]} {sev}")
+    badge_line = " · ".join(badge_parts)
+
+    lines = [f"### `{file_path}`"]
+    lines.append(f"> {badge_line}\n")
+
+    if summary:
+        lines.append(f"{summary}\n")
+
+    # Group findings: high/medium inline, low collapsed
+    high_med = [f for f in findings if f.get("severity", "").lower() in ("high", "medium")]
+    low_info = [f for f in findings if f.get("severity", "").lower() in ("low", "info")]
+
+    for f in high_med:
+        lines.append(_format_finding(f))
+        lines.append("")
+
+    if low_info:
+        low_labels = " · ".join(
+            f"{SEVERITY_EMOJI.get(f.get('severity','info').lower(),'⚪')} {f.get('issue','')}"
+            for f in low_info
+        )
+        lines.append(f"<details><summary>Minor issues: {low_labels}</summary>\n")
+        for f in low_info:
+            lines.append(_format_finding(f))
+            lines.append("")
+        lines.append("</details>")
+
+    return "\n".join(lines)
+
+
 def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
-    """Post review findings as inline comments to a Bitbucket PR."""
+    """Post review findings to a Bitbucket PR.
+
+    Supports two comment styles:
+    - 'per-issue' (default): one inline comment per finding, anchored to the file.
+      Allows developers to reply, create tasks, and apply fixes per issue.
+    - 'summary': one comment per file with all findings grouped together.
+    """
+
     from revue.core.bitbucket_adapter import BitbucketAdapter
+    from revue.core.vcs_adapter import DiffPosition
 
     pr_id = getattr(args, "pr_id", None)
     workspace = getattr(args, "workspace", None)
     repo_slug = getattr(args, "repo_slug", None)
     bb_username = getattr(args, "bb_username", None)
     bb_token = getattr(args, "bb_token", None)
+    comment_style = getattr(args, "comment_style", "per-issue")
 
     missing = [n for n, v in [
         ("--pr-id", pr_id), ("--workspace", workspace),
@@ -231,26 +344,96 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
         repo_slug=repo_slug,
     )
 
-    posted = 0
-    summary_lines = ["## 🤖 Revue.io AI Review\n"]
-
+    # Aggregate totals for the summary header
+    total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
     for rr in review_results:
         if rr.error or not rr.response:
             continue
-        # Post a summary comment per file (inline anchoring requires finding-level
-        # line numbers which are extracted from the review response in a future story)
-        summary_lines.append(f"### `{rr.file_path}`\n{rr.response}\n")
-        posted += 1
+        try:
+            findings, _ = _parse_findings(rr.response)
+            for f in findings:
+                sev = f.get("severity", "low").lower()
+                if sev in total_findings:
+                    total_findings[sev] += 1
+        except Exception:
+            pass
 
-    if posted == 0:
-        summary_lines.append("*No findings — looks good! ✅*")
+    total = sum(total_findings.values())
+    verdict = "✅ Looks good!" if total == 0 else f"⚠️ {total} issue{'s' if total != 1 else ''} found"
+    counts_str = " · ".join(
+        f"{SEVERITY_EMOJI.get(s, '⚪')} {n} {s}" for s, n in total_findings.items() if n > 0
+    )
 
-    summary_body = "\n".join(summary_lines)
-    ok = adapter.post_summary_comment(pr_id=int(pr_id), body=summary_body)
-    if ok:
-        print(f"Revue.io — review posted to PR #{pr_id} on Bitbucket ({posted} file(s) reviewed)")
+    if comment_style == "per-issue":
+        # Post one inline comment per finding, anchored to line 1 of the file
+        # (line numbers from AI findings would improve this in a future story)
+        posted = 0
+        for rr in review_results:
+            if rr.error or not rr.response:
+                continue
+            try:
+                findings, file_summary = _parse_findings(rr.response)
+            except Exception:
+                continue
+
+            for f in findings:
+                sev = f.get("severity", "info").lower()
+                emoji = SEVERITY_EMOJI.get(sev, "⚪")
+                issue = f.get("issue", "")
+                details = f.get("details", "")
+                rec = f.get("recommendation", "")
+                cat = f.get("category", "")
+                line = f.get("line", 1) or 1  # use AI-provided line if available
+
+                body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
+                if cat:
+                    body_parts.append(f"*{cat.replace('-', ' ').title()}*")
+                if details:
+                    body_parts.append(f"\n{details}")
+                if rec:
+                    body_parts.append(f"\n> 💡 **Recommendation:** {rec}")
+                body = "\n".join(body_parts)
+
+                position = DiffPosition(
+                    file_path=rr.file_path,
+                    line_number=line,
+                    side="RIGHT",
+                )
+                ok = adapter.post_review_comment(pr_id=int(pr_id), position=position, body=body)
+                if ok:
+                    posted += 1
+
+        # Post a single summary comment at the top with the overall verdict
+        header = f"## 🤖 Revue.io — Code Review\n\n> **{verdict}**"
+        if counts_str:
+            header += f" · {counts_str}"
+        header += f" · {len(review_results)} file{'s' if len(review_results) != 1 else ''} reviewed"
+        adapter.post_summary_comment(pr_id=int(pr_id), body=header)
+        print(f"[revue] Review posted to PR #{pr_id} — {posted} inline comment(s)")
+
     else:
-        print("Warning: Failed to post review summary to Bitbucket", file=sys.stderr)
+        # summary mode: one formatted comment per file
+        header = f"## 🤖 Revue.io — Code Review\n\n> **{verdict}**"
+        if counts_str:
+            header += f" · {counts_str}"
+        header += f" · {len(review_results)} file{'s' if len(review_results) != 1 else ''} reviewed\n\n---\n"
+        summary_lines = [header]
+
+        posted = 0
+        for rr in review_results:
+            if rr.error or not rr.response:
+                continue
+            summary_lines.append(_format_file_review(rr.file_path, rr.response))
+            posted += 1
+
+        if posted == 0:
+            summary_lines.append("*No findings — looks good! ✅*")
+
+        ok = adapter.post_summary_comment(pr_id=int(pr_id), body="\n".join(summary_lines))
+        if ok:
+            print(f"[revue] Review posted to PR #{pr_id} — {posted} file(s) in summary comment")
+        else:
+            print("Warning: Failed to post review summary to Bitbucket", file=sys.stderr)
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -295,3 +478,7 @@ def main() -> None:
         parser.print_help()
         sys.exit(0)
     sys.exit(args.func(args) or 0)
+
+
+if __name__ == "__main__":
+    main()

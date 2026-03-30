@@ -69,6 +69,10 @@ review:
     - "package-lock.json"
     - "*.min.js"
 
+output:
+  comment_style: per-issue      # "per-issue" = one inline comment per finding (default)
+                                # "summary"   = one grouped comment per file
+
 noise_filters:
   disable: []                   # e.g. ["swift-di", "linter-suppression"]
   low_confidence_threshold: 0.5
@@ -164,6 +168,13 @@ def load_config(
     # --- output section ---
     output: dict[str, object] = raw.get("output", {}) or {}  # type: ignore[assignment]
     _set_if(config, "output_format", output, "format")
+    raw_style = output.get("comment_style")
+    if raw_style is not None:
+        if raw_style not in ("per-issue", "summary"):
+            raise ValueError(
+                f"output.comment_style must be 'per-issue' or 'summary', got {raw_style!r}."
+            )
+        config.comment_style = raw_style
     _set_if(config, "output_file", output, "file")
 
     # --- overrides dict (CLI flags, etc.) ---

@@ -22,18 +22,8 @@ definitions:
           - echo "[revue] Validating config..."
           - PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
           - echo "[revue] Starting AI code review..."
-          - |
-            AI_API_KEY="${AI_API_KEY}" PYTHONPATH="$(pwd)/src" python3 -m revue.cli review \
-              --diff /tmp/revue_pr.diff \
-              --platform bitbucket \
-              --pr-id "${BITBUCKET_PR_ID}" \
-              --workspace "${BITBUCKET_WORKSPACE}" \
-              --repo-slug "${BITBUCKET_REPO_SLUG}" \
-              --bb-username "${BITBUCKET_USERNAME}" \
-              --bb-token "${BITBUCKET_API_TOKEN}" \
-              --provider "${AI_PROVIDER:-anthropic}" \
-              --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" \
-              --config .revue.yml
+          - export PYTHONPATH="$(pwd)/src"
+          - python3 -u src/revue/cli.py review --diff /tmp/revue_pr.diff --platform bitbucket --pr-id "$BITBUCKET_PR_ID" --workspace "$BITBUCKET_WORKSPACE" --repo-slug "$BITBUCKET_REPO_SLUG" --bb-username "$BITBUCKET_USERNAME" --bb-token "$BITBUCKET_API_TOKEN" --provider "${AI_PROVIDER:-anthropic}" --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" --config .revue.yml --comment-style per-issue
           - echo "[revue] Review complete"
 
 pipelines:
