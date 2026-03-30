@@ -228,3 +228,96 @@ class TestCacheHelpers:
     def test_key_hash_is_deterministic(self):
         assert _key_hash("abc") == _key_hash("abc")
         assert _key_hash("abc") != _key_hash("xyz")
+
+
+# ---------------------------------------------------------------------------
+# REVUE-82: REVUE_TIER_OVERRIDE tests
+# ---------------------------------------------------------------------------
+
+class TestTierOverride:
+    """Tests for REVUE_TIER_OVERRIDE (non-production testing feature)."""
+
+    def test_tier_override_pro_returns_pro_agents(self, monkeypatch):
+        """REVUE_TIER_OVERRIDE=pro returns Pro-tier agents without API call."""
+        monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("REVUE_TIER_OVERRIDE", "pro")
+        
+        # No license key needed when override active
+        result = validate(license_key=None, _http_client=None)
+        
+        assert result.tier == "pro"
+        assert result.valid is True
+        assert result.reviews_left is None  # unlimited
+        assert "orchestrator" in result.agents_allowed
+        assert "security-expert" in result.agents_allowed
+        assert result.key == "tier-override"
+
+    def test_tier_override_free_returns_free_agents(self, monkeypatch):
+        """REVUE_TIER_OVERRIDE=free returns free-tier agents."""
+        monkeypatch.setenv("APP_ENV", "development")
+        monkeypatch.setenv("REVUE_TIER_OVERRIDE", "free")
+        
+        result = validate(license_key=None, _http_client=None)
+        
+        assert result.tier == "free"
+        assert len(result.agents_allowed) == 3  # free tier = 3 agents
+        assert "orchestrator" in result.agents_allowed
+        assert "code-quality-expert" in result.agents_allowed
+        assert "security-expert" not in result.agents_allowed
+
+    def test_tier_override_ignored_in_production(self, monkeypatch):
+        """REVUE_TIER_OVERRIDE is ignored when APP_ENV=production."""
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("REVUE_TIER_OVERRIDE", "pro")
+        
+        # Should raise LicenseError (no key provided, override ignored)
+        with pytest.raises(LicenseError, match="No Revue license key found"):
+            validate(license_key=None, _http_client=None)
+
+    def test_tier_override_ignored_without_explicit_dev_staging(self, monkeypatch):
+        """REVUE_TIER_OVERRIDE requires APP_ENV=development or staging."""
+        monkeypatch.setenv("APP_ENV", "test")  # Not development or staging
+        monkeypatch.setenv("REVUE_TIER_OVERRIDE", "pro")
+        
+        # Should raise LicenseError (override not active)
+        with pytest.raises(LicenseError, match="No Revue license key found"):
+            validate(license_key=None, _http_client=None)
+
+    def test_tier_override_ignored_in_compiled_build(self, monkeypatch):
+        """REVUE_TIER_OVERRIDE is ignored in compiled builds (Nuitka)."""
+        monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("REVUE_TIER_OVERRIDE", "pro")
+        
+        # Simulate compiled build
+        import sys
+        original_frozen = getattr(sys, "frozen", None)
+        try:
+            sys.frozen = True  # Nuitka sets this
+            
+            # Should raise LicenseError (override disabled in compiled builds)
+            with pytest.raises(LicenseError, match="No Revue license key found"):
+                validate(license_key=None, _http_client=None)
+        finally:
+            # Restore original state
+            if original_frozen is None:
+                delattr(sys, "frozen")
+            else:
+                sys.frozen = original_frozen
+
+    def test_tier_override_invalid_tier_falls_back_to_api(self, monkeypatch):
+        """Invalid REVUE_TIER_OVERRIDE value is ignored, API call proceeds."""
+        monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("REVUE_TIER_OVERRIDE", "invalid-tier")
+        
+        # Should proceed to API call logic (which raises error due to no key)
+        with pytest.raises(LicenseError, match="No Revue license key found"):
+            validate(license_key=None, _http_client=None)
+
+    def test_tier_override_case_insensitive(self, monkeypatch):
+        """REVUE_TIER_OVERRIDE is case-insensitive."""
+        monkeypatch.setenv("APP_ENV", "staging")
+        monkeypatch.setenv("REVUE_TIER_OVERRIDE", "PRO")  # uppercase
+        
+        result = validate(license_key=None, _http_client=None)
+        
+        assert result.tier == "pro"  # normalized to lowercase

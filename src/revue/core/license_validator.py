@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -88,6 +89,11 @@ def validate(
 
     Falls back to a local cache for up to 72h when the API is unreachable.
     Raises :class:`LicenseError` on hard failures (invalid key, expired cache).
+    
+    Supports REVUE_TIER_OVERRIDE for testing in non-production environments:
+    - Set REVUE_TIER_OVERRIDE=pro (or free/indie/enterprise_starter/etc.)
+    - Only honoured when APP_ENV != "production"
+    - Skips API call and returns mock LicenseInfo with tier's agents_allowed
 
     Args:
         license_key: The REVUE_LICENSE_KEY value. Falls back to the
@@ -96,6 +102,27 @@ def validate(
         ci_run_id: CI run identifier sent with the validation request.
         _http_client: Injected httpx.Client for testing — do NOT use in prod.
     """
+    # REVUE_TIER_OVERRIDE: bypass license API for testing (dev/staging only)
+    # Security: Only allowed when running from source code (not compiled builds)
+    # and APP_ENV is explicitly "development" or "staging"
+    is_compiled = getattr(sys, "frozen", False) or "__compiled__" in globals()
+    app_env = os.environ.get("APP_ENV", "").lower()
+    tier_override = os.environ.get("REVUE_TIER_OVERRIDE", "").lower()
+    
+    if not is_compiled and app_env in {"development", "staging"} and tier_override in AGENTS_BY_TIER:
+        logger.warning(
+            f"REVUE_TIER_OVERRIDE={tier_override} active (APP_ENV={app_env}). "
+            "For testing only — disabled in production builds."
+        )
+        return LicenseInfo(
+            valid=True,
+            tier=tier_override,
+            agents_allowed=AGENTS_BY_TIER[tier_override],
+            reviews_left=None,  # unlimited for override
+            expires_at="9999-12-31T00:00:00Z",
+            key="tier-override",
+        )
+    
     key = license_key or os.environ.get("REVUE_LICENSE_KEY", "")
     if not key:
         raise LicenseError(
