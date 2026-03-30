@@ -248,20 +248,25 @@ def _parse_findings(response: str) -> tuple[list, str]:
     return findings, summary
 
 
-def _format_finding(f: dict) -> str:
-    """Format a single finding as a readable markdown block.
+def _extract_finding_fields(f: dict) -> tuple[str, str, str, str, str, int]:
+    """Extract and normalise fields from a finding dict.
 
-    Normalises field names across different AI response formats:
-    - issue / message / title
-    - details / description / detail
-    - recommendation / suggestion / fix
+    Returns (sev, issue, details, rec, cat, line).
+    Handles field name variations across different AI models.
     """
-    sev = f.get("severity", "info").lower()
-    emoji = SEVERITY_EMOJI.get(sev, "⚪")
+    sev = (f.get("severity") or "info").lower()
     issue = (f.get("issue") or f.get("message") or f.get("title") or "").strip()
     details = (f.get("details") or f.get("description") or f.get("detail") or "").strip()
     rec = (f.get("recommendation") or f.get("suggestion") or f.get("fix") or "").strip()
     cat = (f.get("category") or f.get("type") or "").strip()
+    line = int(f.get("line") or f.get("lines") or 1) if f.get("line") or f.get("lines") else 1
+    return sev, issue, details, rec, cat, line
+
+
+def _format_finding(f: dict) -> str:
+    """Format a single finding as a readable markdown block."""
+    sev, issue, details, rec, cat, _ = _extract_finding_fields(f)
+    emoji = SEVERITY_EMOJI.get(sev, "⚪")
 
     lines = [f"#### {emoji} {issue}"]
     if cat:
@@ -393,13 +398,12 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
                 continue
 
             for f in findings:
-                sev = f.get("severity", "info").lower()
+                sev, issue, details, rec, cat, line = _extract_finding_fields(f)
                 emoji = SEVERITY_EMOJI.get(sev, "⚪")
-                issue = (f.get("issue") or f.get("message") or f.get("title") or "").strip()
-                details = (f.get("details") or f.get("description") or f.get("detail") or "").strip()
-                rec = (f.get("recommendation") or f.get("suggestion") or f.get("fix") or "").strip()
-                cat = (f.get("category") or f.get("type") or "").strip()
-                line = f.get("line", 1) or 1  # use AI-provided line if available
+
+                # Skip findings with no meaningful content
+                if not issue and not details:
+                    continue
 
                 body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
                 if cat:
