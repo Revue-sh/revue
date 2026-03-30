@@ -100,6 +100,7 @@ MIGRATIONS_SQL = """
 
 _USERS_MIGRATIONS = [
     ("stripe_subscription_id", "ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT"),
+    ("referral_source", "ALTER TABLE users ADD COLUMN referral_source TEXT"),
 ]
 
 _REVIEW_RUNS_MIGRATIONS = [

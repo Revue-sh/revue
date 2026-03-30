@@ -18,6 +18,7 @@ class User:
     stripe_customer_id: Optional[str]
     stripe_subscription_id: Optional[str]
     is_active: bool
+    referral_source: Optional[str] = None
 
 
 @dataclass
@@ -68,6 +69,7 @@ def row_to_user(row: sqlite3.Row) -> User:
         stripe_customer_id=row["stripe_customer_id"],
         stripe_subscription_id=row["stripe_subscription_id"] if "stripe_subscription_id" in keys else None,
         is_active=bool(row["is_active"]),
+        referral_source=row["referral_source"] if "referral_source" in keys else None,
     )
 
 
@@ -112,10 +114,15 @@ def row_to_review_run(row: sqlite3.Row) -> ReviewRun:
 
 # --- User queries ---
 
-def create_user(conn: sqlite3.Connection, email: str, password_hash: str) -> int:
+def create_user(
+    conn: sqlite3.Connection,
+    email: str,
+    password_hash: str,
+    referral_source: Optional[str] = None,
+) -> int:
     cur = conn.execute(
-        "INSERT INTO users (email, password_hash) VALUES (?, ?)",
-        (email, password_hash),
+        "INSERT INTO users (email, password_hash, referral_source) VALUES (?, ?, ?)",
+        (email, password_hash, referral_source),
     )
     return cur.lastrowid  # type: ignore[return-value]
 
@@ -328,6 +335,95 @@ def get_analytics(
         "total_findings": total_findings,
         "avg_duration_ms": avg_duration,
         "period_days": days,
+    }
+
+
+def get_conversion_analytics(
+    conn: sqlite3.Connection,
+    days: int = 30,
+) -> dict:
+    """Return admin-level conversion analytics across ALL users.
+
+    Returns:
+        {
+          "tier_breakdown":        {"free": N, "indie": N, ...},
+          "reviews_per_month_buckets": {"0": N, "1-5": N, "6-25": N, "26-100": N, "100+": N},
+          "referral_sources":      [{"source": str, "count": N}],
+          "total_users":           N,
+          "paid_users":            N,
+          "conversion_rate":       float,
+          "signups_over_time":     [{"date": "YYYY-MM-DD", "count": N}],
+        }
+    """
+    # --- Tier breakdown ---
+    tier_rows = conn.execute(
+        "SELECT tier, COUNT(*) as cnt FROM users GROUP BY tier"
+    ).fetchall()
+    tier_breakdown = {
+        "free": 0, "indie": 0, "pro": 0,
+        "enterprise_starter": 0, "enterprise_growth": 0, "enterprise_plus": 0,
+    }
+    for row in tier_rows:
+        tier_breakdown[row["tier"]] = row["cnt"]
+
+    total_users = sum(tier_breakdown.values())
+    paid_users = total_users - tier_breakdown.get("free", 0)
+    conversion_rate = round((paid_users / total_users) * 100, 1) if total_users > 0 else 0.0
+
+    # --- Reviews per month buckets ---
+    # Count reviews per user in the last 30 days, then bucket
+    bucket_rows = conn.execute(
+        """SELECT u.id,
+                  COALESCE(cnt.review_count, 0) as review_count
+           FROM users u
+           LEFT JOIN (
+               SELECT w.user_id, COUNT(*) as review_count
+               FROM review_runs rr
+               JOIN license_keys lk ON rr.license_key_id = lk.id
+               JOIN workspaces w ON lk.workspace_id = w.id
+               WHERE rr.created_at >= datetime('now', '-30 days')
+               GROUP BY w.user_id
+           ) cnt ON u.id = cnt.user_id"""
+    ).fetchall()
+    buckets = {"0": 0, "1-5": 0, "6-25": 0, "26-100": 0, "100+": 0}
+    for row in bucket_rows:
+        c = row["review_count"]
+        if c == 0:
+            buckets["0"] += 1
+        elif c <= 5:
+            buckets["1-5"] += 1
+        elif c <= 25:
+            buckets["6-25"] += 1
+        elif c <= 100:
+            buckets["26-100"] += 1
+        else:
+            buckets["100+"] += 1
+
+    # --- Referral sources ---
+    ref_rows = conn.execute(
+        """SELECT COALESCE(referral_source, 'direct') as source, COUNT(*) as cnt
+           FROM users GROUP BY source ORDER BY cnt DESC"""
+    ).fetchall()
+    referral_sources = [{"source": row["source"], "count": row["cnt"]} for row in ref_rows]
+
+    # --- Signups over time ---
+    signup_rows = conn.execute(
+        """SELECT DATE(created_at) as dt, COUNT(*) as cnt
+           FROM users
+           WHERE created_at >= datetime('now', ?)
+           GROUP BY dt ORDER BY dt ASC""",
+        (f"-{days} days",),
+    ).fetchall()
+    signups_over_time = [{"date": row["dt"], "count": row["cnt"]} for row in signup_rows]
+
+    return {
+        "tier_breakdown": tier_breakdown,
+        "reviews_per_month_buckets": buckets,
+        "referral_sources": referral_sources,
+        "total_users": total_users,
+        "paid_users": paid_users,
+        "conversion_rate": conversion_rate,
+        "signups_over_time": signups_over_time,
     }
 
 

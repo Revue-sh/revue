@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from auth import get_session
 from database import get_db
-from models import get_license_for_user, get_recent_reviews, get_all_runs_for_user, get_analytics
+from models import get_license_for_user, get_recent_reviews, get_all_runs_for_user, get_analytics, get_conversion_analytics
 from config import templates
 
 router = APIRouter()
@@ -124,6 +124,25 @@ async def analytics_page(request: Request) -> HTMLResponse:
         data = get_analytics(conn, user_id, days=days)
 
     return templates.TemplateResponse(request, "analytics.html", {
+        "session": session,
+        "analytics": data,
+        "days": days,
+    })
+
+
+@router.get("/conversion", response_class=HTMLResponse)
+async def conversion_page(request: Request) -> HTMLResponse:
+    session = get_session(request)
+    if not session:
+        return RedirectResponse("/login", status_code=303)
+
+    days = int(request.query_params.get("days", 30))
+    days = max(7, min(days, 365))  # clamp 7–365
+
+    with get_db() as conn:
+        data = get_conversion_analytics(conn, days=days)
+
+    return templates.TemplateResponse(request, "conversion.html", {
         "session": session,
         "analytics": data,
         "days": days,

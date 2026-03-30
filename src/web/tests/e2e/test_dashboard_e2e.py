@@ -49,3 +49,12 @@ def test_analytics_page_loads(logged_in_page, base_url):
 
     page.wait_for_load_state("networkidle")
     assert page.url.endswith("/analytics")
+
+
+
+def test_conversion_page_loads(logged_in_page, base_url):
+    logged_in_page.goto(base_url + "/conversion")
+    page = logged_in_page
+
+    page.wait_for_load_state("networkidle")
+    assert page.locator("h1").is_visible()
