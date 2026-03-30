@@ -227,25 +227,41 @@ SEVERITY_ORDER = ["high", "medium", "low", "info"]
 
 
 def _parse_findings(response: str) -> tuple[list, str]:
-    """Parse JSON findings from a review response. Returns (findings, summary)."""
+    """Parse findings list from a JSON review response. Returns (findings, summary).
 
+    Handles variations in AI response structure:
+    - {"findings": [...], "summary": "..."}
+    - {"review": {"findings": [...], "summary": "..."}}
+    - fields may use "message" instead of "summary"
+    """
     clean = response.strip()
     if clean.startswith("```"):
         clean = "\n".join(clean.split("\n")[1:])
     if clean.endswith("```"):
         clean = "\n".join(clean.split("\n")[:-1])
     data = json.loads(clean.strip())
-    return data.get("findings", []), data.get("summary", "")
+    # Unwrap nested "review" key if present (some models wrap the response)
+    if "review" in data and isinstance(data["review"], dict):
+        data = data["review"]
+    findings = data.get("findings", [])
+    summary = data.get("summary", "") or data.get("message", "")
+    return findings, summary
 
 
 def _format_finding(f: dict) -> str:
-    """Format a single finding as a readable markdown block."""
+    """Format a single finding as a readable markdown block.
+
+    Normalises field names across different AI response formats:
+    - issue / message / title
+    - details / description / detail
+    - recommendation / suggestion / fix
+    """
     sev = f.get("severity", "info").lower()
     emoji = SEVERITY_EMOJI.get(sev, "⚪")
-    issue = f.get("issue", "")
-    details = f.get("details", "")
-    rec = f.get("recommendation", "")
-    cat = f.get("category", "")
+    issue = (f.get("issue") or f.get("message") or f.get("title") or "").strip()
+    details = (f.get("details") or f.get("description") or f.get("detail") or "").strip()
+    rec = (f.get("recommendation") or f.get("suggestion") or f.get("fix") or "").strip()
+    cat = (f.get("category") or f.get("type") or "").strip()
 
     lines = [f"#### {emoji} {issue}"]
     if cat:
@@ -379,10 +395,10 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
             for f in findings:
                 sev = f.get("severity", "info").lower()
                 emoji = SEVERITY_EMOJI.get(sev, "⚪")
-                issue = f.get("issue", "")
-                details = f.get("details", "")
-                rec = f.get("recommendation", "")
-                cat = f.get("category", "")
+                issue = (f.get("issue") or f.get("message") or f.get("title") or "").strip()
+                details = (f.get("details") or f.get("description") or f.get("detail") or "").strip()
+                rec = (f.get("recommendation") or f.get("suggestion") or f.get("fix") or "").strip()
+                cat = (f.get("category") or f.get("type") or "").strip()
                 line = f.get("line", 1) or 1  # use AI-provided line if available
 
                 body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
