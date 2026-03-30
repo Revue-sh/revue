@@ -7,18 +7,15 @@ definitions:
         caches:
           - pip
         script:
-          - pip install --upgrade setuptools pip --quiet
-          - pip install -e src/ --quiet
-          - pip install pytest --quiet
-          - cd src/revue && python3 -m pytest tests/ -q
+          - pip install openai anthropic httpx pyyaml pytest --quiet
+          - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q
 
     - step: &revue-review
         name: "Revue.io AI Code Review"
         caches:
           - pip
         script:
-          - pip install --upgrade setuptools pip --quiet
-          - pip install -e src/ --quiet
+          - pip install openai anthropic httpx pyyaml --quiet
           - |
             AUTH=$(echo -n "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}" | base64)
             curl -s \
@@ -27,7 +24,7 @@ definitions:
               "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests/${BITBUCKET_PR_ID}/diff" \
               -o /tmp/revue_pr.diff
           - |
-            AI_API_KEY="${AI_API_KEY}" revue review \
+            AI_API_KEY="${AI_API_KEY}" PYTHONPATH="$(pwd)/src" python3 -m revue.cli review \
               --diff /tmp/revue_pr.diff \
               --platform bitbucket \
               --pr-id "${BITBUCKET_PR_ID}" \
