@@ -59,7 +59,7 @@ class AIConfig:
     agents_team: str = "team-full-review"
     custom_agents_dir: str = ""
     output_format: str = "markdown"
-    comment_style: str = "per-issue"  # "per-issue" | "summary"
+    comment_style: Literal["per-issue", "summary"] = "per-issue"
     output_file: str = ""
 
     def __repr__(self) -> str:
