@@ -1,0 +1,22 @@
+# .revue.yml — Revue.io configuration
+version: "1"
+
+ai:
+  provider: anthropic
+  model: claude-sonnet-4-5-20250929
+  api_key_env: AI_API_KEY
+
+review:
+  max_diff_lines: 2000
+  min_confidence: 70
+  agent_timeout_seconds: 90
+  ignore_patterns:
+    - "*.lock"
+    - "package-lock.json"
+    - "*.min.js"
+    - "dist/**"
+    - "*.whl"
+
+noise_filters:
+  disable: []
+  low_confidence_threshold: 0.5
