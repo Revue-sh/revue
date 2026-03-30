@@ -145,7 +145,7 @@ def _call_api(
     """POST to the license validation endpoint. Returns the parsed JSON response."""
     payload = {"key": key, "repo_id": repo_id, "ci_run_id": ci_run_id}
     logger.debug("Calling license API: %s key=%s...", VALIDATE_URL, key[:8])
-    print(f"[revue] Calling {VALIDATE_URL} key={key[:8]}...", flush=True)
+    print(f"[revue] Calling license API key={key[:8]}...", flush=True)
     try:
         if client is not None:
             resp = client.post(VALIDATE_URL, json=payload, timeout=10.0)
