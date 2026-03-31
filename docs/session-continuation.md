@@ -1,157 +1,137 @@
 # Session Continuation
-**Updated:** 2026-03-31 00:10 GMT | **For:** Next session
-
----
+**Updated:** 2026-03-31 | **For:** Next session
 
 ## Completed this session
 
-### REVUE-81 — Pipeline respects `agents_allowed` from license ✅ PR #16 merged
-- `src/revue/core/pipeline.py`: Extract `agents_allowed` from license, log active agents, gate `agents_used` tracking
-- `src/revue/tests/core/test_pipeline.py`: 3 new unit tests (free tier, pro tier, log output)
-- `.bitbucket/pull_request_template.md`: New PR template for consistent, context-rich PRs
-- `scripts/create-pr.sh`: Automated PR creation script (env-var driven, no hardcoded credentials)
-- `docs/PR_TEMPLATE_GUIDE.md`: Team reference for PR process
+### E8 Epic Refinement & Planning
+- ✅ Recovered from previous session stuck in memory compaction
+- ✅ Set up local Postgres on Mac mini (Rancher Desktop) - replaced NAS approach
+- ✅ Audited all 7 E8 epic stories (REVUE-88 through REVUE-94)
+- ✅ Updated REVUE-88 description to reflect local Docker setup
+- ✅ Linked all stories to parent epic REVUE-87
+- ✅ Reset story statuses from incorrectly-marked "Done" to "To Do"
+- ✅ Created comprehensive epic plan: `docs/E8-EPIC-PLAN.md`
 
-### REVUE-82 — Wire full orchestration engine for paid tiers ✅ PR #17 merged
-- `src/revue/core/license_validator.py`: `REVUE_TIER_OVERRIDE` env var for non-prod testing
-  - Security hardened: only active in source builds (`sys.frozen` check) + `APP_ENV=development|staging`
-- `src/revue/core/pipeline.py`: Full rewrite with tier-branching
-  - `_run_simplified()` — free tier, single-pass `client.complete()` loop
-  - `_run_orchestration()` — paid tier: shared analysis → Cleo routing → parallel agents → Nova consolidation
-  - Lazy import of AIReviewer modules, graceful degradation fallback
-- `src/revue/tests/core/test_license_validator.py`: 7 new tests for `REVUE_TIER_OVERRIDE` incl. security edge cases
-- `src/revue/tests/core/test_pipeline.py`: 3 new orchestration tests, updated pro-tier test
-- **501/501 tests passing** ✅
+### REVUE-89: Normalised Review Knowledge Base Schema
+- ✅ **PR #22 merged to main** (`2853d98`)
+- ✅ **Jira REVUE-89 → Done**
+- ✅ Database schema: 20 tables created (reviews, findings, quality ratings, patterns, reference data)
+- ✅ All 6 architectural gaps addressed from epic planning
+- ✅ Migration runner with duplicate prevention (`src/db/migrate.py`)
+- ✅ 11/11 tests passing (`tests/db/test_schema.py`)
+- ✅ Comprehensive documentation (`src/db/README.md`)
+- ✅ Security fixes: removed exposed credentials, added migration safety checks
+- ✅ CI pipeline passed, Revue AI review completed (54 findings, critical issues addressed)
 
-### Process improvements
-- **PR description = AI review context**: Learned that Revue needs filled PR descriptions to avoid false positives. "Out of Scope" section is now mandatory.
-- **PR workflow**: Fill description → commit → push → create PR (not the other way round)
-- **Credentials security**: Fixed hardcoded email + repo slug in `scripts/create-pr.sh`
+**Commits:**
+- `1b2c90f` — Initial implementation (20 tables, migration, tests, docs)
+- `0247a42` — Security & safety fixes (credentials removed, duplicate prevention)
 
-### New tickets created
-| Ticket | Summary | Status |
-|--------|---------|--------|
-| REVUE-83 | Fix failing CI pipeline on main branch | To Do |
-| REVUE-84 | Smart PR description context filtering (multi-platform) | To Do |
-| REVUE-85 | Document PR description best practices for customers | To Do |
+### Infrastructure Setup
+- ✅ Configured SSH key for Bitbucket (`~/.ssh/bitbucket_cbscd_2025`)
+- ✅ Bitbucket API credentials working (PR creation, merge, status monitoring)
+- ✅ Pipeline monitoring working (can poll PR status, not pipelines directly)
+
+### Documentation Created
+- `docs/E8-EPIC-PLAN.md` — Full epic implementation plan
+- `docs/stories/REVUE-89-story-context.md` — Story details & ACs
+- `docs/stories/REVUE-89-completion-summary.md` — DoD checklist & results
+- `docs/post-mvp-ideas.md` — Post-MVP enhancement (auto-resolve comments)
+- `src/db/README.md` — Database usage guide
+- `memory/2026-03-31-*.md` — Session notes (postgres setup, epic refinement, PR merge)
 
 ---
 
 ## Sprint & Epic State
 
-| Epic | Stories | Done | Status |
-|---|---|---|---|
-| E1 — Core Review Engine | 9 | 9/9 | ✅ Complete |
-| E2 — VCS Platform Integration | 9 | 9/9 | ✅ Complete |
-| E3 — Agent System & Routing | 16 | 16/16 | ✅ Complete |
-| E4 — Sage: The Resolver Agent | 5 | 5/5 | ✅ Complete |
-| E5 — AI Backend & Configuration | 4 | 4/4 | ✅ Complete |
-| E6 — Onboarding, Observability & Launch | 14 | 14/14 | ✅ Complete |
-| E7 — Post-MVP Tech Debt | 8 | 8/8 | ✅ Complete |
+**Epic:** REVUE-87 — Review Intelligence & Knowledge Base  
+**Progress:** 2/7 stories complete (29%)
 
-**Post-MVP stories:**
-| Ticket | Summary | Status |
-|--------|---------|--------|
-| REVUE-79 | Literal type for comment_style | ✅ Done |
-| REVUE-80 | Replace print() with logging | Closed (Won't Fix) |
-| REVUE-81 | Pipeline respects `agents_allowed` | ✅ Done |
-| REVUE-82 | Wire full orchestration engine | ✅ Done |
-| REVUE-83 | Fix failing CI pipeline on main | 🔲 To Do |
-| REVUE-84 | Smart PR description context filtering | 🔲 To Do (blocked on REVUE-82 ✅) |
-| REVUE-85 | Document PR best practices | 🔲 To Do (blocked on REVUE-84) |
+| Story | Status | Priority |
+|-------|--------|----------|
+| REVUE-88 | ✅ Done | Postgres container (local Docker) |
+| REVUE-89 | ✅ Done | Normalised schema |
+| REVUE-90 | 📋 To Do | P0 | run-comparison.sh DB integration |
+| REVUE-91 | 📋 To Do | P1 | reviews.py query CLI |
+| REVUE-92 | 📋 To Do | P1 | Human rating TUI |
+| REVUE-93 | 📋 To Do | P2 | Auto-heuristic scorer |
+| REVUE-94 | 📋 To Do | P2 | .revue.yml pattern support |
+
+**Next Sprint (P0 — Database Foundation):** REVUE-90 (5 points)
 
 ---
 
 ## Remaining work — next steps
 
-### 1. REVUE-83 — Fix failing CI pipeline on main (HIGH, no blockers)
-- **First action**: Check latest failed pipeline at https://bitbucket.org/cbscd/revue/pipelines
-- May be related to REVUE-81 merge (new agents_allowed logic) or env config
-- Note: Bitbucket API token lacks `read:pipeline:bitbucket` scope — check via web UI
-- Fix → commit → push to main → verify green
+### 1. REVUE-90: run-comparison.sh writes to Postgres (P0, 5 points)
+**Goal:** Automatically import review comparison results into DB after each run.
 
-### 2. REVUE-84 — Smart PR description context filtering (unblocked now REVUE-82 is done)
-- **First action**: Create `src/revue/core/vcs_adapter.py` with `VCSAdapter` protocol + `BitbucketAdapter`, `GitHubAdapter`, `GitLabAdapter`
-- Auto-detect platform from env vars: `BITBUCKET_WORKSPACE`, `GITHUB_ACTIONS`, `GITLAB_CI`
-- Then create `src/revue/core/pr_context.py` with `PRContextExtractor` (parse PR description sections, route relevant sections per agent)
-- Section-to-agent map: orchestrator→Summary+OutOfScope, security-expert→OutOfScope+Dependencies+Changes, etc.
-- Wire into `pipeline._run_orchestration()` — pass context to each agent before review
-- Token efficiency target: 40-60% savings vs. naive full-description-to-all approach
-- Add `--auto-detect-pr` flag to CLI
+**First action:** Create `src/db/import_review.py` with function to parse JSON review output and insert into DB.
 
-### 3. DNS — `api.revue.io`
-- CNAME `api.revue.io` → `revue-io.fly.dev` in domain registrar
-- Then: `flyctl certs create api.revue.io`
-- Then: revert `VALIDATE_URL` in `license_validator.py` to `https://api.revue.io/license/validate`
+**Implementation details:**
+- Parse JSON from `revue` CLI output (baseline + contextual reviews)
+- Insert into tables: `reviews`, `findings`, `pr_descriptions`, `pr_description_sections`, `comparison_runs`
+- Hash PR description (SHA256) for deduplication
+- Transaction-based: all or nothing (rollback on error)
+- Idempotent: check if review already imported before inserting
+- Graceful degradation: warn if DB unreachable, continue with JSON export
 
-### 4. Stripe setup (pre-launch)
-```bash
-fly secrets set STRIPE_SECRET_KEY=sk_live_...
-fly secrets set STRIPE_WEBHOOK_SECRET=whsec_...
-fly secrets set STRIPE_PRICE_INDIE_MONTHLY=price_...
-fly secrets set STRIPE_PRICE_PRO_MONTHLY=price_...
-```
+**Dependencies:** ✅ REVUE-89 merged (schema exists)
 
-### 5. Stale branches to clean up
-`hotfix/pipeline-install`, `hotfix/pipeline-pythonpath`, `hotfix/pipeline-setuptools`, `fix/REVUE-76-pipeline-yaml-comments`, `chore/fix-dod-sdlc-order`
+**File to create:** `src/db/import_review.py`
 
 ---
 
-## Key architectural decisions made this session
+### 2. REVUE-91: reviews.py query CLI (P1, 8 points)
+**Blocked by:** REVUE-90
 
-| Decision | Rationale |
-|----------|-----------|
-| `REVUE_TIER_OVERRIDE` disabled in Nuitka builds (`sys.frozen`) | Prevents license bypass in distributed binaries |
-| `REVUE_TIER_OVERRIDE` requires `APP_ENV=development\|staging` explicitly | Prevents spoofing with arbitrary APP_ENV values |
-| Sage deferred from REVUE-82 → REVUE-84 | Sage needs VCSAdapter (being designed in REVUE-84); avoids partial implementation |
-| Smart PR context filtering over SharedAnalysisResult | Per-agent filtering more token-efficient than naive full-description-to-all; aligns with REVUE-84 VCSAdapter work |
-| PRContextExtractor routes sections by agent domain | Security agent gets security-relevant sections; avoids noise; ~50% token savings |
+**Named queries to implement:**
+- `reviews.py list` — All reviews with finding counts
+- `reviews.py show REVUE-XX` — Full detail for one ticket
+- `reviews.py false-positives [--top N]` — Most recurring FP patterns
+- `reviews.py clarity [--agent NAME]` — Avg clarity score per agent
+- `reviews.py suppression-trend` — Context suppression rate over time
+- `reviews.py patterns` — Active allowed/disallowed patterns
 
----
-
-## Bitbucket repo variables (current state)
-| Variable | Value | Notes |
-|---|---|---|
-| `AI_API_KEY` | Anthropic API key | secured |
-| `AI_MODEL` | `claude-sonnet-4-5` | production quality |
-| `AI_PROVIDER` | `anthropic` | |
-| `BITBUCKET_API_TOKEN` | Bitbucket token | secured — lacks `read:pipeline` scope |
-| `BITBUCKET_USERNAME` | Bitbucket username | |
-| `REVUE_LICENSE_KEY` | `lic_8af0c4ff679df6100510319561d2f2bb` | secured, ci@revue.io — Free tier |
-
-**Note**: CI license is Free tier. To test Pro-tier orchestration in CI, set `APP_ENV=staging` + `REVUE_TIER_OVERRIDE=pro` in Bitbucket repo variables (safe — not a production build).
+**Tech stack:** Click (CLI), Rich (table formatting), psycopg2 (DB)
 
 ---
 
-## Key file locations
-- Pipeline: `src/revue/core/pipeline.py`
-- License validator: `src/revue/core/license_validator.py` (VALIDATE_URL → fly.dev, pending DNS)
-- CLI: `src/revue/cli.py`
-- CI config: `bitbucket-pipelines.yml`
-- Client config: `.revue.yml` (in repo root)
-- PR template: `.bitbucket/pull_request_template.md`
-- PR creation script: `scripts/create-pr.sh`
-- PR guide: `docs/PR_TEMPLATE_GUIDE.md`
-- DoD checklist: `docs/story-dod-checklist.md`
-- Jira mapping: `scripts/taiga_to_jira_mapping.json`
+### 3. REVUE-92: Human rating TUI (P1, 5 points)
+**Blocked by:** REVUE-91
+
+**Flow:** `reviews.py rate REVUE-XX` → Interactive prompts for each finding → Write to `finding_quality` + `finding_outcomes` tables
+
+---
+
+### 4. REVUE-93: Auto-heuristic scorer (P2, 3 points)
+**Blocked by:** REVUE-92
+
+**Trigger:** Called from `import_review.py` after findings inserted  
+**File:** `src/db/auto_scorer.py`
+
+---
+
+### 5. REVUE-94: .revue.yml pattern support (P2, 5 points)
+**Can run parallel with REVUE-93**
+
+**File:** Extend `.revue.yml` schema, inject patterns into agent prompts
 
 ---
 
 ## Continuation prompt
 
-```
-Read Projects/revue.io/docs/session-continuation.md for full context.
+**Epic:** REVUE-87 (2/7 complete) — Review Intelligence & Knowledge Base  
+**Next story:** REVUE-90 (run-comparison.sh DB integration) — 5 points, P0
 
-REVUE-81 ✅ and REVUE-82 ✅ merged. 501/501 tests passing.
-Full orchestration engine live for paid tiers (Cleo → parallel agents → Nova).
+**Start here:**
+1. Read `docs/E8-EPIC-PLAN.md` for full context
+2. Read `docs/session-continuation.md` (this file)
+3. Create `src/db/import_review.py` to parse JSON review output and insert into Postgres
+4. Follow SDLC: branch `feat/REVUE-90-db-import` → implement → test → commit → PR → merge
 
-Next: REVUE-83 (no blockers) — fix failing CI pipeline on main.
-First action: check https://bitbucket.org/cbscd/revue/pipelines for latest failure.
+**Database ready:** Postgres running at `localhost:5432`, schema v1 created (20 tables), credentials in `~/.zshenv`
 
-Then: REVUE-84 — smart PR context filtering. Start with:
-  src/revue/core/vcs_adapter.py (VCSAdapter protocol + Bitbucket/GitHub/GitLab adapters)
-  src/revue/core/pr_context.py (PRContextExtractor with section-to-agent map)
+**Blockers:** None. REVUE-89 merged, schema live.
 
-Process reminder: fill PR description BEFORE creating PR — Revue uses it as context.
-Branch format: feat/REVUE-XX-description | Commit: type(scope)[REVUE-XX]: description
-```
+**Note:** `run-comparison.sh` doesn't exist yet — may need to create or find the script that runs baseline vs contextual reviews. Check `scripts/` directory or ask user for location.
