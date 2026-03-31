@@ -305,3 +305,137 @@ class ReviewRepository(BaseRepository):
         )
         
         return {"allowed": allowed, "disallowed": disallowed}
+
+    def get_findings_for_rating(self, ticket_id: str) -> list[dict]:
+        """Get findings that need rating (not yet rated or partially rated).
+        
+        Args:
+            ticket_id: Jira ticket ID
+            
+        Returns:
+            List of findings with their current rating status
+        """
+        rows = self._execute(
+            """
+            SELECT 
+                f.id,
+                f.file_path,
+                f.line_start,
+                f.line_end,
+                f.issue,
+                f.details,
+                f.recommendation,
+                sl.name AS severity,
+                rm.name AS mode,
+                -- Check if already rated for clarity
+                EXISTS (
+                    SELECT 1 FROM finding_quality fq
+                    JOIN quality_dimensions qd ON fq.dimension_id = qd.id
+                    WHERE fq.finding_id = f.id AND qd.name = 'clarity'
+                ) AS has_clarity,
+                -- Check if already rated for actionability
+                EXISTS (
+                    SELECT 1 FROM finding_quality fq
+                    JOIN quality_dimensions qd ON fq.dimension_id = qd.id
+                    WHERE fq.finding_id = f.id AND qd.name = 'actionability'
+                ) AS has_actionability,
+                -- Check if FP status marked
+                EXISTS (
+                    SELECT 1 FROM finding_outcomes fo
+                    WHERE fo.finding_id = f.id
+                ) AS has_fp_status
+            FROM findings f
+            JOIN reviews r ON f.review_id = r.id
+            JOIN severity_levels sl ON f.severity_id = sl.id
+            JOIN review_modes rm ON r.mode_id = rm.id
+            WHERE r.ticket_id = %s
+            ORDER BY sl.id ASC, f.file_path ASC, f.line_start ASC
+            """,
+            (ticket_id,),
+        )
+        return rows
+
+    def save_finding_rating(
+        self, finding_id: int, clarity: int = None, actionability: int = None,
+        is_fp: bool = None, fp_reason_code: str = None
+    ) -> None:
+        """Save quality ratings and FP status for a finding.
+        
+        Args:
+            finding_id: Finding ID to rate
+            clarity: Clarity score (1-5), None to skip
+            actionability: Actionability score (1-5), None to skip
+            is_fp: Whether finding is a false positive, None to skip
+            fp_reason_code: FP reason code if is_fp=True
+        """
+        # Save clarity rating
+        if clarity is not None:
+            self._execute(
+                """
+                INSERT INTO finding_quality (finding_id, dimension_id, score, rated_by_id)
+                SELECT %s, qd.id, %s, rs.id
+                FROM quality_dimensions qd, rating_sources rs
+                WHERE qd.name = 'clarity' AND rs.name = 'human'
+                ON CONFLICT (finding_id, dimension_id, rated_by_id) DO UPDATE
+                SET score = EXCLUDED.score, rated_at = CURRENT_TIMESTAMP
+                """,
+                (finding_id, clarity),
+                fetch=False
+            )
+        
+        # Save actionability rating
+        if actionability is not None:
+            self._execute(
+                """
+                INSERT INTO finding_quality (finding_id, dimension_id, score, rated_by_id)
+                SELECT %s, qd.id, %s, rs.id
+                FROM quality_dimensions qd, rating_sources rs
+                WHERE qd.name = 'actionability' AND rs.name = 'human'
+                ON CONFLICT (finding_id, dimension_id, rated_by_id) DO UPDATE
+                SET score = EXCLUDED.score, rated_at = CURRENT_TIMESTAMP
+                """,
+                (finding_id, actionability),
+                fetch=False
+            )
+        
+        # Save FP status
+        if is_fp is not None:
+            if is_fp and fp_reason_code:
+                self._execute(
+                    """
+                    INSERT INTO finding_outcomes (finding_id, is_false_positive, fp_reason_id)
+                    SELECT %s, %s, fpr.id
+                    FROM fp_reasons fpr
+                    WHERE fpr.code = %s
+                    ON CONFLICT (finding_id) DO UPDATE
+                    SET is_false_positive = EXCLUDED.is_false_positive,
+                        fp_reason_id = EXCLUDED.fp_reason_id,
+                        assessed_at = CURRENT_TIMESTAMP
+                    """,
+                    (finding_id, is_fp, fp_reason_code),
+                    fetch=False
+                )
+            else:
+                self._execute(
+                    """
+                    INSERT INTO finding_outcomes (finding_id, is_false_positive, fp_reason_id)
+                    VALUES (%s, %s, NULL)
+                    ON CONFLICT (finding_id) DO UPDATE
+                    SET is_false_positive = EXCLUDED.is_false_positive,
+                        fp_reason_id = NULL,
+                        assessed_at = CURRENT_TIMESTAMP
+                    """,
+                    (finding_id, is_fp),
+                    fetch=False
+                )
+        
+        # Commit the transaction
+        self.conn.commit()
+
+    def get_fp_reasons(self) -> list[dict]:
+        """Get all available false positive reason codes.
+        
+        Returns:
+            List of dicts with code and description
+        """
+        return self._execute("SELECT code, description FROM fp_reasons ORDER BY code")

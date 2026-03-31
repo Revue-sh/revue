@@ -88,3 +88,39 @@ class ReviewService:
             Dict with 'allowed' and 'disallowed' pattern lists
         """
         return self.review_repo.get_active_patterns()
+
+    def get_findings_for_rating(self, ticket_id: str) -> list[dict]:
+        """Get findings that need rating.
+        
+        Args:
+            ticket_id: Jira ticket ID
+            
+        Returns:
+            List of findings with rating status
+        """
+        return self.review_repo.get_findings_for_rating(ticket_id)
+
+    def save_finding_rating(
+        self, finding_id: int, clarity: int = None, actionability: int = None,
+        is_fp: bool = None, fp_reason_code: str = None
+    ) -> None:
+        """Save ratings for a finding.
+        
+        Args:
+            finding_id: Finding ID
+            clarity: Clarity score (1-5)
+            actionability: Actionability score (1-5)
+            is_fp: Is false positive
+            fp_reason_code: FP reason code
+        """
+        self.review_repo.save_finding_rating(
+            finding_id, clarity, actionability, is_fp, fp_reason_code
+        )
+
+    def get_fp_reasons(self) -> list[dict]:
+        """Get available FP reason codes.
+        
+        Returns:
+            List of FP reasons
+        """
+        return self.review_repo.get_fp_reasons()
