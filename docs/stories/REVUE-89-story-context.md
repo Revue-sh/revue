@@ -230,18 +230,20 @@ psql $DATABASE_URL -c "SELECT * FROM agents;"
 - Host: localhost
 - Port: 5432
 - Database: revue_reviews
-- User: revue
-- Password: revue_reviews_2026
+- User: (set in ~/.zshenv)
+- Password: (set in ~/.zshenv - never commit!)
 
 **Environment Variables (in ~/.zshenv):**
 ```bash
-export DATABASE_URL="postgresql://revue:revue_reviews_2026@localhost:5432/revue_reviews"
+export DATABASE_URL="postgresql://your_user:your_password@localhost:5432/revue_reviews"
 export POSTGRES_HOST="localhost"
 export POSTGRES_PORT="5432"
 export POSTGRES_DB="revue_reviews"
-export POSTGRES_USER="revue"
-export POSTGRES_PASSWORD="revue_reviews_2026"
+export POSTGRES_USER="your_user"
+export POSTGRES_PASSWORD="your_secure_password"
 ```
+
+Replace `your_user` and `your_password` with your actual credentials.
 
 **Dependencies:**
 ```bash

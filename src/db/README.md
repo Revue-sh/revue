@@ -230,13 +230,15 @@ cat backup_20260331.sql | docker exec -i revue-db psql -U revue -d revue_reviews
 All credentials are in `~/.zshenv`:
 
 ```bash
-export DATABASE_URL="postgresql://revue:revue_reviews_2026@localhost:5432/revue_reviews"
+export DATABASE_URL="postgresql://your_user:your_password@localhost:5432/revue_reviews"
 export POSTGRES_HOST="localhost"
 export POSTGRES_PORT="5432"
 export POSTGRES_DB="revue_reviews"
-export POSTGRES_USER="revue"
-export POSTGRES_PASSWORD="revue_reviews_2026"
+export POSTGRES_USER="your_user"
+export POSTGRES_PASSWORD="your_secure_password"
 ```
+
+**Note:** Replace `your_user` and `your_password` with your actual database credentials. Never commit credentials to git.
 
 **Python usage:**
 

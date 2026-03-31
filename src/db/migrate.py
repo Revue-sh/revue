@@ -53,6 +53,25 @@ def run_migration(migration_file: str) -> None:
         conn = psycopg2.connect(database_url)
         cursor = conn.cursor()
         
+        # Check if migration was already applied (if schema_version table exists)
+        try:
+            cursor.execute("""
+                SELECT version FROM schema_version 
+                WHERE description LIKE %s 
+                LIMIT 1;
+            """, (f"%{migration_path.stem}%",))
+            
+            existing = cursor.fetchone()
+            if existing:
+                print(f"⚠️  Migration appears to have been applied already (version {existing[0]})")
+                print(f"   Skipping to avoid duplicate execution.")
+                cursor.close()
+                conn.close()
+                return
+        except psycopg2.Error:
+            # schema_version table doesn't exist yet - first migration
+            pass
+        
         # Execute migration
         cursor.execute(sql)
         
