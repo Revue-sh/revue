@@ -7,7 +7,7 @@ ai:
   api_key_env: AI_API_KEY
 
 review:
-  max_diff_lines: 2000
+  max_diff_lines: 10000  # TODO: REVUE-96 - make this dynamic based on model context window
   min_confidence: 70
   agent_timeout_seconds: 90
   ignore_patterns:

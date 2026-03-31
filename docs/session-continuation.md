@@ -3,117 +3,124 @@
 
 ## Completed this session
 
-### E8 Epic Refinement & Planning
-- ✅ Recovered from previous session stuck in memory compaction
-- ✅ Set up local Postgres on Mac mini (Rancher Desktop) - replaced NAS approach
-- ✅ Audited all 7 E8 epic stories (REVUE-88 through REVUE-94)
-- ✅ Updated REVUE-88 description to reflect local Docker setup
-- ✅ Linked all stories to parent epic REVUE-87
-- ✅ Reset story statuses from incorrectly-marked "Done" to "To Do"
-- ✅ Created comprehensive epic plan: `docs/E8-EPIC-PLAN.md`
-
-### REVUE-89: Normalised Review Knowledge Base Schema
-- ✅ **PR #22 merged to main** (`2853d98`)
-- ✅ **Jira REVUE-89 → Done**
-- ✅ Database schema: 20 tables created (reviews, findings, quality ratings, patterns, reference data)
-- ✅ All 6 architectural gaps addressed from epic planning
-- ✅ Migration runner with duplicate prevention (`src/db/migrate.py`)
-- ✅ 11/11 tests passing (`tests/db/test_schema.py`)
-- ✅ Comprehensive documentation (`src/db/README.md`)
-- ✅ Security fixes: removed exposed credentials, added migration safety checks
-- ✅ CI pipeline passed, Revue AI review completed (54 findings, critical issues addressed)
+### REVUE-90: Database Import for Review Comparisons
+- ✅ **PR #25 merged to main** (`9bfc3dc`)
+- ✅ **Jira REVUE-90 → Done**
+- ✅ Created `src/db/import_review.py` (447 lines) — Full importer with all 5 ACs
+- ✅ Created `tests/db/test_import_review.py` (366 lines) — 11/11 tests passing
+- ✅ Updated `scripts/run-comparison.sh` — Auto-imports after generating comparison
+- ✅ All acceptance criteria met:
+  - AC1: Findings written with correct mode_id (baseline/contextual)
+  - AC2: PR description parsed into sections (split on ## headers)
+  - AC3: comparison_runs links baseline + contextual reviews
+  - AC4: Graceful degradation if DB unreachable (warning + exit 0)
+  - AC5: Idempotent (checks existing reviews, SHA256 dedup for PR descriptions)
+- ✅ CI/CD fixes:
+  - Fixed license validation in CI with `REVUE_TIER_OVERRIDE=Pro` + `APP_ENV=staging`
+  - Scoped env vars to review step only (isolated from tests)
+  - All 540 tests passing in CI
 
 **Commits:**
-- `1b2c90f` — Initial implementation (20 tables, migration, tests, docs)
-- `0247a42` — Security & safety fixes (credentials removed, duplicate prevention)
+- `ff56c36` — Initial implementation (importer + tests)
+- `79d3276` — CI fix (scope APP_ENV to review step)
+- `4abdcd4` — Trigger pipeline after env var cleanup
 
-### Infrastructure Setup
-- ✅ Configured SSH key for Bitbucket (`~/.ssh/bitbucket_cbscd_2025`)
-- ✅ Bitbucket API credentials working (PR creation, merge, status monitoring)
-- ✅ Pipeline monitoring working (can poll PR status, not pipelines directly)
+**Schema changes:** None (PR #24 already migrated to schema v2 — removed agents table)
 
-### Documentation Created
-- `docs/E8-EPIC-PLAN.md` — Full epic implementation plan
-- `docs/stories/REVUE-89-story-context.md` — Story details & ACs
-- `docs/stories/REVUE-89-completion-summary.md` — DoD checklist & results
-- `docs/post-mvp-ideas.md` — Post-MVP enhancement (auto-resolve comments)
-- `src/db/README.md` — Database usage guide
-- `memory/2026-03-31-*.md` — Session notes (postgres setup, epic refinement, PR merge)
+### Schema Refactoring (PR #24)
+- ✅ **PR #24 merged to main** (`dc49915`)
+- ✅ Removed redundant `agents` table (AI model tracked via `reviews.model_id`)
+- ✅ Migration 002 applied (schema version bumped to 2)
+- ✅ 11/11 schema tests updated and passing
+
+### New Story Created
+- ✅ **REVUE-95** created in Jira — Enhanced orchestration logging with tier-based detail levels
+  - Priority: Medium
+  - Labels: ux, logging, transparency, post-mvp
+  - Goal: Show customers which agents reviewed their code and why
 
 ---
 
 ## Sprint & Epic State
 
 **Epic:** REVUE-87 — Review Intelligence & Knowledge Base  
-**Progress:** 2/7 stories complete (29%)
+**Progress:** 3/7 stories complete (43%)
 
 | Story | Status | Priority |
 |-------|--------|----------|
 | REVUE-88 | ✅ Done | Postgres container (local Docker) |
-| REVUE-89 | ✅ Done | Normalised schema |
-| REVUE-90 | 📋 To Do | P0 | run-comparison.sh DB integration |
+| REVUE-89 | ✅ Done | Normalised schema (v2) |
+| REVUE-90 | ✅ Done | run-comparison.sh DB integration |
 | REVUE-91 | 📋 To Do | P1 | reviews.py query CLI |
 | REVUE-92 | 📋 To Do | P1 | Human rating TUI |
 | REVUE-93 | 📋 To Do | P2 | Auto-heuristic scorer |
 | REVUE-94 | 📋 To Do | P2 | .revue.yml pattern support |
 
-**Next Sprint (P0 — Database Foundation):** REVUE-90 (5 points)
+**Next Sprint (P1 — Analytics & Rating):** REVUE-91 (8 points), REVUE-92 (5 points)
+
+**Sprint velocity:** 3 stories (13 points) completed this session
 
 ---
 
 ## Remaining work — next steps
 
-### 1. REVUE-90: run-comparison.sh writes to Postgres (P0, 5 points)
-**Goal:** Automatically import review comparison results into DB after each run.
+### 1. REVUE-91: reviews.py query CLI (P1, 8 points)
+**Goal:** Python CLI for querying knowledge base without raw SQL.
 
-**First action:** Create `src/db/import_review.py` with function to parse JSON review output and insert into DB.
-
-**Implementation details:**
-- Parse JSON from `revue` CLI output (baseline + contextual reviews)
-- Insert into tables: `reviews`, `findings`, `pr_descriptions`, `pr_description_sections`, `comparison_runs`
-- Hash PR description (SHA256) for deduplication
-- Transaction-based: all or nothing (rollback on error)
-- Idempotent: check if review already imported before inserting
-- Graceful degradation: warn if DB unreachable, continue with JSON export
-
-**Dependencies:** ✅ REVUE-89 merged (schema exists)
-
-**File to create:** `src/db/import_review.py`
-
----
-
-### 2. REVUE-91: reviews.py query CLI (P1, 8 points)
-**Blocked by:** REVUE-90
+**First action:** Create `src/db/reviews.py` with Click-based CLI framework and first query (`list`).
 
 **Named queries to implement:**
-- `reviews.py list` — All reviews with finding counts
-- `reviews.py show REVUE-XX` — Full detail for one ticket
-- `reviews.py false-positives [--top N]` — Most recurring FP patterns
-- `reviews.py clarity [--agent NAME]` — Avg clarity score per agent
-- `reviews.py suppression-trend` — Context suppression rate over time
-- `reviews.py patterns` — Active allowed/disallowed patterns
+```bash
+reviews.py list                          # All reviews with finding counts
+reviews.py show REVUE-XX                 # Full detail for one ticket
+reviews.py false-positives [--top N]     # Most recurring FP patterns
+reviews.py clarity [--model NAME]        # Avg clarity score per model
+reviews.py suppression-trend             # Context suppression rate over time
+reviews.py patterns                      # Active allowed/disallowed patterns
+```
 
-**Tech stack:** Click (CLI), Rich (table formatting), psycopg2 (DB)
+**Tech stack:**
+- Click for CLI framework
+- Rich for table formatting
+- psycopg2 for DB connection (reuse `get_db_connection()` from import_review.py)
+
+**Dependencies:** ✅ REVUE-90 merged (importer works, DB has data once run-comparison.sh executed)
+
+**File to create:** `src/db/reviews.py`
 
 ---
 
-### 3. REVUE-92: Human rating TUI (P1, 5 points)
-**Blocked by:** REVUE-91
+### 2. REVUE-92: Human rating TUI (P1, 5 points)
+**Blocked by:** REVUE-91 (needs reviews.py CLI foundation)
 
 **Flow:** `reviews.py rate REVUE-XX` → Interactive prompts for each finding → Write to `finding_quality` + `finding_outcomes` tables
 
+**Prompts per finding:**
+- Clarity (1-5): How clear is the issue description?
+- Actionability (1-5): How specific is the recommendation?
+- False positive (y/n): Is this a false alarm?
+- FP reason (if yes): Why? (dropdown: intentional_pattern, test_code, out_of_scope, etc.)
+
+**Tech stack:** Textual or simple `input()` loops with progress indicator
+
 ---
 
-### 4. REVUE-93: Auto-heuristic scorer (P2, 3 points)
-**Blocked by:** REVUE-92
+### 3. REVUE-93: Auto-heuristic scorer (P2, 3 points)
+**Blocked by:** REVUE-92 (needs human ratings to benchmark against)
 
 **Trigger:** Called from `import_review.py` after findings inserted  
 **File:** `src/db/auto_scorer.py`
 
+**Heuristics:**
+- Clarity: Has issue + details? Length > 20 chars? Specific file/line refs?
+- Actionability: Has recommendation? Contains code snippet? Specific verb?
+
 ---
 
-### 5. REVUE-94: .revue.yml pattern support (P2, 5 points)
+### 4. REVUE-94: .revue.yml pattern support (P2, 5 points)
 **Can run parallel with REVUE-93**
+
+**Goal:** Define allowed/disallowed patterns in `.revue.yml` to suppress known false positives.
 
 **File:** Extend `.revue.yml` schema, inject patterns into agent prompts
 
@@ -121,17 +128,18 @@
 
 ## Continuation prompt
 
-**Epic:** REVUE-87 (2/7 complete) — Review Intelligence & Knowledge Base  
-**Next story:** REVUE-90 (run-comparison.sh DB integration) — 5 points, P0
+**Epic:** REVUE-87 (3/7 complete, 43%) — Review Intelligence & Knowledge Base  
+**Next story:** REVUE-91 (reviews.py query CLI) — 8 points, P1
 
 **Start here:**
 1. Read `docs/E8-EPIC-PLAN.md` for full context
 2. Read `docs/session-continuation.md` (this file)
-3. Create `src/db/import_review.py` to parse JSON review output and insert into Postgres
-4. Follow SDLC: branch `feat/REVUE-90-db-import` → implement → test → commit → PR → merge
+3. Create `src/db/reviews.py` with Click CLI framework
+4. Implement first query: `reviews.py list` (show all reviews with finding counts)
+5. Branch: `feat/REVUE-91-query-cli` → implement → test → commit → PR
 
-**Database ready:** Postgres running at `localhost:5432`, schema v1 created (20 tables), credentials in `~/.zshenv`
+**Database ready:** Postgres running at `localhost:5432`, schema v2 (19 tables), importer working (`src/db/import_review.py`)
 
-**Blockers:** None. REVUE-89 merged, schema live.
+**Test data:** Run `./scripts/run-comparison.sh REVUE-XX /path/to/pr_desc.txt` to populate DB with sample data
 
-**Note:** `run-comparison.sh` doesn't exist yet — may need to create or find the script that runs baseline vs contextual reviews. Check `scripts/` directory or ask user for location.
+**Blockers:** None. REVUE-90 merged, importer functional.
