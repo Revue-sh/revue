@@ -1,12 +1,17 @@
 """
-Tests for REVUE-89: Review Knowledge Base Schema
+Tests for Review Knowledge Base Schema (REVUE-89 + v2 updates)
+
+Schema v2 changes:
+- Removed agents table (redundant with reviews.model_id)
+- Removed findings.agent_id column
+- AI model now tracked at review level only
 
 Test Cases:
 - test_db_connection: Verify psycopg2 connects to Postgres
 - test_schema_creation: All tables exist with correct structure
 - test_seed_data_populated: Reference tables have expected rows
 - test_schema_version_tracking: schema_version table enforces single row
-- test_gap_1_agents_table: Agents table exists with FK to findings
+- test_gap_1_model_tracking_via_reviews: AI model tracked via reviews.model_id (not findings.agent_id)
 - test_gap_2_rated_by_constraint: finding_quality.rated_by has FK to rating_sources
 - test_gap_3_schema_version: schema_version table exists with constraints
 - test_gap_4_comparison_runs: comparison_runs junction table exists
@@ -50,11 +55,11 @@ def test_schema_creation(db_connection):
     """AC1: Migration script creates all tables with correct FKs and constraints."""
     cursor = db_connection.cursor()
     
-    # List all expected tables
+    # List all expected tables (schema v2: agents table removed)
     expected_tables = [
         'schema_version',
         'severity_levels', 'review_modes', 'models', 'tiers',
-        'quality_dimensions', 'fp_reasons', 'pattern_types', 'rating_sources', 'agents',
+        'quality_dimensions', 'fp_reasons', 'pattern_types', 'rating_sources',
         'reviews', 'findings', 'finding_quality', 'finding_outcomes',
         'pr_descriptions', 'pr_description_sections', 'comparison_runs',
         'allowed_patterns', 'disallowed_patterns', 'finding_pattern_matches'
@@ -80,7 +85,7 @@ def test_seed_data_populated(db_connection):
     """AC2: Seed data inserts reference rows."""
     cursor = db_connection.cursor()
     
-    # Expected counts for each reference table
+    # Expected counts for each reference table (schema v2: agents removed)
     expected_data = {
         'severity_levels': 5,      # critical, high, medium, low, info
         'review_modes': 2,         # baseline, contextual
@@ -90,7 +95,6 @@ def test_seed_data_populated(db_connection):
         'fp_reasons': 7,           # intentional_pattern, test_code, etc.
         'pattern_types': 2,        # allowed, disallowed
         'rating_sources': 2,       # human, auto
-        'agents': 8,               # orchestrator, code-quality, etc.
     }
     
     for table, expected_count in expected_data.items():
@@ -116,7 +120,7 @@ def test_seed_data_populated(db_connection):
 
 
 def test_schema_version_tracking(db_connection):
-    """AC3: schema_version table present with version=1."""
+    """AC3: schema_version table present with current version."""
     cursor = db_connection.cursor()
     
     # Query schema_version
@@ -127,37 +131,23 @@ def test_schema_version_tracking(db_connection):
     assert len(rows) == 1, f"Expected 1 row in schema_version, got {len(rows)}"
     
     version, description = rows[0]
-    assert version == 1, f"Expected version=1, got {version}"
-    assert "Initial schema" in description
+    assert version >= 2, f"Expected version >= 2 (after migration 002), got {version}"
+    assert "agents table" in description.lower(), "Expected migration 002 description about agents table"
     
     # Attempt to insert duplicate version (should fail due to PRIMARY KEY)
     with pytest.raises(psycopg2.IntegrityError):
-        cursor.execute("INSERT INTO schema_version (version, description) VALUES (1, 'duplicate');")
+        cursor.execute(f"INSERT INTO schema_version (version, description) VALUES ({version}, 'duplicate');")
         db_connection.commit()
     
     db_connection.rollback()  # Rollback failed transaction
     cursor.close()
 
 
-def test_gap_1_agents_table(db_connection):
-    """Gap 1: agents table exists + agent_id FK on findings."""
+def test_gap_1_model_tracking_via_reviews(db_connection):
+    """Gap 1 (v2): AI model tracked at review level, not finding level."""
     cursor = db_connection.cursor()
     
-    # Verify agents table exists
-    cursor.execute("""
-        SELECT column_name, data_type 
-        FROM information_schema.columns 
-        WHERE table_name = 'agents' 
-        ORDER BY ordinal_position;
-    """)
-    
-    columns = {row[0]: row[1] for row in cursor.fetchall()}
-    assert 'id' in columns
-    assert 'name' in columns
-    assert 'version' in columns
-    assert 'role' in columns
-    
-    # Verify findings.agent_id FK constraint
+    # Verify reviews.model_id FK to models table exists
     cursor.execute("""
         SELECT tc.constraint_name, kcu.column_name, ccu.table_name AS foreign_table_name
         FROM information_schema.table_constraints AS tc
@@ -165,14 +155,24 @@ def test_gap_1_agents_table(db_connection):
           ON tc.constraint_name = kcu.constraint_name
         JOIN information_schema.constraint_column_usage AS ccu
           ON ccu.constraint_name = tc.constraint_name
-        WHERE tc.table_name = 'findings' 
+        WHERE tc.table_name = 'reviews' 
           AND tc.constraint_type = 'FOREIGN KEY'
-          AND kcu.column_name = 'agent_id';
+          AND kcu.column_name = 'model_id';
     """)
     
     fk_info = cursor.fetchone()
-    assert fk_info is not None, "findings.agent_id FK constraint not found"
-    assert fk_info[2] == 'agents', f"Expected FK to 'agents', got '{fk_info[2]}'"
+    assert fk_info is not None, "reviews.model_id FK constraint not found"
+    assert fk_info[2] == 'models', f"Expected FK to 'models', got '{fk_info[2]}'"
+    
+    # Verify findings does NOT have agent_id column (removed in migration 002)
+    cursor.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'findings' AND column_name = 'agent_id';
+    """)
+    
+    agent_id_col = cursor.fetchone()
+    assert agent_id_col is None, "findings.agent_id should be removed in schema v2"
     
     cursor.close()
 
