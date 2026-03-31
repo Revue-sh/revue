@@ -5,7 +5,7 @@ Accepts injected AIClient for testability (DIP).
 Tier routing:
   - Free tier  → simplified single-pass review loop
   - Paid tiers → full orchestration engine (Cleo routing, parallel agents,
-                 Nova consolidation). Sage is deferred to REVUE-84.
+                 Nova consolidation). PR context filtering wired in REVUE-84.
 """
 from __future__ import annotations
 
@@ -21,6 +21,8 @@ from .diff_parser import parse_diff_file, filter_changes
 from .diff_limit import check_diff_limit, DiffLimitResult
 from .license_validator import LicenseInfo, validate as validate_license
 from .models import FileChange
+from .pr_description_adapter import PRDescription
+from .pr_context import PRContextExtractor
 from .usage_tracker import check_reviews_left, track as track_usage
 
 # ---------------------------------------------------------------------------
@@ -84,6 +86,30 @@ def _is_premium_tier(agents_allowed: list[str]) -> bool:
     return bool(set(agents_allowed) - _FREE_TIER_AGENTS)
 
 
+def _inject_pr_context(agents: list, extractor: "PRContextExtractor") -> None:
+    """Prepend filtered PR description context to each agent's system prompt.
+
+    Mutates each agent's underlying AgentDefinition.system_prompt in-place
+    so that the standard analyse() path in agent_runner.py picks it up
+    without any changes to the orchestration machinery (OCP).
+
+    Agents not in AGENT_SECTION_MAP (unknown agents) receive just the PR
+    title as a fallback — never empty-handed, never noisy.
+    """
+    for agent in agents:
+        try:
+            context = extractor.get_context_for_agent(agent.name)
+            snippet = context.to_prompt_context()
+            if snippet:
+                agent._def.system_prompt = (
+                    f"## PR Context\n{snippet}\n\n"
+                    f"{agent._def.system_prompt}"
+                )
+        except Exception:
+            # Never let context injection break a review — skip silently
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -124,11 +150,22 @@ class ReviewPipeline:
     # Public entry point
     # ------------------------------------------------------------------
 
-    def run(self, diff_path: str) -> tuple[list[ReviewResult], list[FileChange]]:
+    def run(
+        self,
+        diff_path: str,
+        pr_description: Optional[PRDescription] = None,
+    ) -> tuple[list[ReviewResult], list[FileChange]]:
         """Returns (results, excluded_files).
 
         Validates license, selects review path (simplified vs orchestration),
         and tracks usage after a successful review (fire-and-forget).
+
+        Args:
+            diff_path: Path to the diff file to review.
+            pr_description: Optional parsed PR description. When provided on
+                paid tiers, each agent receives a filtered context snippet
+                containing only the sections relevant to its domain
+                (REVUE-84 — ~40-60% token savings vs. naive full-description).
         """
         # --- License validation ---
         print("[revue] Validating license key...", flush=True)
@@ -169,7 +206,9 @@ class ReviewPipeline:
         start_ms = int(time.time() * 1000)
 
         if _is_premium_tier(agents_allowed):
-            results, agents_used = self._run_orchestration(included, agents_allowed)
+            results, agents_used = self._run_orchestration(
+                included, agents_allowed, pr_description=pr_description
+            )
         else:
             results, agents_used = self._run_simplified(included, agents_allowed)
 
@@ -256,11 +295,13 @@ class ReviewPipeline:
         self,
         included: list[FileChange],
         agents_allowed: list[str],
+        pr_description: Optional[PRDescription] = None,
     ) -> tuple[list[ReviewResult], list[str]]:
         """Paid-tier full orchestration: shared analysis → Cleo routing →
         parallel agents → Nova consolidation.
 
-        Sage (auto-fix posting) is deferred to REVUE-84.
+        When pr_description is provided, each agent receives a context snippet
+        filtered to the sections relevant to its domain (REVUE-84).
         """
         print(
             f"[revue] ── Step 2/4: AI review (orchestrated) — "
@@ -302,6 +343,13 @@ class ReviewPipeline:
             return self._run_simplified(included, agents_allowed)
 
         print(f"[revue]   Agents loaded: {', '.join(a.name for a in allowed_agents)}", flush=True)
+
+        # 2b. PR context injection (REVUE-84) — prepend filtered PR description
+        #     sections to each agent's system prompt before dispatch.
+        if pr_description is not None:
+            extractor = PRContextExtractor(pr_description)
+            _inject_pr_context(allowed_agents, extractor)
+            print("[revue]   PR context injected — smart filtering active.", flush=True)
 
         # 3. Cleo routing — select agents relevant to this diff
         print("[revue]   Routing files to agents (Cleo)...", flush=True)

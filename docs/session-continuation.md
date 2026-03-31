@@ -1,62 +1,39 @@
 # Session Continuation
-**Updated:** 2026-03-30 22:14 GMT | **For:** Next session
+**Updated:** 2026-03-31 00:10 GMT | **For:** Next session
 
 ---
 
 ## Completed this session
 
-### CI/CD Pipeline — Fully working end-to-end
+### REVUE-81 — Pipeline respects `agents_allowed` from license ✅ PR #16 merged
+- `src/revue/core/pipeline.py`: Extract `agents_allowed` from license, log active agents, gate `agents_used` tracking
+- `src/revue/tests/core/test_pipeline.py`: 3 new unit tests (free tier, pro tier, log output)
+- `.bitbucket/pull_request_template.md`: New PR template for consistent, context-rich PRs
+- `scripts/create-pr.sh`: Automated PR creation script (env-var driven, no hardcoded credentials)
+- `docs/PR_TEMPLATE_GUIDE.md`: Team reference for PR process
 
-| Item | Details |
-|---|---|
-| **Bitbucket branch protection** | Configured — PR-only merges, CI gate, no direct push |
-| **Playwright E2E tests** | Scaffolded + 14/14 passing. `tests/e2e/` in `src/web/`. REVUE-74 ✅ |
-| **Playwright MCP** | Configured in `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| **REVUE-65 — Conversion analytics** | `/conversion` route, tier breakdown, referral tracking. PR #7 merged ✅ |
-| **REVUE-75 — DoD SDLC fix** | Jira Done only after PR merged. PR merged ✅ |
-| **REVUE-76 — Nuitka build pipeline** | `build/` scripts, parallel Bitbucket pipeline (Linux x86_64, ARM64, macOS ARM64). PR #8 merged ✅ |
-| **REVUE-79 — Literal type for comment_style** | `AIConfig.comment_style: Literal["per-issue", "summary"]`. PR #15 ✅ |
-| **All 7 epics Done on Jira** | E6 epic closed ✅ |
-
-### Taiga → Jira migration
-- All 69 stories migrated. Board: https://urukia.atlassian.net/jira/software/projects/REVUE/boards/101
-- Mapping file: `Projects/revue.io/scripts/taiga_to_jira_mapping.json`
-- Taiga kept running as legacy reference only
-- Jira is now primary. Commit format: `type(scope)[REVUE-XX]: description`
-
-### Bitbucket pipeline debugging & fixes (PR #15 — merged ✅)
-Long session. Key fixes landed on `main`:
-- `python:3.12` image for AI review step (needs git)
-- `pip install openai anthropic httpx pyyaml` directly (no editable install — `setuptools.backends.legacy` missing from slim image)
-- `PYTHONPATH=src` + `python3 src/revue/cli.py` with `if __name__ == "__main__"` guard (was missing — root cause of silent exit)
-- `git diff origin/$BITBUCKET_PR_DESTINATION_BRANCH...HEAD` for diff (no curl/API needed)
-- `.revue.yml` added to repo root (`api_key_env: AI_API_KEY`)
-- License validator URL changed to `https://revue-io.fly.dev/api/license/validate` (api.revue.io not yet DNS configured)
-- License key for CI: `lic_8af0c4ff679df6100510319561d2f2bb` (account: `ci@revue.io`, Fly.io production DB)
-
-### AI review features (PR #15)
-- `--comment-style per-issue` (default): one inline Bitbucket comment per finding
-- `--comment-style summary`: one grouped comment per file
-- Configurable from `.revue.yml` under `output.comment_style`
-- Professional markdown: severity badge line → summary → high/medium inline → low/info collapsed in `<details>`
-- 4-step pipeline flow logged: Parsing → AI Review → Consolidation → Verdict
-- Field normalisation across model variations (`issue`/`message`/`title` etc.)
-- Empty findings skipped (no blank comments)
+### REVUE-82 — Wire full orchestration engine for paid tiers ✅ PR #17 merged
+- `src/revue/core/license_validator.py`: `REVUE_TIER_OVERRIDE` env var for non-prod testing
+  - Security hardened: only active in source builds (`sys.frozen` check) + `APP_ENV=development|staging`
+- `src/revue/core/pipeline.py`: Full rewrite with tier-branching
+  - `_run_simplified()` — free tier, single-pass `client.complete()` loop
+  - `_run_orchestration()` — paid tier: shared analysis → Cleo routing → parallel agents → Nova consolidation
+  - Lazy import of AIReviewer modules, graceful degradation fallback
+- `src/revue/tests/core/test_license_validator.py`: 7 new tests for `REVUE_TIER_OVERRIDE` incl. security edge cases
+- `src/revue/tests/core/test_pipeline.py`: 3 new orchestration tests, updated pro-tier test
+- **501/501 tests passing** ✅
 
 ### Process improvements
-- **Jira ticket format** now mandatory: User Story, Background, ACs, Test Cases, Out of Scope, Dependencies
-- Documented in `docs/story-dod-checklist.md` (top of file) and `TOOLS.md`
-- **Bitbucket webhook** registered for Jira PR integration (auto-links PRs to tickets)
+- **PR description = AI review context**: Learned that Revue needs filled PR descriptions to avoid false positives. "Out of Scope" section is now mandatory.
+- **PR workflow**: Fill description → commit → push → create PR (not the other way round)
+- **Credentials security**: Fixed hardcoded email + repo slug in `scripts/create-pr.sh`
 
-### Bitbucket repo variables (current state)
-| Variable | Value | Notes |
-|---|---|---|
-| `AI_API_KEY` | Anthropic API key | secured |
-| `AI_MODEL` | `claude-sonnet-4-5` | update from haiku after testing |
-| `AI_PROVIDER` | `anthropic` | |
-| `BITBUCKET_API_TOKEN` | Bitbucket token | secured |
-| `BITBUCKET_USERNAME` | Bitbucket username | |
-| `REVUE_LICENSE_KEY` | `lic_8af0c4ff679df6100510319561d2f2bb` | secured, ci@revue.io account |
+### New tickets created
+| Ticket | Summary | Status |
+|--------|---------|--------|
+| REVUE-83 | Fix failing CI pipeline on main branch | To Do |
+| REVUE-84 | Smart PR description context filtering (multi-platform) | To Do |
+| REVUE-85 | Document PR description best practices for customers | To Do |
 
 ---
 
@@ -72,68 +49,91 @@ Long session. Key fixes landed on `main`:
 | E6 — Onboarding, Observability & Launch | 14 | 14/14 | ✅ Complete |
 | E7 — Post-MVP Tech Debt | 8 | 8/8 | ✅ Complete |
 
-**New open stories (post-MVP):**
-- **REVUE-79** — Literal type for comment_style ✅ Done
-- **REVUE-80** — Replace print() with logging — CLOSED as Won't Fix (print is correct for CI progress output)
-- **REVUE-81** — Pipeline respects `agents_allowed` from license — **To Do, no blockers**
-- **REVUE-82** — Wire full orchestration engine for Indie/Pro — **Blocked on REVUE-81 + Pro-tier license**
+**Post-MVP stories:**
+| Ticket | Summary | Status |
+|--------|---------|--------|
+| REVUE-79 | Literal type for comment_style | ✅ Done |
+| REVUE-80 | Replace print() with logging | Closed (Won't Fix) |
+| REVUE-81 | Pipeline respects `agents_allowed` | ✅ Done |
+| REVUE-82 | Wire full orchestration engine | ✅ Done |
+| REVUE-83 | Fix failing CI pipeline on main | 🔲 To Do |
+| REVUE-84 | Smart PR description context filtering | 🔲 To Do (blocked on REVUE-82 ✅) |
+| REVUE-85 | Document PR best practices | 🔲 To Do (blocked on REVUE-84) |
 
 ---
 
 ## Remaining work — next steps
 
-### 1. REVUE-81 — Pipeline respects `agents_allowed` (immediate, no blockers)
-- File: `src/revue/core/pipeline.py`
-- `validate_license()` already returns `license_info.agents_allowed`
-- Wire it: `pipeline.run()` reads `license_info.agents_allowed`, only activates those agents
-- Log: `[revue] Agents: orchestrator, code-quality-expert, consolidator`
-- Tests: 3 new unit tests (free tier, pro tier, empty fallback)
-- Branch: `feat/REVUE-81-pipeline-agents-allowed`
+### 1. REVUE-83 — Fix failing CI pipeline on main (HIGH, no blockers)
+- **First action**: Check latest failed pipeline at https://bitbucket.org/cbscd/revue/pipelines
+- May be related to REVUE-81 merge (new agents_allowed logic) or env config
+- Note: Bitbucket API token lacks `read:pipeline:bitbucket` scope — check via web UI
+- Fix → commit → push to main → verify green
 
-### 2. REVUE-82 — Full orchestration engine (blocked)
-- Blocked on REVUE-81 + Pro-tier license resolution
-- Resolve Pro-tier dependency first: upgrade `ci@revue.io` to Pro on Fly.io OR implement `REVUE_TIER_OVERRIDE` env var
-- Valid values for REVUE_TIER_OVERRIDE: `free | indie | pro | enterprise_starter | enterprise_growth | enterprise_plus`
-- Only honoured when `APP_ENV != production`
+### 2. REVUE-84 — Smart PR description context filtering (unblocked now REVUE-82 is done)
+- **First action**: Create `src/revue/core/vcs_adapter.py` with `VCSAdapter` protocol + `BitbucketAdapter`, `GitHubAdapter`, `GitLabAdapter`
+- Auto-detect platform from env vars: `BITBUCKET_WORKSPACE`, `GITHUB_ACTIONS`, `GITLAB_CI`
+- Then create `src/revue/core/pr_context.py` with `PRContextExtractor` (parse PR description sections, route relevant sections per agent)
+- Section-to-agent map: orchestrator→Summary+OutOfScope, security-expert→OutOfScope+Dependencies+Changes, etc.
+- Wire into `pipeline._run_orchestration()` — pass context to each agent before review
+- Token efficiency target: 40-60% savings vs. naive full-description-to-all approach
+- Add `--auto-detect-pr` flag to CLI
 
 ### 3. DNS — `api.revue.io`
 - CNAME `api.revue.io` → `revue-io.fly.dev` in domain registrar
 - Then: `flyctl certs create api.revue.io`
-- Then: revert `VALIDATE_URL` in `license_validator.py` back to `https://api.revue.io/license/validate`
+- Then: revert `VALIDATE_URL` in `license_validator.py` to `https://api.revue.io/license/validate`
 
-### 4. AI_MODEL in Bitbucket
-- Currently `claude-haiku-4-5` for testing
-- Update to `claude-sonnet-4-5` for production quality reviews
-
-### 5. Stripe setup (pre-launch)
+### 4. Stripe setup (pre-launch)
 ```bash
 fly secrets set STRIPE_SECRET_KEY=sk_live_...
 fly secrets set STRIPE_WEBHOOK_SECRET=whsec_...
 fly secrets set STRIPE_PRICE_INDIE_MONTHLY=price_...
 fly secrets set STRIPE_PRICE_PRO_MONTHLY=price_...
-fly secrets set STRIPE_PRICE_ENT_STARTER=price_...
-fly secrets set STRIPE_PRICE_ENT_GROWTH=price_...
 ```
 
-### 6. Stale branches to clean up
-`hotfix/pipeline-install`, `hotfix/pipeline-pythonpath`, `hotfix/pipeline-setuptools`, `fix/REVUE-76-pipeline-yaml-comments`, `chore/fix-dod-sdlc-order` — all superseded by PR #15.
+### 5. Stale branches to clean up
+`hotfix/pipeline-install`, `hotfix/pipeline-pythonpath`, `hotfix/pipeline-setuptools`, `fix/REVUE-76-pipeline-yaml-comments`, `chore/fix-dod-sdlc-order`
 
 ---
 
-## Open PRs
-None — all merged.
+## Key architectural decisions made this session
+
+| Decision | Rationale |
+|----------|-----------|
+| `REVUE_TIER_OVERRIDE` disabled in Nuitka builds (`sys.frozen`) | Prevents license bypass in distributed binaries |
+| `REVUE_TIER_OVERRIDE` requires `APP_ENV=development\|staging` explicitly | Prevents spoofing with arbitrary APP_ENV values |
+| Sage deferred from REVUE-82 → REVUE-84 | Sage needs VCSAdapter (being designed in REVUE-84); avoids partial implementation |
+| Smart PR context filtering over SharedAnalysisResult | Per-agent filtering more token-efficient than naive full-description-to-all; aligns with REVUE-84 VCSAdapter work |
+| PRContextExtractor routes sections by agent domain | Security agent gets security-relevant sections; avoids noise; ~50% token savings |
+
+---
+
+## Bitbucket repo variables (current state)
+| Variable | Value | Notes |
+|---|---|---|
+| `AI_API_KEY` | Anthropic API key | secured |
+| `AI_MODEL` | `claude-sonnet-4-5` | production quality |
+| `AI_PROVIDER` | `anthropic` | |
+| `BITBUCKET_API_TOKEN` | Bitbucket token | secured — lacks `read:pipeline` scope |
+| `BITBUCKET_USERNAME` | Bitbucket username | |
+| `REVUE_LICENSE_KEY` | `lic_8af0c4ff679df6100510319561d2f2bb` | secured, ci@revue.io — Free tier |
+
+**Note**: CI license is Free tier. To test Pro-tier orchestration in CI, set `APP_ENV=staging` + `REVUE_TIER_OVERRIDE=pro` in Bitbucket repo variables (safe — not a production build).
 
 ---
 
 ## Key file locations
 - Pipeline: `src/revue/core/pipeline.py`
+- License validator: `src/revue/core/license_validator.py` (VALIDATE_URL → fly.dev, pending DNS)
 - CLI: `src/revue/cli.py`
-- License validator: `src/revue/core/license_validator.py` (VALIDATE_URL points to fly.dev)
 - CI config: `bitbucket-pipelines.yml`
 - Client config: `.revue.yml` (in repo root)
-- DoD + ticket template: `docs/story-dod-checklist.md`
+- PR template: `.bitbucket/pull_request_template.md`
+- PR creation script: `scripts/create-pr.sh`
+- PR guide: `docs/PR_TEMPLATE_GUIDE.md`
+- DoD checklist: `docs/story-dod-checklist.md`
 - Jira mapping: `scripts/taiga_to_jira_mapping.json`
-- E2E tests: `src/web/tests/e2e/`
 
 ---
 
@@ -142,16 +142,16 @@ None — all merged.
 ```
 Read Projects/revue.io/docs/session-continuation.md for full context.
 
-Status: All 7 epics Done. Full Bitbucket CI/CD pipeline working — AI review
-posts inline comments per-issue on every PR using claude-sonnet-4-5.
+REVUE-81 ✅ and REVUE-82 ✅ merged. 501/501 tests passing.
+Full orchestration engine live for paid tiers (Cleo → parallel agents → Nova).
 
-Next story: REVUE-81 — Pipeline respects agents_allowed from license validation
-File to edit: src/revue/core/pipeline.py
-First action: read license_info.agents_allowed from validate_license() response
-and pass it to the agent selection logic. Log active agents. Add 3 unit tests.
-Branch: feat/REVUE-81-pipeline-agents-allowed
+Next: REVUE-83 (no blockers) — fix failing CI pipeline on main.
+First action: check https://bitbucket.org/cbscd/revue/pipelines for latest failure.
 
-Blockers: REVUE-82 needs Pro-tier license — resolve before starting that story.
-DNS: api.revue.io CNAME → revue-io.fly.dev (not yet configured).
-AI_MODEL in Bitbucket: change from claude-haiku-4-5 → claude-sonnet-4-5.
+Then: REVUE-84 — smart PR context filtering. Start with:
+  src/revue/core/vcs_adapter.py (VCSAdapter protocol + Bitbucket/GitHub/GitLab adapters)
+  src/revue/core/pr_context.py (PRContextExtractor with section-to-agent map)
+
+Process reminder: fill PR description BEFORE creating PR — Revue uses it as context.
+Branch format: feat/REVUE-XX-description | Commit: type(scope)[REVUE-XX]: description
 ```

@@ -409,3 +409,145 @@ def test_pipeline_logs_active_agents(capsys):
     assert "Active agents:" in captured.out
     assert "orchestrator" in captured.out
     assert "code-quality-expert" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# REVUE-84: PR context injection tests
+# ---------------------------------------------------------------------------
+
+def test_pipeline_run_accepts_pr_description_param():
+    """pipeline.run() accepts optional pr_description without error (AC4)."""
+    from revue.core.pr_description_adapter import PRDescription
+
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '{"findings": []}'
+    pipeline = _pipeline(client=mock_client)
+
+    pr = PRDescription(
+        title="feat: add auth",
+        raw_description="## Summary\nAdds JWT auth.",
+        summary="Adds JWT auth.",
+    )
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("auth.py")]), \
+         patch("revue.core.pipeline.track_usage"):
+        results, excluded = pipeline.run("fake.diff", pr_description=pr)
+
+    assert isinstance(results, list)
+
+
+def test_pipeline_run_no_pr_description_unaffected():
+    """pipeline.run() without pr_description behaves identically to before (AC4 backward compat)."""
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '{"findings": []}'
+    pipeline = _pipeline(client=mock_client)
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage"):
+        results, excluded = pipeline.run("fake.diff")  # no pr_description
+
+    assert isinstance(results, list)
+
+
+def test_inject_pr_context_prepends_to_system_prompt():
+    """_inject_pr_context prepends filtered context to each agent's system_prompt (AC3)."""
+    from revue.core.pipeline import _inject_pr_context
+    from revue.core.pr_description_adapter import PRDescription
+    from revue.core.pr_context import PRContextExtractor
+
+    pr = PRDescription(
+        title="Fix: SQL injection",
+        raw_description="## Out of Scope\nRate limiting deferred.",
+        out_of_scope="Rate limiting deferred.",
+    )
+    extractor = PRContextExtractor(pr)
+
+    # Build a mock agent with a real-ish definition stub
+    mock_agent = MagicMock()
+    mock_agent.name = "security-expert"
+    mock_agent._def = MagicMock()
+    mock_agent._def.system_prompt = "You are a security expert."
+
+    _inject_pr_context([mock_agent], extractor)
+
+    updated = mock_agent._def.system_prompt
+    assert "## PR Context" in updated
+    assert "Fix: SQL injection" in updated
+    assert "Rate limiting deferred" in updated
+    assert "You are a security expert." in updated  # original preserved
+
+
+def test_inject_pr_context_graceful_on_bad_agent():
+    """_inject_pr_context never raises even if an agent is malformed (AC4)."""
+    from revue.core.pipeline import _inject_pr_context
+    from revue.core.pr_description_adapter import PRDescription
+    from revue.core.pr_context import PRContextExtractor
+
+    pr = PRDescription(title="Test", raw_description="")
+    extractor = PRContextExtractor(pr)
+
+    broken_agent = MagicMock()
+    broken_agent.name = "security-expert"
+    # _def.system_prompt will raise on assignment
+    type(broken_agent._def).system_prompt = property(
+        fget=lambda self: "original",
+        fset=MagicMock(side_effect=AttributeError("read-only")),
+    )
+
+    # Must not raise
+    _inject_pr_context([broken_agent], extractor)
+
+
+def test_inject_pr_context_unknown_agent_gets_title_only():
+    """Unknown agents receive just PR title — never noisy, never empty (AC3 fallback)."""
+    from revue.core.pipeline import _inject_pr_context
+    from revue.core.pr_description_adapter import PRDescription
+    from revue.core.pr_context import PRContextExtractor
+
+    pr = PRDescription(
+        title="Refactor DB layer",
+        raw_description="## Background\nLegacy code.",
+        background="Legacy code.",
+    )
+    extractor = PRContextExtractor(pr)
+
+    mock_agent = MagicMock()
+    mock_agent.name = "unknown-future-agent"
+    mock_agent._def = MagicMock()
+    mock_agent._def.system_prompt = "Original prompt."
+
+    _inject_pr_context([mock_agent], extractor)
+
+    updated = mock_agent._def.system_prompt
+    # Unknown agent → summary fallback from to_prompt_context() = just title
+    assert "Refactor DB layer" in updated
+
+
+def test_pipeline_free_tier_ignores_pr_description(capsys):
+    """Free-tier path never calls _inject_pr_context — simplified review unaffected (AC4)."""
+    from revue.core.pr_description_adapter import PRDescription
+
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '{"findings": []}'
+    free_license = _license_info(
+        tier="free",
+        agents_allowed=["orchestrator", "code-quality-expert", "consolidator"],
+    )
+    pipeline = _pipeline(client=mock_client, **{k: v for k, v in {
+        "valid": True, "tier": "free",
+        "agents_allowed": ["orchestrator", "code-quality-expert", "consolidator"],
+        "reviews_left": None, "expires_at": "2027-01-01T00:00:00Z",
+        "key": "test-key",
+    }.items()})
+    # Override license
+    pipeline._license_info = free_license
+
+    pr = PRDescription(title="Free tier PR", raw_description="## Summary\nTest")
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage"), \
+         patch("revue.core.pipeline._inject_pr_context") as mock_inject:
+        pipeline.run("fake.diff", pr_description=pr)
+
+    # Free tier runs _run_simplified — _inject_pr_context never called
+    mock_inject.assert_not_called()

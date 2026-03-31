@@ -10,7 +10,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from revue.core.config_loader import (
     DEFAULT_REVUE_YML,
@@ -79,6 +79,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["summary", "per-issue"],
         default=None,
         help="How to post review findings: 'summary' = one comment per file, 'per-issue' = one inline comment per finding. Overrides .revue.yml output.comment_style.",
+    )
+    review.add_argument(
+        "--auto-detect-pr",
+        action="store_true",
+        default=False,
+        help=(
+            "Auto-detect PR/MR ID and platform from CI environment variables "
+            "(BITBUCKET_PR_ID, BITBUCKET_WORKSPACE, GITHUB_PR_NUMBER, CI_MERGE_REQUEST_IID). "
+            "Fetches and injects PR description context into each agent for smarter reviews."
+        ),
     )
 
     review.set_defaults(func=cmd_review)
@@ -174,10 +184,45 @@ def cmd_review(
         print(f"Error creating AI client: {exc}", file=sys.stderr)
         return 1
 
-    # 8. Run pipeline
+    # 8. Fetch PR description for smart context filtering (REVUE-84)
+    pr_description = None
+    auto_detect = getattr(args, "auto_detect_pr", False)
+    explicit_pr_id = getattr(args, "pr_id", None)
+    explicit_platform = getattr(args, "platform", None)
+
+    if auto_detect or explicit_pr_id:
+        from revue.core.pr_description_adapter import (
+            get_pr_description_from_env,
+            get_bitbucket_pr_description,
+        )
+        import os
+
+        resolved_pr_id = explicit_pr_id or _resolve_pr_id_from_env()
+        if resolved_pr_id:
+            try:
+                if auto_detect and not explicit_platform:
+                    # Let the adapter auto-detect from CI env vars
+                    pr_description = get_pr_description_from_env(resolved_pr_id)
+                elif explicit_platform == "bitbucket" or os.getenv("BITBUCKET_WORKSPACE"):
+                    workspace = getattr(args, "workspace", None) or os.getenv("BITBUCKET_WORKSPACE", "")
+                    repo_slug = getattr(args, "repo_slug", None) or os.getenv("BITBUCKET_REPO_SLUG", "")
+                    bb_user = getattr(args, "bb_username", None) or os.getenv("BITBUCKET_USERNAME", "")
+                    bb_token = getattr(args, "bb_token", None) or os.getenv("BITBUCKET_API_TOKEN", "")
+                    if all([workspace, repo_slug, bb_user, bb_token]):
+                        pr_description = get_bitbucket_pr_description(
+                            workspace, repo_slug, resolved_pr_id, bb_user, bb_token
+                        )
+                if pr_description:
+                    print(f"[revue] PR context loaded: '{pr_description.title}'", flush=True)
+                else:
+                    print("[revue] PR context unavailable — continuing without it.", flush=True)
+            except Exception as exc:
+                print(f"[revue] PR context fetch failed ({exc}) — continuing.", flush=True)
+
+    # 9. Run pipeline
     print(f"[revue] Validating license...")
     try:
-        review_results, excluded = pipeline.run(str(diff_path))
+        review_results, excluded = pipeline.run(str(diff_path), pr_description=pr_description)
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -454,6 +499,24 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
             print(f"[revue] Review posted to PR #{pr_id} — {posted} file(s) in summary comment")
         else:
             print("Warning: Failed to post review summary to Bitbucket", file=sys.stderr)
+
+
+def _resolve_pr_id_from_env() -> Optional[int]:
+    """Resolve PR/MR ID from common CI environment variables.
+
+    Checks in order:
+    - Bitbucket: BITBUCKET_PR_ID
+    - GitHub: GITHUB_PR_NUMBER (set by actions/checkout or workflow context)
+    - GitLab: CI_MERGE_REQUEST_IID
+
+    Returns None if no PR ID found or value is not numeric.
+    """
+    import os
+    for var in ("BITBUCKET_PR_ID", "GITHUB_PR_NUMBER", "CI_MERGE_REQUEST_IID"):
+        val = os.getenv(var, "").strip()
+        if val and val.isdigit():
+            return int(val)
+    return None
 
 
 def cmd_init(args: argparse.Namespace) -> int:

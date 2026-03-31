@@ -263,3 +263,64 @@ def test_validate_valid_config(tmp_path, capsys):
 
     assert rc == 0
     assert "Config valid" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# REVUE-84: --auto-detect-pr CLI flag tests
+# ---------------------------------------------------------------------------
+
+def test_cli_auto_detect_pr_flag_exists():
+    """--auto-detect-pr flag is registered in the CLI parser (AC1)."""
+    from revue.cli import build_parser
+    parser = build_parser()
+    # Should not raise
+    args = parser.parse_args(["review", "--diff", "fake.diff", "--auto-detect-pr"])
+    assert args.auto_detect_pr is True
+
+
+def test_cli_auto_detect_pr_defaults_false():
+    """--auto-detect-pr defaults to False when not provided (AC1)."""
+    from revue.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["review", "--diff", "fake.diff"])
+    assert args.auto_detect_pr is False
+
+
+def test_resolve_pr_id_from_env_bitbucket(monkeypatch):
+    """Resolves PR ID from BITBUCKET_PR_ID env var (AC1)."""
+    from revue.cli import _resolve_pr_id_from_env
+    monkeypatch.setenv("BITBUCKET_PR_ID", "42")
+    assert _resolve_pr_id_from_env() == 42
+
+
+def test_resolve_pr_id_from_env_github(monkeypatch):
+    """Resolves PR ID from GITHUB_PR_NUMBER env var (AC1)."""
+    from revue.cli import _resolve_pr_id_from_env
+    monkeypatch.delenv("BITBUCKET_PR_ID", raising=False)
+    monkeypatch.setenv("GITHUB_PR_NUMBER", "99")
+    assert _resolve_pr_id_from_env() == 99
+
+
+def test_resolve_pr_id_from_env_gitlab(monkeypatch):
+    """Resolves MR IID from CI_MERGE_REQUEST_IID env var (AC1)."""
+    from revue.cli import _resolve_pr_id_from_env
+    monkeypatch.delenv("BITBUCKET_PR_ID", raising=False)
+    monkeypatch.delenv("GITHUB_PR_NUMBER", raising=False)
+    monkeypatch.setenv("CI_MERGE_REQUEST_IID", "7")
+    assert _resolve_pr_id_from_env() == 7
+
+
+def test_resolve_pr_id_from_env_none(monkeypatch):
+    """Returns None when no PR ID env vars set (AC1)."""
+    from revue.cli import _resolve_pr_id_from_env
+    monkeypatch.delenv("BITBUCKET_PR_ID", raising=False)
+    monkeypatch.delenv("GITHUB_PR_NUMBER", raising=False)
+    monkeypatch.delenv("CI_MERGE_REQUEST_IID", raising=False)
+    assert _resolve_pr_id_from_env() is None
+
+
+def test_resolve_pr_id_from_env_non_numeric(monkeypatch):
+    """Returns None for non-numeric values (AC1)."""
+    from revue.cli import _resolve_pr_id_from_env
+    monkeypatch.setenv("BITBUCKET_PR_ID", "not-a-number")
+    assert _resolve_pr_id_from_env() is None

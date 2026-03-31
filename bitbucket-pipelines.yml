@@ -61,6 +61,7 @@ pipelines:
                   - python build/build_wheel.py
                 artifacts:
                   - dist/wheels/*.whl
+                fail-fast: false
             - step:
                 name: "Build macOS ARM64"
                 runs-on:
@@ -75,10 +76,11 @@ pipelines:
                   - python build/build_wheel.py
                 artifacts:
                   - dist/wheels/*.whl
+                fail-fast: false
       - step:
           name: "Collect Artifacts"
           script:
-            - ls -la dist/wheels/ || echo "No wheels built yet"
+            - ls -la dist/wheels/ 2>/dev/null || echo "No wheels built (self-hosted runners may be offline)"
           artifacts:
             - dist/wheels/*.whl
     develop:

@@ -269,7 +269,9 @@ class TestTierOverride:
         """REVUE_TIER_OVERRIDE is ignored when APP_ENV=production."""
         monkeypatch.setenv("APP_ENV", "production")
         monkeypatch.setenv("REVUE_TIER_OVERRIDE", "pro")
-        
+        # Clear REVUE_LICENSE_KEY so the env-var fallback in validate() also has no key
+        monkeypatch.delenv("REVUE_LICENSE_KEY", raising=False)
+
         # Should raise LicenseError (no key provided, override ignored)
         with pytest.raises(LicenseError, match="No Revue license key found"):
             validate(license_key=None, _http_client=None)
@@ -278,7 +280,8 @@ class TestTierOverride:
         """REVUE_TIER_OVERRIDE requires APP_ENV=development or staging."""
         monkeypatch.setenv("APP_ENV", "test")  # Not development or staging
         monkeypatch.setenv("REVUE_TIER_OVERRIDE", "pro")
-        
+        monkeypatch.delenv("REVUE_LICENSE_KEY", raising=False)
+
         # Should raise LicenseError (override not active)
         with pytest.raises(LicenseError, match="No Revue license key found"):
             validate(license_key=None, _http_client=None)
@@ -287,13 +290,14 @@ class TestTierOverride:
         """REVUE_TIER_OVERRIDE is ignored in compiled builds (Nuitka)."""
         monkeypatch.setenv("APP_ENV", "staging")
         monkeypatch.setenv("REVUE_TIER_OVERRIDE", "pro")
-        
+        monkeypatch.delenv("REVUE_LICENSE_KEY", raising=False)
+
         # Simulate compiled build
         import sys
         original_frozen = getattr(sys, "frozen", None)
         try:
             sys.frozen = True  # Nuitka sets this
-            
+
             # Should raise LicenseError (override disabled in compiled builds)
             with pytest.raises(LicenseError, match="No Revue license key found"):
                 validate(license_key=None, _http_client=None)
@@ -308,7 +312,8 @@ class TestTierOverride:
         """Invalid REVUE_TIER_OVERRIDE value is ignored, API call proceeds."""
         monkeypatch.setenv("APP_ENV", "staging")
         monkeypatch.setenv("REVUE_TIER_OVERRIDE", "invalid-tier")
-        
+        monkeypatch.delenv("REVUE_LICENSE_KEY", raising=False)
+
         # Should proceed to API call logic (which raises error due to no key)
         with pytest.raises(LicenseError, match="No Revue license key found"):
             validate(license_key=None, _http_client=None)
