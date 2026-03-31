@@ -91,6 +91,18 @@ def build_parser() -> argparse.ArgumentParser:
             "Fetches and injects PR description context into each agent for smarter reviews."
         ),
     )
+    review.add_argument(
+        "--pr-description-file",
+        default=None,
+        help=(
+            "Path to a plain-text or markdown file containing the PR/MR description. "
+            "Parsed into sections and injected as context into each agent. "
+            "Takes precedence over --auto-detect-pr when both are provided. "
+            "Preferred in CI: let the pipeline fetch the description "
+            "(curl / gh / gitlab API) and write it to a file; the CLI stays platform-agnostic. "
+            "Example: --pr-description-file /tmp/pr_description.txt"
+        ),
+    )
 
     review.set_defaults(func=cmd_review)
 
@@ -185,13 +197,36 @@ def cmd_review(
         print(f"Error creating AI client: {exc}", file=sys.stderr)
         return 1
 
-    # 8. Fetch PR description for smart context filtering (REVUE-84)
+    # 8. Fetch PR description for smart context filtering (REVUE-84/86)
     pr_description = None
+    pr_description_file = getattr(args, "pr_description_file", None)
     auto_detect = getattr(args, "auto_detect_pr", False)
     explicit_pr_id = getattr(args, "pr_id", None)
     explicit_platform = getattr(args, "platform", None)
 
-    if auto_detect or explicit_pr_id:
+    if pr_description_file:
+        # Platform-agnostic path (REVUE-86): CI fetches description, writes file, passes path.
+        # The CLI just reads and parses — no network I/O, no platform detection.
+        from revue.core.pr_description_adapter import PRDescription
+        desc_path = Path(pr_description_file)
+        if desc_path.exists():
+            try:
+                raw = desc_path.read_text(encoding="utf-8")
+            except Exception as exc:
+                print(f"[revue] PR description file unreadable ({exc}) — continuing.", flush=True)
+                raw = ""
+            if not raw.strip():
+                print(f"[revue] PR description file is empty — continuing.", flush=True)
+            else:
+                try:
+                    pr_description = PRDescription.parse(title="", body=raw)
+                    print(f"[revue] PR context loaded from file ({desc_path.name})", flush=True)
+                except Exception as exc:
+                    print(f"[revue] PR description parse failed ({exc}) — continuing.", flush=True)
+        else:
+            print(f"[revue] PR description file not found: {pr_description_file} — continuing.", flush=True)
+
+    elif auto_detect or explicit_pr_id:
         from revue.core.pr_description_adapter import (
             get_pr_description_from_env,
             get_bitbucket_pr_description,
@@ -304,7 +339,11 @@ def _extract_finding_fields(f: dict) -> tuple[str, str, str, str, str, int]:
     details = (f.get("details") or f.get("description") or f.get("detail") or "").strip()
     rec = (f.get("recommendation") or f.get("suggestion") or f.get("fix") or "").strip()
     cat = (f.get("category") or f.get("type") or "").strip()
-    line = int(f.get("line") or f.get("lines") or 1) if f.get("line") or f.get("lines") else 1
+    _raw_line = f.get("line") or f.get("lines") or f.get("line_number") or 1
+    try:
+        line = int(_raw_line)
+    except (ValueError, TypeError):
+        line = 1  # AI returned non-numeric value (e.g. code text) — fall back to line 1
     return sev, issue, details, rec, cat, line
 
 

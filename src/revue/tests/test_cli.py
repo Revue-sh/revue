@@ -324,3 +324,108 @@ def test_resolve_pr_id_from_env_non_numeric(monkeypatch):
     from revue.cli import _resolve_pr_id_from_env
     monkeypatch.setenv("BITBUCKET_PR_ID", "not-a-number")
     assert _resolve_pr_id_from_env() is None
+
+
+# ---------------------------------------------------------------------------
+# REVUE-86: --pr-description-file flag tests
+# ---------------------------------------------------------------------------
+
+def test_cli_pr_description_file_flag_exists():
+    """--pr-description-file flag is registered in the CLI parser (AC1)."""
+    from revue.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["review", "--diff", "fake.diff",
+                              "--pr-description-file", "/tmp/desc.txt"])
+    assert args.pr_description_file == "/tmp/desc.txt"
+
+
+def test_cli_pr_description_file_defaults_none():
+    """--pr-description-file defaults to None when not provided (AC1)."""
+    from revue.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["review", "--diff", "fake.diff"])
+    assert args.pr_description_file is None
+
+
+def _make_mock_pipeline_ctx(mock_pipeline):
+    """Shared mock config factory for pipeline-wired CLI tests."""
+    from unittest.mock import MagicMock, patch
+    mock_pipeline.run.return_value = ([], [])
+    mock_cfg = MagicMock(
+        output_format="markdown", comment_style=None,
+        ignore_patterns=[], max_diff_lines=2000,
+    )
+    mock_cfg.resolve_api_key = MagicMock()
+    return mock_cfg
+
+
+def test_cli_pr_description_file_read(tmp_path, capsys):
+    """CLI reads file, parses it, and passes PRDescription to pipeline (AC2)."""
+    import textwrap
+    from unittest.mock import MagicMock, patch
+    from revue.cli import cmd_review, build_parser
+    from revue.core.pr_description_adapter import PRDescription
+
+    desc_file = tmp_path / "pr.txt"
+    desc_file.write_text(textwrap.dedent("""\
+        ## Summary
+        Adds JWT auth.
+
+        ## Out of Scope
+        Rate limiting deferred.
+    """))
+    diff_file = tmp_path / "pr.diff"
+    diff_file.write_text("diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n")
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "review", "--diff", str(diff_file),
+        "--pr-description-file", str(desc_file),
+    ])
+
+    mock_pipeline = MagicMock()
+    mock_cfg = _make_mock_pipeline_ctx(mock_pipeline)
+
+    with patch("revue.cli.load_config", return_value=mock_cfg), \
+         patch("revue.cli.validate_config", return_value=[]), \
+         patch("revue.cli.ReviewPipeline", return_value=mock_pipeline):
+        cmd_review(args)
+
+    # Pipeline was called with a real PRDescription, not None
+    call_kwargs = mock_pipeline.run.call_args.kwargs
+    pr_desc = call_kwargs.get("pr_description")
+    assert isinstance(pr_desc, PRDescription)
+    assert "JWT auth" in pr_desc.summary
+    assert "Rate limiting" in pr_desc.out_of_scope
+
+    captured = capsys.readouterr()
+    assert "PR context loaded from file" in captured.out
+
+
+def test_cli_pr_description_file_missing_graceful(tmp_path, capsys):
+    """Missing file logs warning and pipeline still runs with pr_description=None (AC4)."""
+    from unittest.mock import MagicMock, patch
+    from revue.cli import cmd_review, build_parser
+
+    diff_file = tmp_path / "pr.diff"
+    diff_file.write_text("diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n")
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "review", "--diff", str(diff_file),
+        "--pr-description-file", "/nonexistent/path/pr.txt",
+    ])
+
+    mock_pipeline = MagicMock()
+    mock_cfg = _make_mock_pipeline_ctx(mock_pipeline)
+
+    with patch("revue.cli.load_config", return_value=mock_cfg), \
+         patch("revue.cli.validate_config", return_value=[]), \
+         patch("revue.cli.ReviewPipeline", return_value=mock_pipeline):
+        cmd_review(args)
+
+    captured = capsys.readouterr()
+    assert "not found" in captured.out
+    mock_pipeline.run.assert_called_once()
+    # pr_description must be None — graceful degradation
+    assert mock_pipeline.run.call_args.kwargs.get("pr_description") is None

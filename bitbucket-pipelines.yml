@@ -19,11 +19,19 @@ definitions:
           - pip install openai anthropic httpx pyyaml --quiet
           - git diff origin/${BITBUCKET_PR_DESTINATION_BRANCH}...HEAD > /tmp/revue_pr.diff
           - echo "[revue] Diff size $(wc -l < /tmp/revue_pr.diff) lines"
+          - echo "[revue] Fetching PR description for context filtering..."
+          - |
+            curl -sf "https://api.bitbucket.org/2.0/repositories/${BITBUCKET_WORKSPACE}/${BITBUCKET_REPO_SLUG}/pullrequests/${BITBUCKET_PR_ID}" \
+              -u "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}" \
+              | python3 -c "import json,sys; print(json.load(sys.stdin).get('description',''))" \
+              > /tmp/revue_pr_description.txt \
+            && echo "[revue] PR description fetched ($(wc -c < /tmp/revue_pr_description.txt) bytes)" \
+            || echo "[revue] PR description fetch failed — continuing without context"
           - echo "[revue] Validating config..."
           - PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
           - echo "[revue] Starting AI code review..."
           - export PYTHONPATH="$(pwd)/src"
-          - python3 -u src/revue/cli.py review --diff /tmp/revue_pr.diff --platform bitbucket --pr-id "$BITBUCKET_PR_ID" --workspace "$BITBUCKET_WORKSPACE" --repo-slug "$BITBUCKET_REPO_SLUG" --bb-username "$BITBUCKET_USERNAME" --bb-token "$BITBUCKET_API_TOKEN" --provider "${AI_PROVIDER:-anthropic}" --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" --config .revue.yml --comment-style per-issue
+          - python3 -u src/revue/cli.py review --diff /tmp/revue_pr.diff --platform bitbucket --pr-id "$BITBUCKET_PR_ID" --workspace "$BITBUCKET_WORKSPACE" --repo-slug "$BITBUCKET_REPO_SLUG" --bb-username "$BITBUCKET_USERNAME" --bb-token "$BITBUCKET_API_TOKEN" --provider "${AI_PROVIDER:-anthropic}" --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" --config .revue.yml --comment-style per-issue --pr-description-file /tmp/revue_pr_description.txt
           - echo "[revue] Review complete"
 
 pipelines:

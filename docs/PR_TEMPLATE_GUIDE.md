@@ -72,3 +72,54 @@ See `/tmp/pr-description-REVUE-81.md` for a complete filled example.
 - `scripts/create-pr.sh`: Command-line PR creation
 - Bitbucket CI: Runs tests + AI review on every PR
 - Jira webhook: Auto-links PR to ticket
+
+---
+
+## Revue PR Context Injection — CI Setup
+
+Revue agents receive a filtered snippet of your PR description as context before reviewing code.
+This reduces false positives (agents won't flag things you've marked Out of Scope) and focuses
+each agent on what's relevant to its domain.
+
+The CLI accepts `--pr-description-file <path>`. Each CI platform fetches the description and
+writes it to a temp file; the CLI stays platform-agnostic.
+
+### Bitbucket Pipelines
+Already configured in `.bitbucket-pipelines.yml`. The `revue-review` step fetches via the
+Bitbucket REST API before running the review.
+
+### GitHub Actions
+```yaml
+- name: Fetch PR description
+  env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  run: |
+    gh pr view ${{ github.event.pull_request.number }} \
+      --json body --jq '.body' \
+      > /tmp/revue_pr_description.txt
+
+- name: Revue AI Code Review
+  run: |
+    python3 src/revue/cli.py review \
+      --diff /tmp/revue_pr.diff \
+      --pr-description-file /tmp/revue_pr_description.txt \
+      ...
+```
+
+### GitLab CI
+```yaml
+fetch_pr_description:
+  script:
+    - |
+      curl -sf "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/merge_requests/${CI_MERGE_REQUEST_IID}" \
+        --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+        | python3 -c "import json,sys; print(json.load(sys.stdin).get('description',''))" \
+        > /tmp/revue_pr_description.txt
+
+revue_review:
+  script:
+    - python3 src/revue/cli.py review
+        --diff /tmp/revue_pr.diff
+        --pr-description-file /tmp/revue_pr_description.txt
+        ...
+```

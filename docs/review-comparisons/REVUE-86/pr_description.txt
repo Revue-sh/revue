@@ -1,0 +1,23 @@
+## Summary
+Adds --pr-description-file so the CLI accepts a pre-fetched PR description from any CI platform without embedding platform logic in Python.
+
+## Background
+REVUE-84 --auto-detect-pr fetches description inside CLI. Cleaner: each CI platform fetches, writes file, passes path. CLI stays agnostic.
+
+## Changes
+- cli.py: --pr-description-file reads file, parses with PRDescription.parse(), passes to pipeline.run()
+- bitbucket-pipelines.yml: curl PR description before review, pass --pr-description-file
+- docs/PR_TEMPLATE_GUIDE.md: GitHub Actions and GitLab CI snippets
+
+## Acceptance Criteria
+AC1: --pr-description-file flag registered
+AC2: File parsed and injected into pipeline
+AC3: Missing file or flag = graceful degradation
+AC4: bitbucket-pipelines.yml updated
+AC5: GitHub Actions and GitLab CI snippets in docs
+
+## Out of Scope
+Removing --auto-detect-pr. API fetch inside CLI.
+
+## Dependencies
+REVUE-84 merged.
