@@ -77,6 +77,15 @@ if [[ -n "${PR_DESC_FILE}" && -f "${PR_DESC_FILE}" ]]; then
     echo ""
     echo "==> Generating analysis..."
     python3 scripts/compare_reviews.py "${OUT_DIR}"
+    
+    # ── Import to Database ─────────────────────────────────────────────────
+    echo ""
+    echo "==> Importing to database..."
+    python3 src/db/import_review.py "${OUT_DIR}" \
+        --model "${AI_MODEL:-claude-sonnet-4-5}" \
+        --provider anthropic \
+        --branch "${CURRENT_BRANCH}" \
+        --tier free
 else
     echo ""
     echo "    No PR description file provided — skipping contextual run."
