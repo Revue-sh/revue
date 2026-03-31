@@ -89,12 +89,20 @@ def _is_premium_tier(agents_allowed: list[str]) -> bool:
 def _inject_pr_context(agents: list, extractor: "PRContextExtractor") -> None:
     """Prepend filtered PR description context to each agent's system prompt.
 
-    Mutates each agent's underlying AgentDefinition.system_prompt in-place
-    so that the standard analyse() path in agent_runner.py picks it up
-    without any changes to the orchestration machinery (OCP).
+    Mutates each LoadedAgent's _def.system_prompt in-place so that the
+    standard analyse() path in agent_runner.py picks it up without any
+    changes to the orchestration machinery (OCP).
 
-    Agents not in AGENT_SECTION_MAP (unknown agents) receive just the PR
-    title as a fallback — never empty-handed, never noisy.
+    Design note: direct mutation of _def.system_prompt is intentional here.
+    LoadedAgent (agent_loader.py) exposes no public setter for system_prompt;
+    adding one would widen the agent_loader API solely for this use-case.
+    The mutation is safe because each pipeline.run() creates a fresh agent
+    list via load_all_agents(), so there is no state leak across reviews.
+    A future refactor could add AgentDefinition.prepend_context() if more
+    callers need this pattern.
+
+    Agents not in AGENT_SECTION_MAP receive just the PR title — never
+    empty-handed, never noisy (unknown-agent fallback in PRContextExtractor).
     """
     for agent in agents:
         try:
@@ -106,7 +114,9 @@ def _inject_pr_context(agents: list, extractor: "PRContextExtractor") -> None:
                     f"{agent._def.system_prompt}"
                 )
         except Exception:
-            # Never let context injection break a review — skip silently
+            # Never let context injection break a review — skip silently.
+            # Bare except is intentional: any failure (AttributeError,
+            # TypeError, etc.) must not abort the review loop.
             pass
 
 

@@ -10,6 +10,11 @@ import os
 from typing import Optional
 from dataclasses import dataclass
 
+try:
+    import httpx as _httpx
+except ImportError:  # pragma: no cover
+    _httpx = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -109,12 +114,12 @@ def get_bitbucket_pr_description(
     token: str,
 ) -> Optional[PRDescription]:
     """Fetch PR description from Bitbucket API."""
-    import httpx
+
     
     url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/pullrequests/{pr_id}"
     
     try:
-        response = httpx.get(
+        response = _httpx.get(
             url,
             auth=(username, token),
             timeout=10.0,
@@ -139,12 +144,12 @@ def get_github_pr_description(
     token: str,
 ) -> Optional[PRDescription]:
     """Fetch PR description from GitHub API."""
-    import httpx
+
     
     url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_id}"
     
     try:
-        response = httpx.get(
+        response = _httpx.get(
             url,
             headers={
                 "Authorization": f"Bearer {token}",
@@ -172,12 +177,12 @@ def get_gitlab_pr_description(
     base_url: str = "https://gitlab.com",
 ) -> Optional[PRDescription]:
     """Fetch MR description from GitLab API."""
-    import httpx
+
     
     url = f"{base_url}/api/v4/projects/{project_id}/merge_requests/{mr_id}"
     
     try:
-        response = httpx.get(
+        response = _httpx.get(
             url,
             headers={"PRIVATE-TOKEN": token},
             timeout=10.0,

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Callable, Optional
@@ -195,7 +196,6 @@ def cmd_review(
             get_pr_description_from_env,
             get_bitbucket_pr_description,
         )
-        import os
 
         resolved_pr_id = explicit_pr_id or _resolve_pr_id_from_env()
         if resolved_pr_id:
@@ -511,7 +511,6 @@ def _resolve_pr_id_from_env() -> Optional[int]:
 
     Returns None if no PR ID found or value is not numeric.
     """
-    import os
     for var in ("BITBUCKET_PR_ID", "GITHUB_PR_NUMBER", "CI_MERGE_REQUEST_IID"):
         val = os.getenv(var, "").strip()
         if val and val.isdigit():
