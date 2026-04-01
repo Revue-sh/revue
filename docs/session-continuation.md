@@ -1,201 +1,220 @@
 # Session Continuation
-**Updated:** 2026-03-31 22:05 GMT+1 | **For:** Next session
+**Updated:** 2026-03-31 23:15 GMT+1 | **For:** Next session
 
 ## Completed this session
 
-### REVUE-91: reviews.py Query CLI
-- ✅ **PR #26 merged to main** (`0e90922`)
-- ✅ **Jira REVUE-91 → Done**
-- ✅ All 6 queries implemented (list, show, false-positives, clarity, suppression-trend, patterns)
-- ✅ Repository pattern + service layer architecture (modular monolith)
-- ✅ Created `ARCHITECTURE.md` (14KB) — project-wide standards
-- ✅ Files created:
-  - `src/db/repositories/base.py` + `review_repository.py` (10 query methods)
-  - `src/reviews/service.py` + `models.py` (domain models)
-  - `src/cli/reviews.py` (Click CLI with Rich formatting)
-  - `src/db/connection.py` (DB connection helper)
-  - `scripts/reviews.py` (executable wrapper)
-  - `docs/REVUE-91-dod.md` (DoD checklist)
-- ✅ All acceptance criteria met:
-  - AC1: All six queries implemented and tested ✅
-  - AC2: Graceful error when DB unreachable ✅
-  - AC3: `--format json|table` output flag ✅
-- ✅ Dependencies added: click, rich, psycopg2-binary
+### REVUE-91: reviews.py Query CLI (PR #26 ✅ Merged)
+- **Commit:** `0e90922`
+- **Jira:** Done
+- **What:** 6 query commands (list, show, false-positives, clarity, suppression-trend, patterns)
+- **Architecture:** Repository pattern + service layer (modular monolith)
+- **Files created:**
+  - `ARCHITECTURE.md` (14KB) — project-wide SOLID standards
+  - `src/db/repositories/` (base + review_repository, 10 methods)
+  - `src/reviews/` (service + models)
+  - `src/cli/reviews.py` (Click CLI with Rich)
+  - `src/db/connection.py`
+  - `scripts/reviews.py`
+  - `docs/REVUE-91-dod.md`
+- **Code:** 1,347 lines, all ACs met
+- **Impact:** Established modular monolith architecture for entire project
 
-**Commands working:**
-```bash
-./scripts/reviews.py list [--limit N] [--format table|json]
-./scripts/reviews.py show REVUE-XX [--format table|json]
-./scripts/reviews.py false-positives [--top N] [--format table|json]
-./scripts/reviews.py clarity [--model NAME] [--format table|json]
-./scripts/reviews.py suppression-trend [--format table|json]
-./scripts/reviews.py patterns [--format table|json]
-```
+### REVUE-92: Human Rating TUI (PR #27 ✅ Merged)
+- **Commit:** `dc080c3`
+- **Jira:** Done
+- **What:** Interactive `reviews.py rate REVUE-XX` command
+- **Features:**
+  - Clarity (1-5), actionability (1-5), false positive (y/n) prompts
+  - Skip/resume support, progress indicators, graceful quit
+  - Repository methods with ON CONFLICT upserts (idempotent)
+  - Crash-safe per-finding commits
+- **Code:** 320 lines
+- **Manual review:** ⭐⭐⭐⭐⭐ 4.8/5.0 (SOLID compliant, no security issues)
+- **AI review:** 0 findings (legitimately clean code)
 
-**Commits:**
-- `a8079aa` — Repository pattern + first 2 queries (list, show)
-- `21a5999` — Remaining 4 queries (false-positives, clarity, suppression-trend, patterns)
-- `020396e` — DoD checklist
-- `2c03cb1` — Increased max_diff_lines to 10000 for review
+### Stories Created
 
-### REVUE-96: Dynamic Context Window Limits
-- ✅ **Story created** — [REVUE-96](https://urukia.atlassian.net/browse/REVUE-96)
-- ✅ Goal: Make `max_diff_lines: auto` calculate limit from AI model context window
-- ✅ Priority: Medium
-- ✅ Labels: enhancement, ai, performance, ux
-- ✅ Future-proof: adapts to new models automatically (GPT-5, Claude Opus 5, etc.)
+**REVUE-96:** Dynamic Context Window Limits (Medium priority)
+- Make `max_diff_lines: auto` calculate from model context window
+- Future-proof: adapts to GPT-5, Claude Opus 5, etc.
+- Example: Claude Sonnet 4.5 (200K tokens) → ~27K line limit (vs current 10K)
+
+**REVUE-97:** Enhanced PR Summary Comment (Medium priority)
+- Replace "✅ Looks good! · 0 files reviewed" with detailed breakdown
+- Show: star rating, category breakdown (Architecture/Security/Performance/Quality), files reviewed, finding counts
+- AC6: Update existing comment on re-review (don't post duplicates)
+- AC7: Show "Last updated: <timestamp>" and "Review #3"
+
+**REVUE-98:** Auto-Resolve Fixed Comments (**High priority**)
+- Auto-resolve inline comments when issues fixed in new commits
+- Finding fingerprinting: match old vs new findings
+- Resolved comments show: "✅ Fixed in commit abc123"
+- Summary delta: "3 resolved, 1 new, 2 still open"
+- **Developer pain point:** Currently must manually resolve dozens of comments
 
 ### Documentation Updates
-- ✅ Added Bitbucket API credentials to `TOOLS.md`
-  - `BITBUCKET_API_TOKEN` and `BITBUCKET_USERNAME` in `~/.zshrc`
-  - Example curl commands for PR creation
+- `TOOLS.md` — Added Bitbucket API credentials reference
+- `ARCHITECTURE.md` — Created project-wide modular monolith standards
+- All commits follow new standards
 
 ---
 
 ## Sprint & Epic State
 
 **Epic:** REVUE-87 — Review Intelligence & Knowledge Base  
-**Progress:** 4/7 stories complete (57%)
+**Progress:** 5/7 stories complete (71%)
 
-| Story | Status | Priority |
-|-------|--------|----------|
-| REVUE-88 | ✅ Done | Postgres container (local Docker) |
-| REVUE-89 | ✅ Done | Normalised schema (v2) |
-| REVUE-90 | ✅ Done | run-comparison.sh DB integration |
-| REVUE-91 | ✅ Done | reviews.py query CLI |
-| REVUE-92 | 📋 To Do | P1 | Human rating TUI |
-| REVUE-93 | 📋 To Do | P2 | Auto-heuristic scorer |
-| REVUE-94 | 📋 To Do | P2 | .revue.yml pattern support |
+| Story | Status | Points | Notes |
+|-------|--------|--------|-------|
+| REVUE-88 | ✅ Done | 3 | Postgres Docker container |
+| REVUE-89 | ✅ Done | 5 | Schema v2 (normalized) |
+| REVUE-90 | ✅ Done | 5 | DB import integration |
+| REVUE-91 | ✅ Done | 8 | Query CLI |
+| REVUE-92 | ✅ Done | 5 | Rating TUI |
+| REVUE-93 | 📋 To Do | 3 | Auto-heuristic scorer (P2) |
+| REVUE-94 | 📋 To Do | 5 | .revue.yml pattern support (P2) |
 
-**Sprint velocity:** 4 stories (21 points) completed this session
+**Completed:** 26 points (5 stories)  
+**Remaining:** 8 points (2 stories)
+
+**New priority stories (outside epic):**
+- REVUE-96 (Medium) — Dynamic context window limits
+- REVUE-97 (Medium) — Enhanced PR summary comment
+- REVUE-98 (**High**) — Auto-resolve fixed comments
 
 ---
 
 ## Remaining work — next steps
 
-### 1. REVUE-92: Human rating TUI (P1, 5 points)
-**Goal:** Interactive TUI to rate findings for quality after review.
+### 1. REVUE-93: Auto-Heuristic Scorer (P2, 3 points)
+**Goal:** Auto-rate finding quality using heuristics (benchmark against human ratings from REVUE-92)
 
-**Flow:**
-```bash
-reviews.py rate REVUE-XX
-```
-
-**Prompts per finding:**
-- Clarity (1-5): How clear is the issue description?
-- Actionability (1-5): How specific is the recommendation?
-- False positive (y/n): Is this a false alarm?
-- FP reason (if yes): Why? (dropdown: intentional_pattern, test_code, out_of_scope, etc.)
-
-**Acceptance Criteria:**
-- AC1: Interactive TUI shows each finding, prompts for ratings
-- AC2: Scores written to `finding_quality` and `finding_outcomes`
-- AC3: Skippable (press Enter to skip)
-- AC4: Resumable (already-rated findings skipped)
-
-**Tech Stack:**
-- Textual or simple `input()` loops
-- Progress indicator (e.g., "Finding 3/12")
-
-**Dependencies:** ✅ REVUE-91 done (reviews.py CLI exists)
-
----
-
-### 2. REVUE-93: Auto-heuristic scorer (P2, 3 points)
-**Blocked by:** REVUE-92 (needs human ratings to benchmark against)
-
-**Trigger:** Called from `import_review.py` after findings inserted  
-**File:** `src/db/auto_scorer.py`
+**First action:** Create `src/db/auto_scorer.py`
 
 **Heuristics:**
-- **Clarity score (1-5):**
-  - Has `issue` + `details` fields populated? (+2)
-  - `len(issue) > 20` (+1)
-  - No vague words (consider, might, perhaps) (+1)
-  - Contains specific file/line reference (+1)
+- **Clarity (1-5):** Has issue+details? Length > 20? Specific file refs? No vague words?
+- **Actionability (1-5):** Has recommendation? Code snippet? Specific verb? Exact change?
 
-- **Actionability score (1-5):**
-  - Has `recommendation` field (+2)
-  - Contains code snippet or file path (+1)
-  - Uses specific verb (add, remove, change, replace) (+1)
-  - Mentions exact change needed (+1)
+**Integration:** Call from `import_review.py` after findings inserted
+
+**Dependencies:** ✅ REVUE-92 merged (human ratings available for benchmarking)
 
 ---
 
-### 3. REVUE-94: .revue.yml pattern support (P2, 5 points)
-**Can run parallel with REVUE-93**
+### 2. REVUE-94: .revue.yml Pattern Support (P2, 5 points)
+**Goal:** Define allowed/disallowed patterns in `.revue.yml` to suppress false positives
 
-**Goal:** Define allowed/disallowed patterns in `.revue.yml` to suppress known false positives.
+**First action:** Extend `.revue.yml` schema in `src/revue/config.py`
 
-**Observed False Positives (REVUE-83/84/86):**
-1. `_def` attribute access on `LoadedAgent` (intentional, no public API)
-2. Inline lazy `httpx` import (intentional, now module-level)
-3. `test_vcs_adapter.py` deletion (coverage exists in `test_vcs_adapters.py`)
-4. Bare `except` in `_inject_pr_context` (intentional, must not crash)
-
-**Schema Extension:**
+**Schema:**
 ```yaml
 noise_filters:
   allowed_patterns:
-    - pattern: "_def attribute access (LoadedAgent)"
-      rationale: "Internal implementation detail, no public API"
+    - pattern: "_def attribute access"
+      rationale: "Internal implementation detail"
   disallowed_patterns:
-    - pattern: "TODO comments in production code"
-      rationale: "TODOs should be tracked as tickets"
+    - pattern: "TODO in production"
+      rationale: "Track as tickets"
 ```
+
+**Integration:** Inject patterns into agent system prompts
+
+**Can run parallel with REVUE-93**
 
 ---
 
-### 4. REVUE-96: Dynamic context window limits (Medium priority)
-**Can be implemented anytime**
+### 3. REVUE-98: Auto-Resolve Fixed Comments (**High priority, outside epic**)
+**Goal:** Auto-resolve inline comments when issues fixed (major developer pain point)
 
-**Goal:** Replace hardcoded `max_diff_lines` with dynamic calculation based on model context window.
+**First action:** Update `src/revue/platforms/bitbucket.py` to implement finding fingerprinting
 
-**Implementation:**
-- Create `src/revue/context_manager.py`
-- Calculate: `available_tokens = model_window - (system + agents + orchestration + PR + response)`
-- Convert tokens → lines with safety margin
-- Support `max_diff_lines: auto` in config
+**Flow:**
+1. Store fingerprints of findings (file+line+issue hash)
+2. On re-review, fetch existing comments
+3. Compare: finding gone → resolve comment + reply "✅ Fixed in abc123"
+4. Update summary: "3 resolved, 1 new, 2 still open"
 
-**Example:** Claude Sonnet 4.5 (200K tokens) → ~27K line limit (vs current 2K/10K)
+**Why high priority:** Developers currently must manually resolve dozens of comments — very annoying
+
+---
+
+### 4. REVUE-97: Enhanced PR Summary Comment (Medium priority)
+**Goal:** Replace basic "Looks good!" with detailed quality breakdown
+
+**First action:** Update comment formatting in `src/revue/platforms/bitbucket.py`
+
+**Features:**
+- Star rating, category breakdown, files reviewed, finding counts
+- Update existing comment on re-review (don't post duplicates)
+- Show "Last updated: 2h ago" + "Review #3"
+
+**Can implement after REVUE-98** (they work together nicely)
+
+---
+
+### 5. REVUE-96: Dynamic Context Window Limits (Medium priority)
+**Goal:** Calculate `max_diff_lines` from model context window
+
+**First action:** Create `src/revue/context_manager.py`
+
+**Calculation:** `available = context_window - (system + agents + orchestration + PR + response)`
+
+**Can implement anytime** (independent of other stories)
 
 ---
 
 ## Continuation prompt
 
-**Epic:** REVUE-87 (4/7 complete, 57%) — Review Intelligence & Knowledge Base  
-**Next story:** REVUE-92 (Human rating TUI) — 5 points, P1
+**Epic REVUE-87:** 5/7 complete (71%) — 2 stories remaining  
+**New priorities:** REVUE-98 (High) + REVUE-97 (Medium) for better PR comment UX
 
-**Start here:**
-1. Read `docs/E8-EPIC-PLAN.md` for full context
-2. Read `docs/session-continuation.md` (this file)
-3. Create rating flow in `src/cli/reviews.py` → `reviews.py rate REVUE-XX`
-4. Interactive prompts for clarity, actionability, false positive tracking
-5. Write to `finding_quality` and `finding_outcomes` tables
-6. Branch: `feat/REVUE-92-rating-tui` → implement → test → commit → PR
+**Recommended next action:**
+1. **REVUE-98** (Auto-resolve fixed comments) — addresses developer pain point
+2. **REVUE-97** (Enhanced summary) — pairs well with REVUE-98
+3. **Then:** REVUE-93 + REVUE-94 to finish epic
 
-**Database ready:** Postgres running at `localhost:5432`, schema v2 (19 tables), reviews.py CLI working
+**Or continue epic:**
+- REVUE-93 (Auto-heuristic scorer) — 3 points, ready to start
+- REVUE-94 (.revue.yml patterns) — 5 points, can run parallel
 
-**Blockers:** None. REVUE-91 merged, CLI functional.
+**Architecture:** All new code must follow `ARCHITECTURE.md` standards (repository pattern, service layer, SOLID, dependency injection)
+
+**Database:** Postgres at localhost:5432, schema v2, reviews.py CLI working
+
+**Blockers:** None
 
 ---
 
-## Architecture Standards Established
+## Session Metrics
 
-**ARCHITECTURE.md created** — Project-wide modular monolith standards:
-- Repository pattern for data access abstraction
-- Service layer for business logic
-- Dependency injection throughout
+**Duration:** ~3.5 hours  
+**Stories completed:** 2 (13 points)  
+**Stories created:** 3 (REVUE-96, 97, 98)  
+**PRs merged:** 2 (both with 0 AI findings — clean architecture!)  
+**Code written:** 1,667 lines  
+**Documentation:** ARCHITECTURE.md + 3 DoD/planning docs  
+**Code quality:** 4.8/5.0 (manual review)
+
+**Epic completion:** 57% → 71% (+14%)
+
+---
+
+## Architecture Standards (Mandatory)
+
+**ARCHITECTURE.md** established project-wide rules:
+- Repository pattern (all SQL in repositories/)
+- Service layer (business logic)
+- Dependency injection (constructor-based)
+- Domain models ≠ DB/API schemas
 - SOLID principles enforcement
-- Migration path to microservices documented
 
-**All future work must follow these standards.**
+**All future PRs must comply** — see ARCHITECTURE.md for patterns and examples.
 
 ---
 
-## Tools & Credentials Reference
+## Tools & Credentials
 
-See `TOOLS.md` for:
-- Jira API credentials (`JIRA_API_TOKEN`)
-- Bitbucket API credentials (`BITBUCKET_API_TOKEN`, `BITBUCKET_USERNAME`)
-- All credentials in `~/.zshrc` (source first)
+See `TOOLS.md`:
+- Jira: `JIRA_API_TOKEN` in `~/.zshrc`
+- Bitbucket: `BITBUCKET_API_TOKEN`, `BITBUCKET_USERNAME` in `~/.zshrc`
+- Source `~/.zshrc` before API calls
