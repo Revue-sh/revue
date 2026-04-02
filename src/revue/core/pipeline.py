@@ -67,8 +67,12 @@ class AllAgentsFailedError(RuntimeError):
     """
     def __init__(self, first_error: str) -> None:
         self.first_error = first_error
+        # first_error is kept as an attribute for the caller to log to stderr.
+        # It is NOT embedded in the exception message to avoid credential
+        # exposure if this exception is caught and re-logged by third parties.
         super().__init__(
-            f"All agents failed — review aborted. First error: {first_error}"
+            "All agents failed — review aborted. "
+            "Check API credentials, credit balance, and network connectivity."
         )
 
 # Agents that must NOT be passed to run_agents_parallel — they are called

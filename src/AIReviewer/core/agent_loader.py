@@ -142,18 +142,11 @@ class LoadedAgent:
             return reviews
         except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
             # Non-fatal: bad response shape/content — degrade gracefully.
-            # Sanitise before logging to avoid exposing API keys or tokens.
-            import re as _re
-            _sanitized = _re.sub(
-                r'(api[_-]?key|token|password|secret|authorization|x-api-key)'
-                r'(["\']?\s*[:=]\s*["\']?)[\w\-]+',
-                r'\1\2***REDACTED***',
-                raw[:200],
-                flags=_re.IGNORECASE,
-            )
+            # Raw response is NOT logged — it may contain credentials or sensitive data.
+            # The exception type and message are sufficient for diagnosis.
             print(
-                f"[revue]     [{self._def.name}] response parse error ({type(exc).__name__}): {exc} "
-                f"— raw (first 200): {_sanitized!r}",
+                f"[revue]     [{self._def.name}] response parse error "
+                f"({type(exc).__name__}): {exc}",
                 flush=True,
             )
             return []

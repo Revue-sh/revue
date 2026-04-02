@@ -261,8 +261,10 @@ def cmd_review(
         review_results, excluded, files_reviewed = pipeline.run(str(diff_path), pr_description=pr_description)
     except AllAgentsFailedError as exc:
         # All reviewer agents failed (e.g. API credit exhausted, auth failure).
-        # Print the first error for diagnostics then exit non-zero.
+        # Log the generic message plus the first agent error to stderr for diagnostics.
+        # first_error is kept on stderr only — not propagated further.
         print(f"[revue] ✗ {exc}", file=sys.stderr)
+        print(f"[revue]   First agent error: {exc.first_error}", file=sys.stderr)
         return 1
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
