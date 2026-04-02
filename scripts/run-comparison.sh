@@ -92,5 +92,14 @@ else
     echo "    Re-run with: $0 ${TICKET} /path/to/pr_description.txt"
 fi
 
+# ── Comment Resolution ─────────────────────────────────────────────────────
+if [[ -n "${BITBUCKET_PR_ID:-}${GITHUB_PR_NUMBER:-}${GITLAB_MR_IID:-}" ]]; then
+    echo ""
+    echo "==> Running comment resolution..."
+    PYTHONPATH="$(pwd)/src" python3 src/revue/comments/resolve.py \
+        --repo-path "$(pwd)" \
+        --ticket "${TICKET}" 2>&1
+fi
+
 echo ""
 echo "Done. Results in ${OUT_DIR}/"
