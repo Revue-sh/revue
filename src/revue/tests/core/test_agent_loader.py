@@ -173,6 +173,72 @@ def test_loaded_agent_analyse_graceful_on_bad_json():
     assert results == []
 
 
+def test_loaded_agent_analyse_strips_markdown_fences():
+    """analyse() must parse findings even when LLM wraps response in ```json fences."""
+    fenced = '```json\n[{"file_path": "a.py", "line_number": 1, "severity": "high", "issue": "XSS", "suggestion": "escape", "confidence": 0.9}]\n```'
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    agent = LoadedAgent(defn, _mock_client(fenced))
+    results = agent.analyse([_fc()])
+    assert len(results) == 1
+    assert results[0].issue == "XSS"
+
+
+def test_loaded_agent_analyse_strips_plain_fences():
+    """analyse() strips plain ``` fences too (no language tag)."""
+    fenced = '```\n[{"file_path": "a.py", "line_number": 1, "severity": "medium", "issue": "issue", "suggestion": "fix", "confidence": 0.8}]\n```'
+    defn = AgentDefinition(name="maya", display_name="Maya", role="code-quality",
+                           system_prompt="Review code quality.")
+    agent = LoadedAgent(defn, _mock_client(fenced))
+    results = agent.analyse([_fc()])
+    assert len(results) == 1
+
+
+def test_loaded_agent_analyse_maps_severity_minor_to_low():
+    """analyse() maps legacy 'minor' severity to 'low' for cli.py compatibility."""
+    payload = json.dumps([{"file_path": "a.py", "line_number": 1, "severity": "minor",
+                           "issue": "style issue", "suggestion": "fix", "confidence": 0.5}])
+    defn = AgentDefinition(name="maya", display_name="Maya", role="code-quality",
+                           system_prompt="Review.")
+    agent = LoadedAgent(defn, _mock_client(payload))
+    results = agent.analyse([_fc()])
+    assert results[0].severity == "low"
+
+
+def test_loaded_agent_analyse_maps_severity_critical_to_high():
+    """analyse() maps 'critical' → 'high'."""
+    payload = json.dumps([{"file_path": "a.py", "line_number": 1, "severity": "critical",
+                           "issue": "SQL injection", "suggestion": "use params", "confidence": 0.95}])
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    agent = LoadedAgent(defn, _mock_client(payload))
+    results = agent.analyse([_fc()])
+    assert results[0].severity == "high"
+
+
+def test_loaded_agent_analyse_maps_severity_major_to_medium():
+    """analyse() maps 'major' → 'medium'."""
+    payload = json.dumps([{"file_path": "a.py", "line_number": 1, "severity": "major",
+                           "issue": "perf issue", "suggestion": "cache", "confidence": 0.8}])
+    defn = AgentDefinition(name="kai", display_name="Kai", role="performance",
+                           system_prompt="Find performance issues.")
+    agent = LoadedAgent(defn, _mock_client(payload))
+    results = agent.analyse([_fc()])
+    assert results[0].severity == "medium"
+
+
+def test_loaded_agent_analyse_preserves_category_from_finding():
+    """analyse() uses category from finding JSON, not agent name, when present."""
+    payload = json.dumps([{"file_path": "a.py", "line_number": 1, "severity": "high",
+                           "issue": "XSS", "suggestion": "escape", "confidence": 0.9,
+                           "category": "security"}])
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    agent = LoadedAgent(defn, _mock_client(payload))
+    results = agent.analyse([_fc()])
+    assert results[0].category == "security"
+
+
 # ---------------------------------------------------------------------------
 # Directory loading tests
 # ---------------------------------------------------------------------------

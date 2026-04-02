@@ -86,27 +86,48 @@ class LoadedAgent:
             f"{self._def.system_prompt}\n\n"
             f"{shared_context}"
             f"Review the following diff:\n\n{diff_text}\n\n"
-            f"Respond with a JSON array of findings:\n"
-            f'[{{"file_path": "...", "line_number": 1, "severity": "minor|major|critical|suggestion", '
-            f'"issue": "...", "suggestion": "...", "confidence": 0.0-1.0}}]'
+            f"Respond with a JSON array of findings (no markdown fences, raw JSON only):\n"
+            f'[{{"file_path": "...", "line_number": 1, "severity": "high|medium|low|info", '
+            f'"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}}]'
         )
+        # Severity vocabulary used by AIReviewer agents → cli.py display names
+        _SEV_MAP = {
+            "critical": "high",
+            "major": "medium",
+            "minor": "low",
+            "suggestion": "info",
+            # Pass-through for agents already using the display vocab
+            "high": "high",
+            "medium": "medium",
+            "low": "low",
+            "info": "info",
+        }
         try:
             raw = self._client.complete([{"role": "user", "content": prompt}])
-            data = json.loads(raw)
+            # Strip markdown code fences that LLMs often wrap responses in
+            clean = raw.strip()
+            if clean.startswith("```"):
+                clean = "\n".join(clean.split("\n")[1:])
+            if clean.endswith("```"):
+                clean = "\n".join(clean.split("\n")[:-1])
+            clean = clean.strip()
+            data = json.loads(clean)
             if not isinstance(data, list):
                 data = data.get("findings", []) if isinstance(data, dict) else []
             reviews = []
             for item in data:
                 if not isinstance(item, dict):
                     continue
+                raw_sev = item.get("severity", self._def.severity_default).lower()
+                severity = _SEV_MAP.get(raw_sev, "low")
                 reviews.append(AIReview(
                     file_path=item.get("file_path", "unknown"),
                     line_number=int(item.get("line_number", 0)),
-                    severity=item.get("severity", self._def.severity_default),
+                    severity=severity,
                     issue=item.get("issue", ""),
                     suggestion=item.get("suggestion", ""),
                     confidence=float(item.get("confidence", 0.7)),
-                    category=self._def.name,
+                    category=item.get("category", self._def.name),
                 ))
             return reviews
         except Exception:
