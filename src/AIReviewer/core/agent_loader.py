@@ -105,6 +105,11 @@ class LoadedAgent:
 
         try:
             raw = self._client.complete([{"role": "user", "content": prompt}])
+            print(
+                f"[revue]     [{self._def.name}] raw response "
+                f"({len(raw)} chars, starts: {raw[:80]!r})",
+                flush=True,
+            )
             # Strip markdown code fences that LLMs often wrap responses in
             clean = raw.strip()
             if clean.startswith("```"):
@@ -130,8 +135,23 @@ class LoadedAgent:
                     confidence=float(item.get("confidence", 0.7)),
                     category=item.get("category", self._def.name),
                 ))
+            print(
+                f"[revue]     [{self._def.name}] parsed {len(reviews)} finding(s)",
+                flush=True,
+            )
             return reviews
-        except Exception:
+        except json.JSONDecodeError as exc:
+            print(
+                f"[revue]     [{self._def.name}] JSON parse error: {exc} "
+                f"— raw (first 200): {raw[:200]!r}",
+                flush=True,
+            )
+            return []
+        except Exception as exc:
+            print(
+                f"[revue]     [{self._def.name}] unexpected error: {exc}",
+                flush=True,
+            )
             return []
 
 
