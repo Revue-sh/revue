@@ -416,7 +416,7 @@ def test_github_post_inline_comment_success() -> None:
 
 
 def test_github_post_summary_comment_success() -> None:
-    """post_summary_comment returns True when issue comments API succeeds."""
+    """post_summary_comment returns comment ID string when issue comments API succeeds."""
     comment_body = json.dumps({"id": 99, "body": "summary"}).encode()
 
     adapter = GitHubAdapter(token="tok", repo="org/repo")
@@ -424,7 +424,7 @@ def test_github_post_summary_comment_success() -> None:
     with patch("urllib.request.urlopen", return_value=_make_resp(comment_body)):
         result = adapter.post_summary_comment(10, "Overall LGTM.")
 
-    assert result is True
+    assert result == "99"
 
 
 def test_github_get_existing_comments() -> None:
@@ -574,12 +574,12 @@ def test_gitlab_post_inline_comment_with_position() -> None:
 
 
 def test_gitlab_post_summary_comment_success() -> None:
-    """post_summary_comment returns True on success."""
+    """post_summary_comment returns comment ID string on success."""
     adapter = GitLabAdapter(token="tok", project_id=42)
     with patch.object(adapter, "_request", return_value={"id": 1}):
         result = adapter.post_summary_comment(1, "Overall LGTM")
 
-    assert result is True
+    assert result == "1"
 
 
 def test_gitlab_get_existing_comments_flattens_discussions() -> None:

@@ -305,6 +305,137 @@ def cmd_review(
 SEVERITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🔵", "info": "ℹ️"}
 SEVERITY_ORDER = ["high", "medium", "low", "info"]
 
+# AC2: category JSON field → display label (always show all 4)
+_CATEGORY_MAP = {
+    "architecture": "Architecture",
+    "security": "Security",
+    "performance": "Performance",
+    "code-quality": "Code Quality",
+}
+_CATEGORY_CLEAN_LABELS = {
+    "Architecture": "SOLID compliant, no structural issues",
+    "Security": "No vulnerabilities detected",
+    "Performance": "No blocking issues",
+    "Code Quality": "All patterns followed",
+}
+
+
+def _star_rating(total: int, high: int, medium: int) -> str:
+    """Return a star rating string (1–5) based on finding severity counts."""
+    if total == 0:
+        return "⭐⭐⭐⭐⭐ 5.0/5.0"
+    score = 5.0 - (high * 1.5 + medium * 0.5)
+    score = max(1.0, min(5.0, score))
+    full = int(score)
+    half = 1 if (score - full) >= 0.5 else 0
+    empty = 5 - full - half
+    stars = "⭐" * full + ("✨" if half else "") + "☆" * empty
+    return f"{stars} {score:.1f}/5.0"
+
+
+def _build_enhanced_summary(
+    review_results: list,
+    total_findings: dict[str, int],
+    revision: int,
+    last_updated_at: str,
+) -> str:
+    """Build the rich REVUE-97 summary comment body (AC1–AC7).
+
+    Args:
+        review_results:  List of ReviewResult objects from the pipeline.
+        total_findings:  Dict of {severity: count} aggregated across all files.
+        revision:        Current review revision number (1 = first post).
+        last_updated_at: Human-readable relative timestamp string.
+    """
+    total = sum(total_findings.values())
+    high = total_findings.get("high", 0)
+    medium = total_findings.get("medium", 0)
+
+    # AC1: verdict + star rating
+    if total == 0:
+        verdict_icon = "✅"
+        verdict_text = "Approved"
+    elif high > 0:
+        verdict_icon = "❌"
+        verdict_text = f"{total} issue{'s' if total != 1 else ''} found"
+    else:
+        verdict_icon = "⚠️"
+        verdict_text = f"{total} issue{'s' if total != 1 else ''} found"
+
+    stars = _star_rating(total, high, medium)
+
+    lines = [
+        f"## 🤖 Revue.io — Code Review (Review #{revision})",
+        "",
+        f"**Overall:** {stars} · {verdict_icon} {verdict_text}  ",
+        f"**Last updated:** {last_updated_at}",
+        "",
+    ]
+
+    # AC2: category breakdown — always show all 4
+    category_counts: dict[str, list] = {label: [] for label in _CATEGORY_MAP.values()}
+    for rr in review_results:
+        if rr.error or not rr.response:
+            continue
+        try:
+            findings, _ = _parse_findings(rr.response)
+        except Exception:
+            continue
+        for f in findings:
+            raw_cat = f.get("category", "").lower().strip()
+            display = _CATEGORY_MAP.get(raw_cat)
+            if display:
+                category_counts[display].append(f)
+
+    lines.append("### Quality Breakdown")
+    for display_label in _CATEGORY_MAP.values():
+        cat_findings = category_counts[display_label]
+        if not cat_findings:
+            lines.append(f"- ✅ **{display_label}:** {_CATEGORY_CLEAN_LABELS[display_label]}")
+        else:
+            by_sev: dict[str, int] = {}
+            for f in cat_findings:
+                s = f.get("severity", "low").lower()
+                by_sev[s] = by_sev.get(s, 0) + 1
+            sev_parts = " ".join(
+                f"{SEVERITY_EMOJI.get(s, '⚪')} {by_sev[s]} {s}"
+                for s in SEVERITY_ORDER
+                if by_sev.get(s, 0) > 0
+            )
+            lines.append(f"- ⚠️ **{display_label}:** {sev_parts}")
+    lines.append("")
+
+    # AC3: files reviewed
+    reviewed_files = [rr for rr in review_results if not rr.error and rr.response]
+    lines.append(f"### Files Reviewed ({len(reviewed_files)})")
+    for rr in reviewed_files:
+        lines.append(f"- `{rr.file_path}`")
+    lines.append("")
+
+    # AC1 / AC4: findings summary
+    if total == 0:
+        lines.append("### Findings: 0 issues")
+        lines.append("")
+        lines.append(
+            "**Verdict:** Clean implementation following project standards. "
+            "No issues detected across all reviewed files."
+        )
+    else:
+        counts_str = " · ".join(
+            f"{SEVERITY_EMOJI.get(s, '⚪')} {total_findings[s]} {s}"
+            for s in SEVERITY_ORDER
+            if total_findings.get(s, 0) > 0
+        )
+        lines.append(f"### Findings: {total} issue{'s' if total != 1 else ''}")
+        lines.append(f"{counts_str}")
+        lines.append("")
+        lines.append(
+            f"**Verdict:** {verdict_icon} {total} issue{'s' if total != 1 else ''} require "
+            f"attention. See inline comments for details."
+        )
+
+    return "\n".join(lines)
+
 
 def _parse_findings(response: str) -> tuple[list, str]:
     """Parse findings list from a JSON review response. Returns (findings, summary).
@@ -463,11 +594,81 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
         except Exception:
             pass
 
-    total = sum(total_findings.values())
-    verdict = "✅ Looks good!" if total == 0 else f"⚠️ {total} issue{'s' if total != 1 else ''} found"
-    counts_str = " · ".join(
-        f"{SEVERITY_EMOJI.get(s, '⚪')} {n} {s}" for s, n in total_findings.items() if n > 0
+    # AC6/AC7: resolve existing summary comment + revision from TOML store
+    from revue.comments.file_store import CommentFileStore
+    from revue.comments.models import Platform, SummaryComment
+    from datetime import datetime, timezone
+
+    _repo_path = Path(os.getcwd())
+    _store = CommentFileStore(_repo_path)
+    _platform = Platform.BITBUCKET
+    _existing_summary = _store.get_summary_for_pr(
+        platform=_platform,
+        repo_owner=workspace,
+        repo_name=repo_slug,
+        pr_number=int(pr_id),
     )
+    _revision = (_existing_summary.revision + 1) if _existing_summary else 1
+    _last_updated = "just now"
+
+    def _post_or_update_summary(body: str) -> None:
+        """Post a new summary comment or update the existing one in-place (AC6)."""
+        nonlocal _existing_summary, _revision
+        now = datetime.now(timezone.utc)
+
+        if _existing_summary:
+            # Try to update in-place
+            ok = adapter.update_comment(
+                pr_id=int(pr_id),
+                comment_id=_existing_summary.platform_comment_id,
+                body=body,
+            )
+            if ok:
+                # Persist updated revision in TOML
+                updated = SummaryComment(
+                    id=None,
+                    platform=_platform,
+                    platform_comment_id=_existing_summary.platform_comment_id,
+                    pr_number=int(pr_id),
+                    repo_owner=workspace,
+                    repo_name=repo_slug,
+                    total_issues=sum(total_findings.values()),
+                    fixed_count=0,
+                    discussed_count=0,
+                    remaining_count=sum(total_findings.values()),
+                    last_updated_at=now,
+                    created_at=_existing_summary.created_at,
+                    revision=_revision,
+                )
+                _store.create_or_update_summary(updated)
+                print(f"[revue] Summary comment updated in-place (Review #{_revision})")
+                return
+            else:
+                # Comment was deleted — fall through to post a new one (AC6 TC4)
+                print("[revue] Existing summary comment not found — posting fresh comment")
+                _revision = 1
+
+        # Post new comment and store ID
+        comment_id = adapter.post_summary_comment(pr_id=int(pr_id), body=body)
+        if comment_id:
+            summary = SummaryComment(
+                id=None,
+                platform=_platform,
+                platform_comment_id=comment_id,
+                pr_number=int(pr_id),
+                repo_owner=workspace,
+                repo_name=repo_slug,
+                total_issues=sum(total_findings.values()),
+                fixed_count=0,
+                discussed_count=0,
+                remaining_count=sum(total_findings.values()),
+                last_updated_at=now,
+                created_at=now,
+                revision=_revision,
+            )
+            _store.create_or_update_summary(summary)
+        else:
+            print("Warning: Failed to post review summary to Bitbucket", file=sys.stderr)
 
     if comment_style == "per-issue":
         # Post one inline comment per finding, anchored to line 1 of the file
@@ -507,37 +708,32 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
                 if ok:
                     posted += 1
 
-        # Post a single summary comment at the top with the overall verdict
-        header = f"## 🤖 Revue.io — Code Review\n\n> **{verdict}**"
-        if counts_str:
-            header += f" · {counts_str}"
-        header += f" · {len(review_results)} file{'s' if len(review_results) != 1 else ''} reviewed"
-        adapter.post_summary_comment(pr_id=int(pr_id), body=header)
+        # AC1–AC7: post or update the rich summary comment
+        summary_body = _build_enhanced_summary(
+            review_results, total_findings, _revision, _last_updated
+        )
+        _post_or_update_summary(summary_body)
         print(f"[revue] Review posted to PR #{pr_id} — {posted} inline comment(s)")
 
     else:
-        # summary mode: one formatted comment per file
-        header = f"## 🤖 Revue.io — Code Review\n\n> **{verdict}**"
-        if counts_str:
-            header += f" · {counts_str}"
-        header += f" · {len(review_results)} file{'s' if len(review_results) != 1 else ''} reviewed\n\n---\n"
-        summary_lines = [header]
-
+        # summary mode: rich header + one formatted section per file
         posted = 0
+        file_sections = []
         for rr in review_results:
             if rr.error or not rr.response:
                 continue
-            summary_lines.append(_format_file_review(rr.file_path, rr.response))
+            file_sections.append(_format_file_review(rr.file_path, rr.response))
             posted += 1
 
-        if posted == 0:
-            summary_lines.append("*No findings — looks good! ✅*")
+        # AC1–AC7: rich summary header
+        summary_body = _build_enhanced_summary(
+            review_results, total_findings, _revision, _last_updated
+        )
+        if file_sections:
+            summary_body += "\n\n---\n\n" + "\n\n".join(file_sections)
 
-        ok = adapter.post_summary_comment(pr_id=int(pr_id), body="\n".join(summary_lines))
-        if ok:
-            print(f"[revue] Review posted to PR #{pr_id} — {posted} file(s) in summary comment")
-        else:
-            print("Warning: Failed to post review summary to Bitbucket", file=sys.stderr)
+        _post_or_update_summary(summary_body)
+        print(f"[revue] Review posted to PR #{pr_id} — {posted} file(s) in summary comment")
 
 
 def _resolve_pr_id_from_env() -> Optional[int]:

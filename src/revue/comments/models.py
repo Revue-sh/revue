@@ -70,6 +70,7 @@ class SummaryComment:
     remaining_count: int
     last_updated_at: datetime
     created_at: datetime
+    revision: int = 1
     
     @property
     def progress_percentage(self) -> int:
