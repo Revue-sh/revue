@@ -135,11 +135,14 @@ class GitLabAdapter:
 
     def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
-    ) -> bool:
+    ) -> str | None:
         """Post an inline discussion note on the MR.
 
         POST /projects/{project_id}/merge_requests/{iid}/discussions
-        Returns True on success, False on error.
+
+        Returns:
+            The GitLab discussion ID as a string on success (used for thread
+            resolution in resolve_inline_comment), None on failure.
         """
         pos_obj: dict[str, Any] = {
             "base_sha": position.commit_id,
@@ -152,15 +155,17 @@ class GitLabAdapter:
         if position.line_code:
             pos_obj["line_code"] = position.line_code
         try:
-            self._request(
+            resp = self._request(
                 "POST",
                 f"/merge_requests/{pr_id}/discussions",
                 {"body": body, "position": pos_obj},
             )
-            return True
+            # GitLab returns the discussion object with an "id" field
+            discussion_id = resp.get("id")
+            return str(discussion_id) if discussion_id is not None else None
         except Exception as exc:
             _LOG.warning("post_review_comment failed for MR %s: %s", pr_id, exc)
-            return False
+            return None
 
     # Backward-compat alias — remove in v2.0
     post_inline_comment = post_review_comment
@@ -359,6 +364,52 @@ class GitLabAdapter:
             True if ``signature`` matches the configured ``webhook_secret``.
         """
         return hmac.compare_digest(signature, self._webhook_secret)
+
+    def resolve_inline_comment(
+        self, pr_id: int, comment_id: str, reply_body: str
+    ) -> bool:
+        """Resolve a GitLab discussion thread.
+
+        GitLab uses discussion-based threading. To resolve:
+        PUT /projects/{id}/merge_requests/{iid}/discussions/{discussion_id}
+        with { "resolved": true }
+
+        ``comment_id`` is expected to be the discussion ID (not the note ID).
+
+        Optionally posts a reply before resolving (for context).
+
+        Args:
+            pr_id:       Merge request IID.
+            comment_id:  The GitLab discussion ID.
+            reply_body:  Optional reply message before resolving.
+
+        Returns:
+            True on success, False on error.
+        """
+        # Post reply if provided
+        if reply_body:
+            try:
+                self._request(
+                    "POST",
+                    f"/merge_requests/{pr_id}/discussions/{comment_id}/notes",
+                    {"body": reply_body},
+                )
+            except Exception as exc:
+                _LOG.warning("resolve_inline_comment: reply failed for MR %d discussion %s: %s", pr_id, comment_id, exc)
+                # Continue to resolve even if reply fails
+
+        # Resolve the discussion
+        try:
+            self._request(
+                "PUT",
+                f"/merge_requests/{pr_id}/discussions/{comment_id}",
+                {"resolved": True},
+            )
+            _LOG.info("Resolved discussion %s on MR %d", comment_id, pr_id)
+            return True
+        except Exception as exc:
+            _LOG.warning("resolve_inline_comment failed for MR %d discussion %s: %s", pr_id, comment_id, exc)
+            return False
 
     @staticmethod
     def parse_webhook_event(

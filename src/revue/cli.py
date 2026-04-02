@@ -681,7 +681,37 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
     if comment_style == "per-issue":
         # Post one inline comment per finding, anchored to line 1 of the file
         # (line numbers from AI findings would improve this in a future story)
+        
+        # REVUE-104: Comment thread preservation (feature-flagged)
+        preserve_threads = config.preserve_comment_threads if hasattr(config, 'preserve_comment_threads') else False
+        
+        if preserve_threads:
+            from revue.comments.state_store import CommentStateStore
+            from revue.comments.fingerprint import fingerprint as gen_fingerprint
+            from revue.comments.models import CommentState
+            
+            # Load existing comments from JSON state
+            state_store = CommentStateStore(_repo_path)
+            repo_full_name = f"{workspace}/{repo_slug}"  # e.g. "cbscd/revue"
+            existing_comments = state_store.get_comments_for_pr(
+                platform=_platform.value,
+                repo_full_name=repo_full_name,
+                pr_number=int(pr_id)
+            )
+            
+            # Build lookup: fingerprint → platform_comment_id
+            fingerprint_to_id = {
+                comment.finding_fingerprint: comment.platform_comment_id
+                for comment in existing_comments
+                if comment.finding_fingerprint and comment.platform_comment_id
+            }
+            
+            # Track new fingerprints to detect fixed findings
+            new_fingerprints = set()
+        
         posted = 0
+        skipped = 0  # Count preserved threads
+        
         for rr in review_results:
             if rr.error or not rr.response:
                 continue
@@ -707,21 +737,71 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
                     body_parts.append(f"\n> 💡 **Recommendation:** {rec}")
                 body = "\n".join(body_parts)
 
+                # REVUE-104: Check if we should preserve existing comment
+                if preserve_threads:
+                    fp = gen_fingerprint(rr.file_path, line, issue)
+                    new_fingerprints.add(fp)
+                    
+                    if fp in fingerprint_to_id:
+                        # AC1: Preserve existing thread — skip re-post
+                        skipped += 1
+                        continue
+                
+                # Post new comment (AC2 or non-preserve mode)
                 position = DiffPosition(
                     file_path=rr.file_path,
                     line_number=line,
                     side="RIGHT",
                 )
-                ok = adapter.post_review_comment(pr_id=int(pr_id), position=position, body=body)
-                if ok:
+                comment_id = adapter.post_review_comment(pr_id=int(pr_id), position=position, body=body)
+
+                if comment_id is not None:
                     posted += 1
+
+                    # REVUE-104 AC2: Store new comment in JSON state for future re-reviews
+                    if preserve_threads:
+                        state_store.save_comment(
+                            platform=_platform.value,
+                            repo_full_name=repo_full_name,
+                            pr_number=int(pr_id),
+                            fingerprint=fp,
+                            platform_comment_id=comment_id,
+                            file_path=rr.file_path,
+                            line_number=line,
+                            comment_body=body
+                        )
+        
+        # REVUE-104 AC3: Auto-resolve fixed findings
+        if preserve_threads and fingerprint_to_id:
+            resolved_fingerprints = set(fingerprint_to_id.keys()) - new_fingerprints
+            for fp in resolved_fingerprints:
+                comment_id = fingerprint_to_id[fp]
+                if comment_id:  # Only resolve if we have a valid ID
+                    ok = adapter.resolve_inline_comment(
+                        pr_id=int(pr_id),
+                        comment_id=comment_id,
+                        reply_body="✅ Issue appears to be resolved in latest commit."
+                    )
+                    if ok:
+                        state_store.transition_state(
+                            platform=_platform.value,
+                            repo_full_name=repo_full_name,
+                            pr_number=int(pr_id),
+                            fingerprint=fp,
+                            to_state=CommentState.RESOLVED,
+                            reason="auto-resolved"
+                        )
 
         # AC1–AC7: post or update the rich summary comment
         summary_body = _build_enhanced_summary(
             review_results, total_findings, _revision, _last_updated
         )
         _post_or_update_summary(summary_body)
-        print(f"[revue] Review posted to PR #{pr_id} — {posted} inline comment(s)")
+        
+        if preserve_threads and skipped > 0:
+            print(f"[revue] Review posted to PR #{pr_id} — {posted} new, {skipped} preserved inline comment(s)")
+        else:
+            print(f"[revue] Review posted to PR #{pr_id} — {posted} inline comment(s)")
 
     else:
         # summary mode: rich header + one formatted section per file

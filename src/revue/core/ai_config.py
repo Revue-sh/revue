@@ -61,6 +61,9 @@ class AIConfig:
     output_format: str = "markdown"
     comment_style: Literal["per-issue", "summary"] = "per-issue"
     output_file: str = ""
+    
+    # Feature flags (configurable via .revue.yml)
+    preserve_comment_threads: bool = False  # REVUE-104: preserve inline comment threads across commits
 
     def __repr__(self) -> str:
         masked_key = '***' if self.api_key else ''
