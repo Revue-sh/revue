@@ -55,6 +55,22 @@ _LICENCE_NAME_TO_AGENT: dict[str, str] = {
 # These are valid licence names but will never appear in load_all_agents() output.
 _VIRTUAL_AGENTS = frozenset({"orchestrator", "sage"})
 
+
+class AllAgentsFailedError(RuntimeError):
+    """Raised when all reviewer agents failed due to a fatal infrastructure error.
+
+    Separates business logic (pipeline) from process control (CLI entrypoint).
+    The caller (cmd_review in cli.py) decides whether to sys.exit or handle differently.
+
+    Attributes:
+        first_error: The error string from the first failed agent.
+    """
+    def __init__(self, first_error: str) -> None:
+        self.first_error = first_error
+        super().__init__(
+            f"All agents failed — review aborted. First error: {first_error}"
+        )
+
 # Agents that must NOT be passed to run_agents_parallel — they are called
 # separately by the pipeline as infrastructure (router, consolidator).
 _INFRASTRUCTURE_AGENTS = frozenset({"cleo", "nova"})
@@ -475,16 +491,17 @@ class ReviewPipeline:
             flush=True,
         )
 
-        # AC3: if ALL reviewer agents failed, abort — do not produce a false-negative verdict
+        # AC3: if ALL reviewer agents failed, raise AllAgentsFailedError.
+        # The caller (CLI) decides whether to sys.exit or handle differently.
+        # This keeps process control out of the pipeline (SRP/OCP).
         if reviewer_agents and not agents_used:
             first_error = failed[0].error if failed else "unknown"
             print(
                 f"[revue] ✗ All agents failed — review aborted.\n"
-                f"[revue]   First error: {first_error}\n"
                 f"[revue]   Check API credentials, credit balance, and network connectivity.",
                 flush=True,
             )
-            raise SystemExit(1)
+            raise AllAgentsFailedError(first_error)
 
         # 5. Nova consolidation — deduplicate across agents
         print("[revue]   Consolidating findings (Nova)...", flush=True)

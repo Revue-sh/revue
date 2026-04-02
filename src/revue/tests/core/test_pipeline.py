@@ -554,16 +554,15 @@ def test_pipeline_free_tier_ignores_pr_description(capsys):
 
 
 # ---------------------------------------------------------------------------
-# REVUE-103: All-agents-failed aborts with SystemExit(1)
+# REVUE-103: All-agents-failed raises AllAgentsFailedError (not SystemExit)
 # ---------------------------------------------------------------------------
 
 def test_pipeline_aborts_when_all_agents_fail(capsys):
-    """TC3 (AC3): If ALL reviewer agents fail, pipeline raises SystemExit(1)."""
+    """TC3 (AC3): If ALL reviewer agents fail, pipeline raises AllAgentsFailedError."""
     from unittest.mock import patch, MagicMock
-    import pytest
+    from revue.core.pipeline import AllAgentsFailedError
 
     mock_client = MagicMock()
-    # Client raises a fatal error (e.g. credit exhausted)
     mock_client.complete.side_effect = RuntimeError("Error code: 400 - credit balance too low")
 
     pro_license = _license_info(
@@ -579,10 +578,10 @@ def test_pipeline_aborts_when_all_agents_fail(capsys):
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage"):
-        with pytest.raises(SystemExit) as exc_info:
+        with pytest.raises(AllAgentsFailedError) as exc_info:
             pipeline.run("fake.diff")
 
-    assert exc_info.value.code == 1
+    assert "credit balance too low" in str(exc_info.value)
     captured = capsys.readouterr()
     assert "All agents failed" in captured.out
     assert "aborted" in captured.out

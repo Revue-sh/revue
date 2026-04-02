@@ -484,7 +484,7 @@ def test_analyse_graceful_on_empty_response():
     defn = AgentDefinition(name="leo", display_name="Leo", role="arch",
                            system_prompt="Find issues.")
     c = MagicMock()
-    c.complete.return_value = ""  # explicitly empty — _mock_client("") is falsy, uses default
+    c.complete.return_value = ""  # Explicitly set empty string directly — _mock_client("") is falsy and would use the default non-empty response
     agent = LoadedAgent(defn, c)
     results = agent.analyse([_fc()])
     assert results == []
@@ -504,7 +504,7 @@ def test_agent_runner_marks_failed_on_http_error():
     assert len(result.agent_results) == 1
     r = result.agent_results[0]
     assert r.success is False
-    assert "400" in r.error or "credit" in r.error.lower()
+    assert any(s in r.error.lower() for s in ["400", "credit"])
     assert r.findings == []
 
 
