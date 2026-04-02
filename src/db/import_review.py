@@ -18,13 +18,17 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +146,143 @@ def _parse_findings_from_text(text: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# PR / CI context detection
+# ---------------------------------------------------------------------------
+
+def _detect_pr_context() -> tuple[
+    Optional[str], Optional[str], Optional[str], Optional[int]
+]:
+    """Detect platform name, repo_owner, repo_name, pr_number from CI env vars.
+
+    Returns (None, None, None, None) when no PR context is available
+    (local / dry-run mode).
+    """
+    # Bitbucket
+    pr_id = os.environ.get("BITBUCKET_PR_ID")
+    if pr_id:
+        return (
+            "bitbucket",
+            os.environ.get("BITBUCKET_REPO_OWNER", ""),
+            os.environ.get("BITBUCKET_REPO_SLUG", ""),
+            int(pr_id),
+        )
+
+    # GitHub  (GITHUB_REPOSITORY is "owner/repo")
+    pr_number = os.environ.get("GITHUB_PR_NUMBER")
+    if pr_number:
+        repo = os.environ.get("GITHUB_REPOSITORY", "/")
+        owner, name = repo.split("/", 1)
+        return ("github", owner, name, int(pr_number))
+
+    # GitLab  (GITLAB_PROJECT_PATH is "group/project")
+    mr_iid = os.environ.get("GITLAB_MR_IID")
+    if mr_iid:
+        project = os.environ.get("GITLAB_PROJECT_PATH", "/")
+        owner, name = project.split("/", 1)
+        return ("gitlab", owner, name, int(mr_iid))
+
+    return (None, None, None, None)
+
+
+def _get_commit_sha() -> str:
+    """Get current commit SHA from GIT_COMMIT env or ``git rev-parse HEAD``."""
+    sha = os.environ.get("GIT_COMMIT")
+    if sha:
+        return sha
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+def _post_findings_as_comments(
+    findings: list[dict],
+    review_id: int,
+) -> None:
+    """Post findings as inline PR comments and store in .revue/ TOML.
+
+    Skips silently when no PR context is detected (local/dry-run mode).
+    Failures are logged as warnings but never abort the import.
+
+    Comment module imports are lazy so import_review.py can be loaded
+    without ``src/`` on PYTHONPATH (e.g. in unit tests).
+    """
+    platform_name, repo_owner, repo_name, pr_number = _detect_pr_context()
+    if not platform_name or not repo_owner or not repo_name or not pr_number:
+        return
+
+    # Lazy imports — comment module lives under src/revue/ and requires
+    # PYTHONPATH=src which is only guaranteed in CI / run-comparison.sh.
+    from revue.comments.file_store import CommentFileStore  # noqa: E402
+    from revue.comments.fingerprint import fingerprint  # noqa: E402
+    from revue.comments.models import (  # noqa: E402
+        CommentState,
+        Platform,
+        PRComment as PRCommentModel,
+    )
+    from revue.comments.platform_adapter import get_platform_adapter  # noqa: E402
+
+    platform = Platform(platform_name)
+    adapter = get_platform_adapter(platform)
+    store = CommentFileStore(os.getcwd())
+    commit_sha = _get_commit_sha()
+
+    posted = 0
+    for finding in findings:
+        file_path = finding.get("file_path") or finding.get("file") or ""
+        line_number = finding.get("line_start") or 1
+        severity = finding.get("severity", "info")
+        issue = finding.get("issue") or finding.get("message") or finding.get("title") or ""
+        details = finding.get("details") or ""
+        recommendation = finding.get("recommendation") or ""
+
+        body = (
+            f"\U0001f50d **Revue** [{severity}] {issue}\n\n"
+            f"{details}\n\n"
+            f"\U0001f4a1 {recommendation}"
+        )
+
+        comment_id, thread_id = adapter.post_comment(
+            repo_owner, repo_name, pr_number,
+            file_path, line_number, body, commit_sha,
+        )
+
+        fp = fingerprint(file_path, line_number, issue)
+
+        comment = PRCommentModel(
+            id=None,
+            platform=platform,
+            platform_comment_id=comment_id,
+            platform_thread_id=thread_id,
+            pr_number=pr_number,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            file_path=file_path,
+            line_number=line_number,
+            comment_body=body,
+            finding_id=review_id,
+            state=CommentState.UNRESOLVED,
+            created_at=None,
+            updated_at=None,
+            finding_fingerprint=fp,
+        )
+        store.create_comment(comment)
+        posted += 1
+
+    if posted:
+        print(
+            f"\U0001f4ac Posted {posted} inline comments to "
+            f"{platform.value} PR #{pr_number}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Import logic
 # ---------------------------------------------------------------------------
 
@@ -217,6 +358,13 @@ def import_review(
         )
     
     print(f"✅ Imported {len(findings)} findings from {json_path.name}")
+
+    # Post findings as inline PR comments (CI only; non-fatal)
+    try:
+        _post_findings_as_comments(findings, review_id)
+    except Exception as exc:
+        logger.warning("Comment posting failed (non-fatal): %s", exc)
+
     return review_id
 
 

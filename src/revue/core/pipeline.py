@@ -32,6 +32,34 @@ from .usage_tracker import check_reviews_left, track as track_usage
 _FREE_TIER_AGENTS = frozenset({"orchestrator", "code-quality-expert", "consolidator"})
 
 # ---------------------------------------------------------------------------
+# License name → agent file name mapping (REVUE-99)
+#
+# TIER_ALL_AGENTS in license_validator.py uses display-style names (e.g.
+# "code-quality-expert") for readability and backward compat with the license
+# server API. The actual AIReviewer agent files use short codenames (e.g.
+# "maya"). This map resolves the mismatch without touching either side.
+# ---------------------------------------------------------------------------
+_LICENCE_NAME_TO_AGENT: dict[str, str] = {
+    # Licence display name → AIReviewer agent file name (name: field inside file)
+    "code-quality-expert": "maya",
+    "security-expert": "zara",
+    "performance-expert": "kai",
+    "architecture-expert": "leo",
+    "consolidator": "nova",
+    # Pass-throughs — already match agent file names
+    "cleo": "cleo",
+    "nova": "nova",
+}
+
+# Virtual agents implemented in pipeline code, not as agent files.
+# These are valid licence names but will never appear in load_all_agents() output.
+_VIRTUAL_AGENTS = frozenset({"orchestrator", "sage"})
+
+# Agents that must NOT be passed to run_agents_parallel — they are called
+# separately by the pipeline as infrastructure (router, consolidator).
+_INFRASTRUCTURE_AGENTS = frozenset({"cleo", "nova"})
+
+# ---------------------------------------------------------------------------
 # Lazy imports for orchestration (only loaded on paid tiers)
 # ---------------------------------------------------------------------------
 
@@ -164,8 +192,13 @@ class ReviewPipeline:
         self,
         diff_path: str,
         pr_description: Optional[PRDescription] = None,
-    ) -> tuple[list[ReviewResult], list[FileChange]]:
-        """Returns (results, excluded_files).
+    ) -> tuple[list[ReviewResult], list[FileChange], int]:
+        """Returns (results, excluded_files, files_reviewed_count).
+
+        files_reviewed_count is the number of files that entered the review
+        (included, after filtering). Exposed so callers don't need to re-parse
+        the diff — review_results in orchestration mode has one entry per
+        finding, not per file, so len(results) is not a reliable file count.
 
         Validates license, selects review path (simplified vs orchestration),
         and tracks usage after a successful review (fire-and-forget).
@@ -200,7 +233,7 @@ class ReviewPipeline:
         limit_result = check_diff_limit(changes, self.config.max_diff_lines)
         if limit_result.exceeded:
             print(f"[revue]   ⚠ Diff too large — {limit_result.suggestion}", flush=True)
-            return [ReviewResult(file_path="[diff-limit]", response=limit_result.suggestion)], []
+            return [ReviewResult(file_path="[diff-limit]", response=limit_result.suggestion)], [], 0
 
         included, excluded = filter_changes(
             changes, self.config.ignore_patterns, self.config.max_diff_lines
@@ -210,7 +243,7 @@ class ReviewPipeline:
 
         if not included:
             print("[revue]   No files to review after filtering.", flush=True)
-            return [], excluded
+            return [], excluded, 0
 
         # ── Step 2: AI review ────────────────────────────────────────────────
         start_ms = int(time.time() * 1000)
@@ -258,7 +291,7 @@ class ReviewPipeline:
                 duration_ms=duration_ms,
             )
 
-        return results, excluded
+        return results, excluded, len(included)
 
     # ------------------------------------------------------------------
     # Review paths
@@ -330,19 +363,39 @@ class ReviewPipeline:
             if shared.success:
                 print(f"[revue]   Shared analysis: {shared.summary[:80]}...", flush=True)
             else:
-                print("[revue]   Shared analysis unavailable — using fallback.", flush=True)
+                # Surface the actual error so it's diagnosable in CI logs
+                print(
+                    f"[revue]   Shared analysis unavailable ({shared.error}) — "
+                    "running all agents as fallback.",
+                    flush=True,
+                )
         except Exception as exc:
             print(f"[revue]   Shared analysis failed ({exc}) — using fallback.", flush=True)
             from AIReviewer.core.shared_analysis import SharedAnalysisResult
-            from AIReviewer.core.diff_parser import _detect_languages_from_changes  # noqa: F401
             shared = SharedAnalysisResult.fallback(
                 languages=[fc.file_path.rsplit(".", 1)[-1] for fc in included]
             )
 
-        # 2. Load and filter agents by license
+        # 2. Load and filter agents by license (REVUE-99: resolve licence names → agent names)
         print("[revue]   Loading agents...", flush=True)
         all_agents = load_all_agents(self.config, self._client)
-        allowed_agents = [a for a in all_agents if a.name in agents_allowed]
+        agents_by_name = {a.name: a for a in all_agents}
+
+        # Expand licence names through the mapping, warn on unknowns (AC6)
+        resolved_agent_names: set[str] = set()
+        for licence_name in agents_allowed:
+            if licence_name in _VIRTUAL_AGENTS:
+                continue  # orchestrator/sage are pipeline-level, not file-based agents
+            agent_name = _LICENCE_NAME_TO_AGENT.get(licence_name, licence_name)
+            if agent_name in agents_by_name:
+                resolved_agent_names.add(agent_name)
+            else:
+                print(
+                    f"[revue]   ⚠ Unknown agent '{licence_name}' in licence — skipping.",
+                    flush=True,
+                )
+
+        allowed_agents = [agents_by_name[n] for n in resolved_agent_names if n in agents_by_name]
 
         if not allowed_agents:
             print(
@@ -352,7 +405,19 @@ class ReviewPipeline:
             )
             return self._run_simplified(included, agents_allowed)
 
-        print(f"[revue]   Agents loaded: {', '.join(a.name for a in allowed_agents)}", flush=True)
+        # AC4: log with display_name + role for customer-readable output
+        def _agent_label(a) -> str:
+            role = getattr(getattr(a, "_def", a), "role", "") or ""
+            display = getattr(getattr(a, "_def", a), "display_name", "") or a.name
+            # Trim role to the first clause (before " — ") for brevity
+            short_role = role.split(" — ")[0].split(" — ")[0].strip()
+            return f"{display} [{short_role}]" if short_role else display
+
+        print(
+            f"[revue]   Agents loaded ({len(allowed_agents)}): "
+            + ", ".join(_agent_label(a) for a in allowed_agents),
+            flush=True,
+        )
 
         # 2b. PR context injection (REVUE-84) — prepend filtered PR description
         #     sections to each agent's system prompt before dispatch.
@@ -367,14 +432,27 @@ class ReviewPipeline:
             _team_selection, routed_agents = route(included, allowed_agents, shared, self.config)
             if not routed_agents:
                 routed_agents = allowed_agents  # fallback: run all allowed agents
-            print(f"[revue]   Routed to: {', '.join(a.name for a in routed_agents)}", flush=True)
+            # AC5: role-aware routing log
+            print(
+                f"[revue]   Routed to: {', '.join(_agent_label(a) for a in routed_agents)}",
+                flush=True,
+            )
         except Exception as exc:
             print(f"[revue]   Cleo routing failed ({exc}) — running all allowed agents.", flush=True)
             routed_agents = allowed_agents
 
-        # 4. Parallel agent execution
-        print(f"[revue]   Running {len(routed_agents)} agent(s) in parallel...", flush=True)
-        parallel_result = run_agents_parallel(routed_agents, included, shared)
+        # 4. Parallel agent execution — strip infrastructure agents (cleo/nova)
+        #    they are called separately as router/consolidator, not reviewers.
+        reviewer_agents = [a for a in routed_agents if a.name not in _INFRASTRUCTURE_AGENTS]
+        if len(reviewer_agents) < len(routed_agents):
+            stripped = [a.name for a in routed_agents if a.name in _INFRASTRUCTURE_AGENTS]
+            print(
+                f"[revue]   (Infrastructure agents excluded from review pool: "
+                f"{', '.join(stripped)})",
+                flush=True,
+            )
+        print(f"[revue]   Running {len(reviewer_agents)} reviewer(s) in parallel...", flush=True)
+        parallel_result = run_agents_parallel(reviewer_agents, included, shared)
 
         agents_used = [r.agent_name for r in parallel_result.agent_results if r.success]
         failed = [r for r in parallel_result.agent_results if not r.success]

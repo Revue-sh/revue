@@ -28,8 +28,8 @@ htmlcov/
 .idea/
 *.code-workspace
 
-# Revue local
-.revue/cache/
+# Revue comment state (local only by default — set commit_state=true in .revue/config.toml to track)
+.revue/
 
 # Web app
 src/web/revue.db
