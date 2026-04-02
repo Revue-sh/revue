@@ -290,7 +290,7 @@ def cmd_review(
         args.comment_style = config_style if config_style in ("per-issue", "summary") else "per-issue"
     platform = getattr(args, "platform", None)
     if platform == "bitbucket":
-        _post_to_bitbucket(args, review_results)
+        _post_to_bitbucket(args, review_results, config)
 
     fmt = config.output_format
     if fmt == "json":
@@ -553,7 +553,7 @@ def _format_file_review(file_path: str, response: str) -> str:
     return "\n".join(lines)
 
 
-def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
+def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=None) -> None:
     """Post review findings to a Bitbucket PR.
 
     Supports two comment styles:
@@ -683,7 +683,7 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list) -> None:
         # (line numbers from AI findings would improve this in a future story)
         
         # REVUE-104: Comment thread preservation (feature-flagged)
-        preserve_threads = config.preserve_comment_threads if hasattr(config, 'preserve_comment_threads') else False
+        preserve_threads = config.preserve_comment_threads if config and hasattr(config, 'preserve_comment_threads') else False
         
         if preserve_threads:
             from revue.comments.state_store import CommentStateStore

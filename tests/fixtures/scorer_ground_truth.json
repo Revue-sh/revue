@@ -1,0 +1,52 @@
+[
+  {
+    "comment": "Minimal finding — no useful content at all",
+    "finding": {
+      "issue": "Bug",
+      "details": "",
+      "recommendation": ""
+    },
+    "expected_clarity": 1,
+    "expected_actionability": 1
+  },
+  {
+    "comment": "Vague finding with short issue, no specifics",
+    "finding": {
+      "issue": "Code might break",
+      "details": "Consider fixing this",
+      "recommendation": "Fix it"
+    },
+    "expected_clarity": 2,
+    "expected_actionability": 2
+  },
+  {
+    "comment": "Mid-range: decent length and structure but vague language, no file refs",
+    "finding": {
+      "issue": "Null pointer might occur in user validation logic",
+      "details": "The validation step does not handle null inputs",
+      "recommendation": "Add a null check before calling validate()"
+    },
+    "expected_clarity": 3,
+    "expected_actionability": 3
+  },
+  {
+    "comment": "Good clarity with file path but vague word; excellent actionability with exact change",
+    "finding": {
+      "issue": "SQL injection vulnerability in src/api/users.py query builder",
+      "details": "The raw SQL concatenation could allow user input injection on line 42",
+      "recommendation": "Replace raw SQL with parameterized queries in src/api/users.py"
+    },
+    "expected_clarity": 4,
+    "expected_actionability": 5
+  },
+  {
+    "comment": "Excellent on both: specific, no vague words, file paths, code snippet, action verb",
+    "finding": {
+      "issue": "Missing input validation in src/auth/login.py allows empty passwords",
+      "details": "The login handler at line 23 accepts empty string passwords without checking length",
+      "recommendation": "Add a length check in `src/auth/login.py` to reject empty passwords: `if len(password) == 0: raise ValueError`"
+    },
+    "expected_clarity": 5,
+    "expected_actionability": 5
+  }
+]

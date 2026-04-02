@@ -181,11 +181,11 @@ def test_import_review_creates_review_and_findings(db_connection, temp_compariso
     mode_id = get_lookup_id(cursor, "review_modes", "baseline")
     
     # Import review
-    review_id = import_review(
+    review_id, _ = import_review(
         cursor, json_path, ticket_id, "test-branch",
         model_id, tier_id, mode_id
     )
-    
+
     assert review_id is not None
     
     # Verify review row
@@ -219,17 +219,17 @@ def test_import_review_idempotent(db_connection, temp_comparison_dir):
     mode_id = get_lookup_id(cursor, "review_modes", "baseline")
     
     # First import
-    review_id_1 = import_review(
+    review_id_1, _ = import_review(
         cursor, json_path, "REVUE-TEST-2", "test-branch",
         model_id, tier_id, mode_id
     )
-    
+
     # Second import (should return existing ID)
-    review_id_2 = import_review(
+    review_id_2, _ = import_review(
         cursor, json_path, "REVUE-TEST-2", "test-branch",
         model_id, tier_id, mode_id
     )
-    
+
     assert review_id_1 == review_id_2
     
     # Verify only one review exists

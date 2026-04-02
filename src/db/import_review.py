@@ -28,6 +28,8 @@ from typing import Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+from src.db.auto_scorer import score_findings
+
 logger = logging.getLogger(__name__)
 
 
@@ -294,11 +296,13 @@ def import_review(
     model_id: int,
     tier_id: int,
     mode_id: int
-) -> Optional[int]:
+) -> tuple[Optional[int], list[tuple[int, dict]]]:
     """
     Import a single review (baseline or contextual) into database.
-    
-    Returns review_id if successful, None if already imported (idempotent).
+
+    Returns (review_id, scored_findings) where scored_findings is a list of
+    (finding_id, finding_dict) tuples for auto-scoring. Empty list if already
+    imported (idempotent).
     """
     findings = load_findings(json_path)
     
@@ -314,7 +318,7 @@ def import_review(
     existing = cursor.fetchone()
     if existing:
         print(f"⚠️  Review already imported: {ticket_id} ({json_path.name})")
-        return existing['id']
+        return existing['id'], []
     
     # Insert review
     cursor.execute(
@@ -329,11 +333,12 @@ def import_review(
     )
     review_id = cursor.fetchone()['id']
     
-    # Insert findings
+    # Insert findings and collect (finding_id, finding_dict) for auto-scoring
+    scored_findings: list[tuple[int, dict]] = []
     for finding in findings:
         severity_name = finding.get("severity", "info").lower()
         severity_id = get_lookup_id(cursor, "severity_levels", severity_name)
-        
+
         cursor.execute(
             """
             INSERT INTO findings (
@@ -342,6 +347,7 @@ def import_review(
                 line_start, line_end
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 review_id,
@@ -356,7 +362,9 @@ def import_review(
                 finding.get("line_end")
             )
         )
-    
+        finding_id = cursor.fetchone()['id']
+        scored_findings.append((finding_id, finding))
+
     print(f"✅ Imported {len(findings)} findings from {json_path.name}")
 
     # Post findings as inline PR comments (CI only; non-fatal)
@@ -365,7 +373,7 @@ def import_review(
     except Exception as exc:
         logger.warning("Comment posting failed (non-fatal): %s", exc)
 
-    return review_id
+    return review_id, scored_findings
 
 
 def import_pr_description(
@@ -492,18 +500,21 @@ def import_comparison(
         contextual_mode_id = get_lookup_id(cursor, "review_modes", "contextual")
         
         # Import baseline review
-        baseline_review_id = import_review(
+        all_scored_findings: list[tuple[int, dict]] = []
+        baseline_review_id, baseline_findings = import_review(
             cursor, baseline_path, ticket_id, branch,
             model_id, tier_id, baseline_mode_id
         )
-        
+        all_scored_findings.extend(baseline_findings)
+
         # Import contextual review (if exists)
         contextual_review_id = None
         if contextual_path.exists():
-            contextual_review_id = import_review(
+            contextual_review_id, contextual_findings = import_review(
                 cursor, contextual_path, ticket_id, branch,
                 model_id, tier_id, contextual_mode_id
             )
+            all_scored_findings.extend(contextual_findings)
         
         # Link in comparison_runs table
         if baseline_review_id and contextual_review_id:
@@ -519,9 +530,13 @@ def import_comparison(
             )
             print(f"✅ Linked comparison run: baseline→contextual")
         
+        # Auto-score all imported findings (REVUE-93)
+        if all_scored_findings:
+            score_findings(cursor, all_scored_findings)
+
         # Import PR description
         import_pr_description(cursor, pr_desc_path, ticket_id)
-        
+
         conn.commit()
         print(f"\n✅ Import complete: {ticket_id}")
         

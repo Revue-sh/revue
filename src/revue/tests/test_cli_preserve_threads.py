@@ -117,13 +117,12 @@ def _run_post_to_bitbucket(
     fp_values = fingerprint_side_effect or (lambda fp, ln, iss: f"fp_{fp}_{ln}_{iss[:8]}")
 
     with (
-        patch("revue.cli.config", mock_config, create=True),
         patch("revue.core.bitbucket_adapter.BitbucketAdapter", return_value=adapter),
         patch("revue.comments.file_store.CommentFileStore", return_value=mock_file_store),
         patch("revue.comments.state_store.CommentStateStore", return_value=mock_state_store),
         patch("revue.comments.fingerprint.fingerprint", side_effect=fp_values),
     ):
-        _post_to_bitbucket(args, review_results)
+        _post_to_bitbucket(args, review_results, mock_config)
 
     return adapter, mock_state_store
 
