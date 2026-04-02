@@ -551,3 +551,65 @@ def test_pipeline_free_tier_ignores_pr_description(capsys):
 
     # Free tier runs _run_simplified — _inject_pr_context never called
     mock_inject.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# REVUE-103: All-agents-failed aborts with SystemExit(1)
+# ---------------------------------------------------------------------------
+
+def test_pipeline_aborts_when_all_agents_fail(capsys):
+    """TC3 (AC3): If ALL reviewer agents fail, pipeline raises SystemExit(1)."""
+    from unittest.mock import patch, MagicMock
+    import pytest
+
+    mock_client = MagicMock()
+    # Client raises a fatal error (e.g. credit exhausted)
+    mock_client.complete.side_effect = RuntimeError("Error code: 400 - credit balance too low")
+
+    pro_license = _license_info(
+        tier="pro",
+        agents_allowed=[
+            "orchestrator", "code-quality-expert", "security-expert",
+            "performance-expert", "architecture-expert", "consolidator",
+            "sage", "cleo", "nova",
+        ],
+    )
+    config = _config()
+    pipeline = ReviewPipeline(config, client=mock_client, license_info=pro_license)
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage"):
+        with pytest.raises(SystemExit) as exc_info:
+            pipeline.run("fake.diff")
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "All agents failed" in captured.out
+    assert "aborted" in captured.out
+
+
+def test_partial_failure_does_not_abort_agent_runner():
+    """TC4 (AC4): Only SOME agents fail — run_agents_parallel returns partial results."""
+    from revue.core.agent_runner import run_agents_parallel
+    from revue.core.models import AIReview
+
+    class GoodAgent:
+        name = "good"
+        def analyse(self, changes, shared=None):
+            return [AIReview(file_path="a.py", line_number=1, severity="low",
+                             issue="issue", suggestion="fix", confidence=0.8)]
+
+    class BadAgent:
+        name = "bad"
+        def analyse(self, changes, shared=None):
+            raise RuntimeError("api error")
+
+    result = run_agents_parallel([GoodAgent(), BadAgent()], [_fc("app.py")], shared=None)
+    successes = [r for r in result.agent_results if r.success]
+    failures  = [r for r in result.agent_results if not r.success]
+
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert successes[0].agent_name == "good"
+    assert len(successes[0].findings) == 1
+    assert failures[0].agent_name == "bad"

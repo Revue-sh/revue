@@ -140,19 +140,16 @@ class LoadedAgent:
                 flush=True,
             )
             return reviews
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
+            # Non-fatal: bad response shape/content — degrade gracefully
             print(
-                f"[revue]     [{self._def.name}] JSON parse error: {exc} "
+                f"[revue]     [{self._def.name}] response parse error ({type(exc).__name__}): {exc} "
                 f"— raw (first 200): {raw[:200]!r}",
                 flush=True,
             )
             return []
-        except Exception as exc:
-            print(
-                f"[revue]     [{self._def.name}] unexpected error: {exc}",
-                flush=True,
-            )
-            return []
+        # All other exceptions (HTTP errors, network failures, auth errors) propagate
+        # so agent_runner can correctly mark this agent as failed (success=False)
 
 
 # ---------------------------------------------------------------------------

@@ -155,14 +155,16 @@ def test_loaded_agent_analyse_returns_reviews():
     assert results[0].category == "zara"
 
 
-def test_loaded_agent_analyse_graceful_on_client_error():
+def test_loaded_agent_analyse_propagates_client_error():
+    """REVUE-103: Fatal client errors propagate — not swallowed."""
+    import pytest
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     c = MagicMock()
     c.complete.side_effect = RuntimeError("API down")
     agent = LoadedAgent(defn, c)
-    results = agent.analyse([_fc()])
-    assert results == []
+    with pytest.raises(RuntimeError, match="API down"):
+        agent.analyse([_fc()])
 
 
 def test_loaded_agent_analyse_graceful_on_bad_json():

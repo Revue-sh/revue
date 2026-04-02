@@ -475,6 +475,17 @@ class ReviewPipeline:
             flush=True,
         )
 
+        # AC3: if ALL reviewer agents failed, abort — do not produce a false-negative verdict
+        if reviewer_agents and not agents_used:
+            first_error = failed[0].error if failed else "unknown"
+            print(
+                f"[revue] ✗ All agents failed — review aborted.\n"
+                f"[revue]   First error: {first_error}\n"
+                f"[revue]   Check API credentials, credit balance, and network connectivity.",
+                flush=True,
+            )
+            raise SystemExit(1)
+
         # 5. Nova consolidation — deduplicate across agents
         print("[revue]   Consolidating findings (Nova)...", flush=True)
         all_findings = [

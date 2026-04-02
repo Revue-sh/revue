@@ -155,14 +155,15 @@ def test_loaded_agent_analyse_returns_reviews():
     assert results[0].category == "zara"
 
 
-def test_loaded_agent_analyse_graceful_on_client_error():
+def test_loaded_agent_analyse_propagates_client_error():
+    """REVUE-103: Fatal client errors (RuntimeError) now propagate — not swallowed."""
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     c = MagicMock()
     c.complete.side_effect = RuntimeError("API down")
     agent = LoadedAgent(defn, c)
-    results = agent.analyse([_fc()])
-    assert results == []
+    with pytest.raises(RuntimeError, match="API down"):
+        agent.analyse([_fc()])
 
 
 def test_loaded_agent_analyse_graceful_on_bad_json():
@@ -432,3 +433,101 @@ def test_load_all_agents_skips_disabled_custom(tmp_path):
 
     names = [a.name for a in agents]
     assert "disabled-agent" not in names
+
+
+# ---------------------------------------------------------------------------
+# REVUE-103: Fatal infrastructure errors must propagate (not be swallowed)
+# ---------------------------------------------------------------------------
+
+class _FakeHTTPError(Exception):
+    """Simulates an HTTP 400 error from the AI client (e.g. credit exhausted)."""
+    def __init__(self, code: int, msg: str):
+        self.code = code
+        super().__init__(f"Error code: {code} - {msg}")
+
+
+def test_analyse_propagates_http_error():
+    """TC1 (AC1): HTTP error from client propagates out of analyse() — not swallowed."""
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find issues.")
+    client = MagicMock()
+    client.complete.side_effect = _FakeHTTPError(400, "credit balance too low")
+    agent = LoadedAgent(defn, client)
+
+    with pytest.raises(_FakeHTTPError):
+        agent.analyse([_fc()])
+
+
+def test_analyse_propagates_runtime_error():
+    """AC1: Generic RuntimeError (e.g. network down) propagates."""
+    defn = AgentDefinition(name="kai", display_name="Kai", role="performance",
+                           system_prompt="Find issues.")
+    client = MagicMock()
+    client.complete.side_effect = RuntimeError("Connection refused")
+    agent = LoadedAgent(defn, client)
+
+    with pytest.raises(RuntimeError):
+        agent.analyse([_fc()])
+
+
+def test_analyse_graceful_on_json_parse_error():
+    """TC2 (AC2): JSONDecodeError returns [] — graceful degradation preserved."""
+    defn = AgentDefinition(name="maya", display_name="Maya", role="quality",
+                           system_prompt="Find issues.")
+    agent = LoadedAgent(defn, _mock_client("not valid json at all"))
+    results = agent.analyse([_fc()])
+    assert results == []
+
+
+def test_analyse_graceful_on_empty_response():
+    """AC2: Empty string response returns [] gracefully (JSONDecodeError caught)."""
+    defn = AgentDefinition(name="leo", display_name="Leo", role="arch",
+                           system_prompt="Find issues.")
+    c = MagicMock()
+    c.complete.return_value = ""  # explicitly empty — _mock_client("") is falsy, uses default
+    agent = LoadedAgent(defn, c)
+    results = agent.analyse([_fc()])
+    assert results == []
+
+
+def test_agent_runner_marks_failed_on_http_error():
+    """TC1 (AC1): agent_runner correctly sets success=False when analyse() raises."""
+    from revue.core.agent_runner import run_agents_parallel, AgentProtocol
+    from revue.core.models import AIReview
+
+    class FailingAgent:
+        name = "failing"
+        def analyse(self, changes, shared=None):
+            raise _FakeHTTPError(400, "credit exhausted")
+
+    result = run_agents_parallel([FailingAgent()], [_fc()], shared=None)
+    assert len(result.agent_results) == 1
+    r = result.agent_results[0]
+    assert r.success is False
+    assert "400" in r.error or "credit" in r.error.lower()
+    assert r.findings == []
+
+
+def test_agent_runner_partial_failure_continues():
+    """TC4 (AC4): one agent fails, others continue — partial results returned."""
+    from revue.core.agent_runner import run_agents_parallel
+    from revue.core.models import AIReview
+
+    class GoodAgent:
+        name = "good"
+        def analyse(self, changes, shared=None):
+            return [AIReview(file_path="a.py", line_number=1, severity="low",
+                             issue="issue", suggestion="fix", confidence=0.8)]
+
+    class BadAgent:
+        name = "bad"
+        def analyse(self, changes, shared=None):
+            raise RuntimeError("network down")
+
+    result = run_agents_parallel([GoodAgent(), BadAgent()], [_fc()], shared=None)
+    successes = [r for r in result.agent_results if r.success]
+    failures = [r for r in result.agent_results if not r.success]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert successes[0].agent_name == "good"
+    assert len(successes[0].findings) == 1
