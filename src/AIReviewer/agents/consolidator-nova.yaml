@@ -3,7 +3,7 @@ display_name: Nova (Consolidator)
 role: Consolidator — deduplicates and prioritises findings from all specialist agents
 version: "1.0"
 enabled: true
-severity_default: minor
+severity_default: low
 focus_areas:
   - deduplication
   - prioritisation

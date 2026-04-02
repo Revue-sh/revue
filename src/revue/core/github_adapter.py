@@ -167,22 +167,41 @@ class GitHubAdapter:
     # Backward-compat alias — remove in v2.0
     post_inline_comment = post_review_comment
 
-    def post_summary_comment(self, pr_id: int, body: str) -> bool:
+    def post_summary_comment(self, pr_id: int, body: str) -> str | None:
         """Post a top-level PR comment (not a review comment).
 
         Uses ``POST /repos/{owner}/{repo}/issues/{pr_id}/comments``.
 
-        Returns True on success, False on any error (logs the exception).
+        Returns the comment ID as a string on success, None on error.
         """
         try:
-            self._request(
+            resp = self._request(
                 "POST",
                 f"/repos/{self._repo}/issues/{pr_id}/comments",
                 {"body": body},
             )
-            return True
+            comment_id = resp.get("id")
+            return str(comment_id) if comment_id is not None else None
         except Exception as exc:
             logger.error("post_summary_comment failed for PR %d: %s", pr_id, exc)
+            return None
+
+    def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool:
+        """Update an existing issue comment in-place.
+
+        PATCH /repos/{owner}/{repo}/issues/comments/{comment_id}
+
+        Returns True on success, False on error.
+        """
+        try:
+            self._request(
+                "PATCH",
+                f"/repos/{self._repo}/issues/comments/{comment_id}",
+                {"body": body},
+            )
+            return True
+        except Exception as exc:
+            logger.error("update_comment failed for PR %d comment %s: %s", pr_id, comment_id, exc)
             return False
 
     def get_existing_comments(self, pr_id: int) -> list[dict]:

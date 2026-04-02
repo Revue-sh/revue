@@ -196,6 +196,7 @@ class CommentFileStore:
             remaining_count=s.get("remaining_count", 0),
             last_updated_at=self._str_to_dt(data.get("updated_at", data.get("created_at", datetime.now(timezone.utc).isoformat()))),
             created_at=self._str_to_dt(data.get("created_at", datetime.now(timezone.utc).isoformat())),
+            revision=s.get("revision", 1),
         )
 
     def create_or_update_summary(self, summary: SummaryComment) -> SummaryComment:
@@ -215,6 +216,7 @@ class CommentFileStore:
 
         data["summary"] = {
             "platform_comment_id": summary.platform_comment_id,
+            "revision": summary.revision,
             "total_issues": summary.total_issues,
             "fixed_count": summary.fixed_count,
             "discussed_count": summary.discussed_count,

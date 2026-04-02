@@ -178,7 +178,7 @@ def test_post_inline_comment_is_alias() -> None:
 
 
 def test_post_summary_comment_has_no_inline_key() -> None:
-    """post_summary_comment() posts without the inline key."""
+    """post_summary_comment() posts without the inline key and returns comment ID."""
     adapter = make_adapter()
     captured = {}
 
@@ -189,19 +189,50 @@ def test_post_summary_comment_has_no_inline_key() -> None:
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         result = adapter.post_summary_comment(pr_id=42, body="## Review Summary")
 
-    assert result is True
+    assert result == "2"
     assert "inline" not in captured["body"]
     assert captured["body"]["content"]["raw"] == "## Review Summary"
 
 
-def test_post_summary_comment_returns_false_on_error() -> None:
-    """post_summary_comment() returns False on API error."""
+def test_post_summary_comment_returns_none_on_error() -> None:
+    """post_summary_comment() returns None on API error."""
     import urllib.error
     adapter = make_adapter()
     with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
         url="", code=403, msg="Forbidden", hdrs=None, fp=None
     )):
         result = adapter.post_summary_comment(pr_id=1, body="hello")
+    assert result is None
+
+
+def test_update_comment_success() -> None:
+    """update_comment() sends PUT to correct endpoint and returns True."""
+    adapter = make_adapter()
+    captured = {}
+
+    def fake_urlopen(req):
+        captured["method"] = req.get_method()
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode())
+        return mock_response({"id": 99})
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        result = adapter.update_comment(pr_id=42, comment_id="99", body="Updated body")
+
+    assert result is True
+    assert captured["method"] == "PUT"
+    assert "/comments/99" in captured["url"]
+    assert captured["body"]["content"]["raw"] == "Updated body"
+
+
+def test_update_comment_returns_false_on_404() -> None:
+    """update_comment() returns False when comment not found (deleted)."""
+    import urllib.error
+    adapter = make_adapter()
+    with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
+        url="", code=404, msg="Not Found", hdrs=None, fp=None
+    )):
+        result = adapter.update_comment(pr_id=42, comment_id="99", body="Updated")
     assert result is False
 
 

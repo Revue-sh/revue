@@ -180,18 +180,43 @@ class BitbucketAdapter:
     # Backward-compat alias
     post_inline_comment = post_review_comment
 
-    def post_summary_comment(self, pr_id: int, body: str) -> bool:
+    def post_summary_comment(self, pr_id: int, body: str) -> str | None:
         """Post a top-level PR comment (not inline).
 
         POST /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments
         Omitting the ``inline`` key makes it a general comment.
+
+        Returns:
+            The comment ID as a string on success, None on failure.
         """
         payload: dict[str, Any] = {"content": {"raw": body}}
         try:
-            self._request("POST", f"/pullrequests/{pr_id}/comments", body=payload)
-            return True
+            resp = self._request("POST", f"/pullrequests/{pr_id}/comments", body=payload)
+            comment_id = resp.get("id")
+            return str(comment_id) if comment_id is not None else None
         except Exception as exc:
             _LOG.warning("post_summary_comment failed for PR %s: %s", pr_id, exc)
+            return None
+
+    def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool:
+        """Update an existing top-level PR comment in-place.
+
+        PUT /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments/{comment_id}
+
+        Args:
+            pr_id:      Pull request ID.
+            comment_id: The Bitbucket comment ID (as string).
+            body:       New markdown body for the comment.
+
+        Returns:
+            True on success, False on error (including 404 if comment was deleted).
+        """
+        payload: dict[str, Any] = {"content": {"raw": body}}
+        try:
+            self._request("PUT", f"/pullrequests/{pr_id}/comments/{comment_id}", body=payload)
+            return True
+        except Exception as exc:
+            _LOG.warning("update_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
             return False
 
     def get_existing_comments(self, pr_id: int) -> list[dict]:

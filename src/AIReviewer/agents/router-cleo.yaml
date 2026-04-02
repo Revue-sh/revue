@@ -3,7 +3,7 @@ display_name: Cleo (Orchestrator)
 role: Orchestrator — routes diffs to specialist agents, synthesises final review
 version: "1.0"
 enabled: true
-severity_default: major
+severity_default: medium
 focus_areas:
   - orchestration
   - routing

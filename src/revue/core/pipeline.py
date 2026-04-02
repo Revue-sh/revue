@@ -461,6 +461,14 @@ class ReviewPipeline:
                 reason = "timed out" if f.timed_out else f.error
                 print(f"[revue]   ⚠ Agent {f.agent_name} failed: {reason}", flush=True)
 
+        # Per-agent finding count — makes 0-finding runs diagnosable
+        for r in parallel_result.agent_results:
+            if r.success:
+                print(
+                    f"[revue]   [{r.agent_name}] → {len(r.findings)} finding(s)",
+                    flush=True,
+                )
+
         print(
             f"[revue]   {len(agents_used)} agent(s) succeeded, "
             f"{len(failed)} failed.",
