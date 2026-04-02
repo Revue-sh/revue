@@ -40,6 +40,7 @@ class PRComment:
     state: CommentState
     created_at: datetime
     updated_at: datetime
+    finding_fingerprint: str | None = None
 
 
 @dataclass

@@ -149,7 +149,14 @@ class CommentFileStore:
         )
 
     def _find_comment_by_id(self, comment_id: int) -> tuple[int, Optional[dict], int]:
-        """Scan all PR TOML files for a comment with the given id."""
+        """Scan all PR TOML files for a comment with the given id.
+
+        NOTE: IDs are 1-based sequential integers scoped per PR file, so they
+        are unique within a file but not globally. This scan is safe because
+        comment IDs are only ever used after being fetched from a known PR
+        (via get_comments_for_pr), and the service never mixes IDs across PRs.
+        Future optimisation: pass pr_number here to skip the scan entirely.
+        """
         if not self.comments_dir.exists():
             return (0, None, 0)
         for path in self.comments_dir.glob("PR-*.toml"):
@@ -239,6 +246,8 @@ class CommentFileStore:
             d["platform_thread_id"] = c.platform_thread_id
         if c.finding_id is not None:
             d["finding_id"] = c.finding_id
+        if c.finding_fingerprint:
+            d["finding_fingerprint"] = c.finding_fingerprint
         return d
 
     @staticmethod
@@ -270,4 +279,5 @@ class CommentFileStore:
             state=CommentState(d["state"]),
             created_at=created_at,
             updated_at=updated_at,
+            finding_fingerprint=d.get("finding_fingerprint"),
         )

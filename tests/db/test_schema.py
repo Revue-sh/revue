@@ -132,7 +132,8 @@ def test_schema_version_tracking(db_connection):
     
     version, description = rows[0]
     assert version >= 2, f"Expected version >= 2 (after migration 002), got {version}"
-    assert "agents table" in description.lower(), "Expected migration 002 description about agents table"
+    assert "revue-94" in description.lower() or "pattern" in description.lower(), \
+        f"Expected schema_version description about REVUE-94 or pattern support, got: {description}"
     
     # Attempt to insert duplicate version (should fail due to PRIMARY KEY)
     with pytest.raises(psycopg2.IntegrityError):

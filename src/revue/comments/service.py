@@ -7,6 +7,7 @@ from typing import Optional
 from .models import CommentState, Platform, PRComment, SummaryComment
 from .platform_adapter import get_platform_adapter
 from .file_store import CommentFileStore
+from .fingerprint import fingerprint
 
 
 class CommentResolutionService:
@@ -44,6 +45,67 @@ class CommentResolutionService:
                 self._process_unresolved_comment(comment, adapter)
 
         # Update summary
+        return self._update_summary(
+            platform, repo_owner, repo_name, pr_number, adapter
+        )
+
+    def process_new_review(
+        self,
+        platform: Platform,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        new_findings: list[dict],
+        commit_sha: str = "",
+        commit_author: str = ""
+    ) -> SummaryComment:
+        """
+        Compare old fingerprints to new review findings and auto-resolve fixed ones.
+
+        For each existing unresolved comment with a finding_fingerprint:
+        - If fingerprint NOT in new findings → auto-resolve
+        - If fingerprint still present → leave unresolved
+        """
+        adapter = get_platform_adapter(platform)
+        comments = self.repo.get_comments_for_pr(
+            platform, repo_owner, repo_name, pr_number
+        )
+
+        # Build set of fingerprints from new findings
+        new_fps: set[str] = set()
+        for f in new_findings:
+            line = f.get("line_number") or f.get("line_start", 0)
+            fp = fingerprint(f["file_path"], line, f.get("issue", ""))
+            new_fps.add(fp)
+
+        for comment in comments:
+            if comment.state != CommentState.UNRESOLVED:
+                continue
+            if not comment.finding_fingerprint:
+                continue
+
+            if comment.finding_fingerprint not in new_fps:
+                # Finding no longer present — auto-resolve
+                adapter.resolve_comment(
+                    comment.repo_owner,
+                    comment.repo_name,
+                    comment.platform_comment_id,
+                    comment.platform_thread_id,
+                )
+                msg = f"✅ Fixed in commit {commit_sha} by {commit_author}"
+                adapter.post_reply(
+                    comment.repo_owner,
+                    comment.repo_name,
+                    comment.platform_comment_id,
+                    comment.platform_thread_id,
+                    msg,
+                )
+                self.repo.transition_state(
+                    comment.id,
+                    CommentState.AUTO_RESOLVED,
+                    reason=msg,
+                )
+
         return self._update_summary(
             platform, repo_owner, repo_name, pr_number, adapter
         )
