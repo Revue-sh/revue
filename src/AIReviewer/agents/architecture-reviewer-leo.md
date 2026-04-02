@@ -4,7 +4,7 @@ display_name: Leo (Architecture Reviewer)
 role: Architecture specialist — evaluates design decisions, SOLID violations, and structural concerns
 version: "1.0"
 enabled: true
-severity_default: minor
+severity_default: low
 focus_areas:
   - SOLID principle violations
   - inappropriate coupling and missing abstraction layers

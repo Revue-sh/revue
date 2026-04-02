@@ -4,7 +4,7 @@ display_name: Maya (Code Quality Expert)
 role: Code quality specialist — identifies maintainability issues, bugs, and code smells
 version: "1.0"
 enabled: true
-severity_default: minor
+severity_default: low
 focus_areas:
   - logic errors and off-by-one mistakes
   - null/None/undefined dereferences

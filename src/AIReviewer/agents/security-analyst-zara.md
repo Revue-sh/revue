@@ -4,7 +4,7 @@ display_name: Zara (Security Analyst)
 role: Security specialist — identifies vulnerabilities, injection risks, and insecure patterns
 version: "1.0"
 enabled: true
-severity_default: major
+severity_default: medium
 focus_areas:
   - injection attacks (SQL, XSS, command injection, SSTI)
   - authentication and authorisation flaws

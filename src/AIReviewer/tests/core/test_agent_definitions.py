@@ -13,11 +13,21 @@ EXPECTED_AGENTS = ["cleo", "nova", "zara", "kai", "maya", "leo"]
 
 
 def _load(name: str) -> AgentDefinition:
-    for ext in [".yaml", ".yml", ".md"]:
-        p = AGENTS_DIR / f"{name}{ext}"
-        if p.exists():
-            return load_agent_definition(p)
-    raise FileNotFoundError(f"No agent definition file for '{name}' in {AGENTS_DIR}")
+    """Load an agent definition by its internal name: field, regardless of filename.
+
+    Agent files were renamed to {role-slug}-{codename}.ext in REVUE-99.
+    We scan all files and match by the name: field inside the definition.
+    """
+    for path in sorted(AGENTS_DIR.iterdir()):
+        if path.suffix not in {".yaml", ".yml", ".md"}:
+            continue
+        try:
+            defn = load_agent_definition(path)
+            if defn.name == name:
+                return defn
+        except Exception:
+            continue
+    raise FileNotFoundError(f"No agent definition with name='{name}' in {AGENTS_DIR}")
 
 
 @pytest.mark.parametrize("agent_name", EXPECTED_AGENTS)
@@ -44,8 +54,9 @@ def test_agent_is_enabled(agent_name):
 @pytest.mark.parametrize("agent_name", EXPECTED_AGENTS)
 def test_agent_valid_severity_default(agent_name):
     defn = _load(agent_name)
-    assert defn.severity_default in {"critical", "major", "minor", "suggestion"}, \
-        f"{agent_name}: invalid severity_default '{defn.severity_default}'"
+    valid = {"high", "medium", "low", "info"}
+    assert defn.severity_default in valid, \
+        f"{agent_name}: invalid severity_default '{defn.severity_default}' (expected one of {valid})"
 
 
 def test_all_six_agents_load_from_dir():
