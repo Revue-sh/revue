@@ -257,12 +257,12 @@ def cmd_review(
     # 9. Run pipeline
     print(f"[revue] Validating license...")
     try:
-        review_results, excluded = pipeline.run(str(diff_path), pr_description=pr_description)
+        review_results, excluded, files_reviewed = pipeline.run(str(diff_path), pr_description=pr_description)
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    total = len(review_results) + len(excluded)
+    total = files_reviewed + len(excluded)
     print(f"[revue] Found {total} file(s) in diff ({len(excluded)} excluded by filters)")
 
     # 9. Output
