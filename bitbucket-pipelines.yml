@@ -7,7 +7,7 @@ definitions:
         caches:
           - pip
         script:
-          - pip install openai anthropic httpx pyyaml pytest --quiet
+          - pip install openai anthropic httpx pyyaml tomli-w pytest --quiet
           - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q
 
     - step: &revue-review
@@ -16,7 +16,7 @@ definitions:
         caches:
           - pip
         script:
-          - pip install openai anthropic httpx pyyaml --quiet
+          - pip install openai anthropic httpx pyyaml tomli-w --quiet
           - git diff origin/${BITBUCKET_PR_DESTINATION_BRANCH}...HEAD > /tmp/revue_pr.diff
           - echo "[revue] Diff size $(wc -l < /tmp/revue_pr.diff) lines"
           - echo "[revue] Fetching PR description for context filtering..."
