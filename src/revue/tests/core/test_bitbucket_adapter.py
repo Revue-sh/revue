@@ -145,15 +145,15 @@ def test_post_review_comment_sends_inline_payload() -> None:
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         result = adapter.post_review_comment(pr_id=42, position=position, body="Fix this")
 
-    assert result is True
+    assert result == "1"  # Returns comment ID as string (REVUE-104)
     assert "/pullrequests/42/comments" in captured["url"]
     assert captured["body"]["content"]["raw"] == "Fix this"
     assert captured["body"]["inline"]["path"] == "src/main.py"
     assert captured["body"]["inline"]["to"] == 3
 
 
-def test_post_review_comment_returns_false_on_error() -> None:
-    """post_review_comment() returns False when API call fails."""
+def test_post_review_comment_returns_none_on_error() -> None:
+    """post_review_comment() returns None when API call fails (REVUE-104)."""
     import urllib.error
     adapter = make_adapter()
     position = DiffPosition(file_path="src/main.py", line_number=1)
@@ -161,7 +161,7 @@ def test_post_review_comment_returns_false_on_error() -> None:
         url="", code=500, msg="Server Error", hdrs=None, fp=None
     )):
         result = adapter.post_review_comment(pr_id=1, position=position, body="oops")
-    assert result is False
+    assert result is None
 
 
 def test_post_inline_comment_is_alias() -> None:
@@ -432,3 +432,44 @@ def test_parse_webhook_event_missing_pr_id() -> None:
     }
     result = BitbucketAdapter.parse_webhook_event(headers, payload)
     assert result is None
+
+
+# =====================================================================
+# resolve_inline_comment (REVUE-104)
+# =====================================================================
+
+
+def test_resolve_inline_comment_posts_reply_with_parent_id() -> None:
+    """resolve_inline_comment() POSTs to /comments with parent.id set to int(comment_id)."""
+    adapter = make_adapter()
+    captured = {}
+
+    def fake_urlopen(req):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode())
+        captured["method"] = req.get_method()
+        return mock_response({"id": 999})
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        result = adapter.resolve_inline_comment(
+            pr_id=42, comment_id="77", reply_body="Issue resolved."
+        )
+
+    assert result is True
+    assert "/pullrequests/42/comments" in captured["url"]
+    assert captured["method"] == "POST"
+    assert captured["body"]["content"]["raw"] == "Issue resolved."
+    assert captured["body"]["parent"]["id"] == 77  # int(comment_id)
+
+
+def test_resolve_inline_comment_returns_false_on_error() -> None:
+    """resolve_inline_comment() returns False when the API call fails."""
+    import urllib.error
+    adapter = make_adapter()
+    with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
+        url="", code=500, msg="Server Error", hdrs=None, fp=None
+    )):
+        result = adapter.resolve_inline_comment(
+            pr_id=42, comment_id="77", reply_body="Resolved"
+        )
+    assert result is False

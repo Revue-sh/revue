@@ -403,7 +403,7 @@ def test_github_get_diff_skips_binary_files() -> None:
 
 
 def test_github_post_inline_comment_success() -> None:
-    """post_inline_comment returns True when Review API responds successfully."""
+    """post_inline_comment returns comment ID string when Review API responds successfully (REVUE-104)."""
     review_body = json.dumps({"id": 10, "state": "COMMENTED"}).encode()
 
     adapter = GitHubAdapter(token="tok", repo="org/repo")
@@ -412,7 +412,7 @@ def test_github_post_inline_comment_success() -> None:
     with patch("urllib.request.urlopen", return_value=_make_resp(review_body)):
         result = adapter.post_inline_comment(10, position, "Looks good!")
 
-    assert result is True
+    assert result == "10"  # Returns comment ID as string (REVUE-104)
 
 
 def test_github_post_summary_comment_success() -> None:
@@ -547,7 +547,7 @@ def test_gitlab_get_diff_handles_renamed_file() -> None:
 
 
 def test_gitlab_post_inline_comment_with_position() -> None:
-    """post_inline_comment sends correct position structure and returns True."""
+    """post_inline_comment sends correct position structure and returns discussion ID (REVUE-104)."""
     adapter = GitLabAdapter(token="tok", project_id=42)
     pos = DiffPosition(
         file_path="src/app.py",
@@ -556,10 +556,10 @@ def test_gitlab_post_inline_comment_with_position() -> None:
         new_line=10,
     )
 
-    with patch.object(adapter, "_request", return_value={}) as mock_req:
+    with patch.object(adapter, "_request", return_value={"id": "disc-1"}) as mock_req:
         result = adapter.post_inline_comment(1, pos, "Fix this!")
 
-    assert result is True
+    assert result == "disc-1"  # Returns discussion ID as string (REVUE-104)
     method, path, body = mock_req.call_args[0]
     assert method == "POST"
     assert path.endswith("/discussions")
@@ -777,43 +777,43 @@ def test_gitlab_post_apply_suggestion_api_error() -> None:
 # =====================================================================
 
 def test_github_post_review_comment_canonical_name() -> None:
-    """post_review_comment (canonical name) works correctly."""
+    """post_review_comment (canonical name) returns comment ID string (REVUE-104)."""
     review_body = json.dumps({"id": 10, "state": "COMMENTED"}).encode()
     adapter = GitHubAdapter(token="tok", repo="org/repo")
     position = DiffPosition(file_path="src/app.py", line_number=5, position=3)
     with patch("urllib.request.urlopen", return_value=_make_resp(review_body)):
         result = adapter.post_review_comment(10, position, "Looks good!")
-    assert result is True
+    assert result == "10"
 
 
 def test_github_post_inline_comment_alias_still_works() -> None:
-    """post_inline_comment alias continues to work (backward compat)."""
+    """post_inline_comment alias continues to work, returns comment ID string (REVUE-104)."""
     review_body = json.dumps({"id": 11, "state": "COMMENTED"}).encode()
     adapter = GitHubAdapter(token="tok", repo="org/repo")
     position = DiffPosition(file_path="src/app.py", line_number=5, position=3)
     with patch("urllib.request.urlopen", return_value=_make_resp(review_body)):
         result = adapter.post_inline_comment(10, position, "Still works!")
-    assert result is True
+    assert result == "11"
 
 
 def test_gitlab_post_review_comment_canonical_name() -> None:
-    """GitLab post_review_comment (canonical name) posts to discussions API."""
+    """GitLab post_review_comment returns discussion ID string (REVUE-104)."""
     discussion_resp = json.dumps({"id": "abc123"}).encode()
     adapter = GitLabAdapter(token="tok", project_id=42)
     position = DiffPosition(file_path="lib/auth.rb", line_number=10)
     with patch("urllib.request.urlopen", return_value=_make_resp(discussion_resp)):
         result = adapter.post_review_comment(1, position, "Fix this")
-    assert result is True
+    assert result == "abc123"
 
 
 def test_gitlab_post_inline_comment_alias_still_works() -> None:
-    """GitLab post_inline_comment alias continues to work (backward compat)."""
+    """GitLab post_inline_comment alias returns discussion ID string (REVUE-104)."""
     discussion_resp = json.dumps({"id": "abc124"}).encode()
     adapter = GitLabAdapter(token="tok", project_id=42)
     position = DiffPosition(file_path="lib/auth.rb", line_number=10)
     with patch("urllib.request.urlopen", return_value=_make_resp(discussion_resp)):
         result = adapter.post_inline_comment(1, position, "Still works!")
-    assert result is True
+    assert result == "abc124"
 
 
 # =====================================================================
@@ -906,4 +906,134 @@ def test_gitlab_set_review_status_api_error_returns_false() -> None:
     adapter = GitLabAdapter(token="tok", project_id=42)
     with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
         result = adapter.set_review_status(5, "unapproved")
+    assert result is False
+
+
+# =====================================================================
+# [REVUE-104] GitHub — resolve_inline_comment
+# =====================================================================
+
+
+def test_github_resolve_inline_comment_patches_and_replies() -> None:
+    """resolve_inline_comment calls PATCH on /pulls/comments/{id} with resolved=True
+    and POSTs reply when reply_body is non-empty."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    calls = []
+
+    def mock_request(method, path, body=None):
+        calls.append((method, path, body))
+        return {}
+
+    with patch.object(adapter, "_request", side_effect=mock_request):
+        result = adapter.resolve_inline_comment(
+            pr_id=10, comment_id="55", reply_body="Fixed!"
+        )
+
+    assert result is True
+    assert len(calls) == 2
+
+    # First call: POST reply
+    assert calls[0][0] == "POST"
+    assert "/pulls/10/comments/55/replies" in calls[0][1]
+    assert calls[0][2] == {"body": "Fixed!"}
+
+    # Second call: PATCH to resolve
+    assert calls[1][0] == "PATCH"
+    assert "/pulls/comments/55" in calls[1][1]
+    assert calls[1][2] == {"resolved": True}
+
+
+def test_github_resolve_inline_comment_no_reply_body() -> None:
+    """resolve_inline_comment skips reply POST when reply_body is empty."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    calls = []
+
+    def mock_request(method, path, body=None):
+        calls.append((method, path, body))
+        return {}
+
+    with patch.object(adapter, "_request", side_effect=mock_request):
+        result = adapter.resolve_inline_comment(
+            pr_id=10, comment_id="55", reply_body=""
+        )
+
+    assert result is True
+    # Only the PATCH call, no reply
+    assert len(calls) == 1
+    assert calls[0][0] == "PATCH"
+    assert calls[0][2] == {"resolved": True}
+
+
+def test_github_resolve_inline_comment_returns_false_on_error() -> None:
+    """resolve_inline_comment returns False when PATCH fails."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    with patch.object(adapter, "_request", side_effect=Exception("Network")):
+        result = adapter.resolve_inline_comment(
+            pr_id=10, comment_id="55", reply_body=""
+        )
+    assert result is False
+
+
+# =====================================================================
+# [REVUE-104] GitLab — resolve_inline_comment
+# =====================================================================
+
+
+def test_gitlab_resolve_inline_comment_puts_and_replies() -> None:
+    """resolve_inline_comment calls PUT on /discussions/{id} with resolved=True
+    and POSTs reply note when reply_body is non-empty."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    calls = []
+
+    def mock_request(method, path, body=None):
+        calls.append((method, path, body))
+        return {}
+
+    with patch.object(adapter, "_request", side_effect=mock_request):
+        result = adapter.resolve_inline_comment(
+            pr_id=5, comment_id="disc-abc", reply_body="All good now."
+        )
+
+    assert result is True
+    assert len(calls) == 2
+
+    # First call: POST reply note
+    assert calls[0][0] == "POST"
+    assert "/merge_requests/5/discussions/disc-abc/notes" in calls[0][1]
+    assert calls[0][2] == {"body": "All good now."}
+
+    # Second call: PUT to resolve
+    assert calls[1][0] == "PUT"
+    assert "/merge_requests/5/discussions/disc-abc" in calls[1][1]
+    assert calls[1][2] == {"resolved": True}
+
+
+def test_gitlab_resolve_inline_comment_no_reply_body() -> None:
+    """resolve_inline_comment skips reply POST when reply_body is empty."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    calls = []
+
+    def mock_request(method, path, body=None):
+        calls.append((method, path, body))
+        return {}
+
+    with patch.object(adapter, "_request", side_effect=mock_request):
+        result = adapter.resolve_inline_comment(
+            pr_id=5, comment_id="disc-abc", reply_body=""
+        )
+
+    assert result is True
+    # Only the PUT call, no reply
+    assert len(calls) == 1
+    assert calls[0][0] == "PUT"
+    assert calls[0][2] == {"resolved": True}
+
+
+def test_gitlab_resolve_inline_comment_returns_false_on_error() -> None:
+    """resolve_inline_comment returns False when PUT fails."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch.object(adapter, "_request", side_effect=Exception("Network")):
+        result = adapter.resolve_inline_comment(
+            pr_id=5, comment_id="disc-abc", reply_body=""
+        )
     assert result is False

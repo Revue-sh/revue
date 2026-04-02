@@ -1,16 +1,16 @@
-# Session Handoff -- 2026-04-02
-**Duration:** 08:38 - 11:15 GMT (~2h 37min)
+# Session Handoff - 2026-04-02
+**Duration:** 14:00 - 15:55 GMT (~2h)
 **Agent:** BMad Master
 
 ---
 
 ## Session Summary
 
-**Two stories implemented, two P1 bugs caught and fixed, multiple process regressions recovered.**
-
-- REVUE-98: Auto-resolve inline comments (PR #28 open)
-- REVUE-99: Agent name mapping + orchestration fixes (PR #29 open)
-- Process recovery: SDLC violations, missing memory, Jira API migration, Bitbucket auth fix
+REVUE-104 (re-review inline comment thread preservation) implemented and pushed to PR #32.
+Architecture decisions: JSON for internal state tracking, TOML reserved for future AI agent
+context, feature-flagged behind `preserve_comment_threads: false` (opt-in). All three VCS
+platforms (Bitbucket, GitHub, GitLab) supported. 10 orphaned Jira tickets linked to correct
+Epics as a housekeeping fix. 1087 tests passing.
 
 ---
 
@@ -18,121 +18,132 @@
 
 | Metric | Value |
 |--------|-------|
-| **Stories complete** | 7/9 in Epic E8 (REVUE-88 through 92 + partial 98/99) |
-| **Tests passing** | 540 (src/revue/tests/) + 66 (workspace tests/) |
-| **Open PRs** | PR #28 (REVUE-98), PR #29 (REVUE-99) |
-| **Jira board** | https://urukia.atlassian.net/jira/software/projects/REVUE/boards/101 |
+| Tests passing | 1004 src + 83 workspace = 1087 total |
+| Open PRs | #32 (REVUE-104) - awaiting CI + merge |
+| Epic REVUE-87 | 9/15 stories done (REVUE-93, REVUE-94, REVUE-95, REVUE-104 remain) |
+| Jira board | https://urukia.atlassian.net/jira/software/projects/REVUE/boards/101 |
+
+---
+
+## Completed This Session
+
+- **Jira housekeeping:** 10 orphaned tickets linked to Epics (REVUE-84 to REVUE-87/E8, REVUE-77/78/83/100/101 to REVUE-49/E7)
+- **REVUE-104 implementation** (2 commits, PR #32):
+  - `a1fc50d` - feat: preserve inline comment threads across re-reviews
+  - `59cb616` - test: DoD-required tests for comment thread preservation
 
 ---
 
 ## What We Built (Session Highlights)
 
-### REVUE-98: Comment Auto-Resolution (`src/revue/comments/`)
-- Architecture decision: comment state stored in `.revue/comments/PR-{n}.toml`
-  in the CUSTOMER'S repository -- NOT in Revue's Postgres DB (privacy-first)
-- `file_store.py` -- TOML R/W with atomic writes (`.tmp` + `os.replace()`)
-- `fingerprint.py` -- sha256[:16] finding identity for cross-review matching
-- `service.py` -- `process_pr_scan()` + `process_new_review()` with fingerprint diff
-- `resolve.py` -- CLI entry point for CI/CD integration
-- Wired into `import_review.py` and `run-comparison.sh`
-- 52 tests, all ACs met
+### REVUE-104 - Re-review Preserves Inline Comment Threads
 
-### REVUE-99: Agent Orchestration Fixes (`src/revue/core/pipeline.py`)
-- **Root cause of 0 findings on paid tier:** `TIER_ALL_AGENTS` used display names
-  (`code-quality-expert`) but agent files used codenames (`maya`) -- all 4 specialists
-  silently dropped, only Cleo (router) + Nova (consolidator) ran
-- `_LICENCE_NAME_TO_AGENT` mapping dict resolves names before the filter
-- `_INFRASTRUCTURE_AGENTS` frozenset strips Cleo/Nova from `run_agents_parallel`
-  (Nova was timing out as a reviewer, producing 0 findings to consolidate)
-- `pipeline.run()` now returns 3-tuple including `files_reviewed` count
-- Shared analysis error surfaced in logs (was silently "unavailable")
-- "Found 0 file(s) in diff" display bug fixed
-- Agent files renamed: `{role-slug}-{codename}.ext` for self-documenting directory
-- Role-aware log output: "Agents loaded (4): Maya (Code Quality Expert) [Code quality specialist]..."
-- 540 tests passing across full suite
+**Architecture decisions made:**
+- JSON (`.revue/state/comments.json`) for internal state - deterministic, fast, no parse risk
+- TOML stays for AI agent context only (future story when agents need review history)
+- Feature flag `preserve_comment_threads: false` (default off, opt-in per customer)
+- State committed to git (not gitignored) when flag enabled - customer controls via `.gitignore`
+- Future `--state-backend` flag (REVUE-107) for S3/postgres alternatives
 
-### Process Fixes
-- Session recovery from April 1 SDLC violation (WIP committed directly to main)
-- Created proper feature branch, reset main to last clean merge
-- Added local git pre-commit/pre-push hooks blocking direct commits to main
-- Bitbucket server-side branch protection enabled via UI
-- Jira search API migrated: old `/rest/api/3/search` is HTTP 410, new is POST `/rest/api/3/search/jql`
-- Bitbucket auth clarified: Bearer token from `~/.zshenv`, git push via `x-token-auth:$TOKEN`
-- Lesson: must run `src/revue/tests/` as well as `tests/` before every push
+**Implementation:**
+- `CommentStateStore` (new) - JSON state store at `src/revue/comments/state_store.py`
+- `VCSAdapter.post_review_comment()` - return type changed `bool -> str | None` (returns comment ID)
+- `VCSAdapter.post_summary_comment()` - same return type fix for consistency
+- `VCSAdapter.resolve_inline_comment()` - new method added to protocol + all 3 adapters:
+  - Bitbucket: POST reply with `parent.id` (no native resolution)
+  - GitHub: PATCH `/pulls/comments/{id}` with `resolved: true` + optional reply
+  - GitLab: PUT `/discussions/{id}` with `resolved: true` + optional reply
+- `update_comment()` added to AIReviewer GitHub/GitLab adapters (parity fix)
+- `cli.py` preservation loop: AC1 skip re-post, AC2 store ID, AC3 auto-resolve fixed findings
+- `CommentState.ACTIVE` + `RESOLVED` added to enum (latent bug fixed by tests)
+- AIReviewer fully mirrored (dual codebase parity)
+
+**Tests added (22 new, all passing):**
+- `src/revue/tests/comments/test_comment_state_store.py` - 9 tests
+- `src/revue/tests/test_cli_preserve_threads.py` - 5 tests
+- `src/revue/tests/core/test_bitbucket_adapter.py` - +2 tests
+- `src/revue/tests/core/test_vcs_adapters.py` - +6 tests (GitHub + GitLab)
 
 ---
 
-## Remaining Work
+## Remaining Work - Next Steps
 
-**Immediate (next session):**
-1. Merge PR #29 (REVUE-99) -- wait for CI green, then merge
-2. Merge PR #28 (REVUE-98) -- after #29 is on main, rebase if needed
-3. Investigate shared analysis recurring failure -- now logs the actual error, check next CI run
-4. Transition both tickets to Done in Jira after merges
+1. **REVUE-104 PR #32** - Awaiting CI green + Revue self-review. Merge when CI passes.
+   - First action: check CI status at https://bitbucket.org/cbscd/revue/pull-requests/32
+   - Transition REVUE-104 to Done in Jira after merge
 
-**Next stories:**
-- REVUE-97: Enhanced PR summary comment (medium priority, high customer value)
-- REVUE-93: Auto-heuristic quality scorer (P2, 3 points)
-- REVUE-94: .revue.yml pattern support (P2, 5 points)
+2. **REVUE-93** (P2, 3pts) - Auto-heuristic quality scorer
+   - Completes Epic REVUE-87 (along with REVUE-94)
+   - First action: read REVUE-93 ticket, spawn John to verify DoR
+
+3. **REVUE-94** (P2, 5pts) - `.revue.yml` allowed/disallowed patterns support
+   - First action: read REVUE-94 ticket, spawn John to verify DoR
+
+4. **REVUE-95** (To Do) - Enhanced orchestration logging with tier-based detail levels
+   - First action: read REVUE-95 ticket
+
+5. **REVUE-102** (Done in Jira but not implemented) - Retire AIReviewer, consolidate into `revue/core/`
+   - Until done: ALL fixes to shared modules apply to BOTH `src/revue/core/` AND `src/AIReviewer/core/`
+   - Dedicated session recommended
+
+6. **REVUE-100** (Low) - Fix main branch pipeline phantom self-hosted runner labels
 
 ---
 
 ## Key Architectural Decisions (Session)
 
-1. **Comment state is file-based, not DB** -- `.revue/comments/PR-{n}.toml` in customer
-   repo. Postgres stays for internal metrics only (aggregate learning, false positive rates).
-   Reason: privacy-first, zero hosting cost, Git-native, no SOC2/GDPR burden.
-
-2. **Agent file naming: `{role-slug}-{codename}.ext`** -- e.g. `code-quality-expert-maya.md`.
-   Internal `name:` field unchanged (runtime unaffected). Makes `ls` self-documenting.
-
-3. **`pipeline.run()` returns 3-tuple** -- `(results, excluded, files_reviewed_count)`.
-   Needed because orchestration mode produces one result per finding, not per file.
-
-4. **`_INFRASTRUCTURE_AGENTS` frozenset** -- Cleo and Nova must never enter
-   `run_agents_parallel`. They are called separately as router and consolidator.
-
-5. **Party mode role discipline** -- Amelia (dev) implements code fixes.
-   Orchestrator coordinates. Others (John, Winston, Mary, Bob) review/critique only.
+1. **JSON for state, TOML for AI context** - Internal comment tracking uses JSON (`.revue/state/`). TOML stays for future AI agent context injection. Clean separation of concerns.
+2. **State committed to git by default** - When `preserve_comment_threads: true`, `.revue/state/` must be committed. Customer adds unignore to `.gitignore`. Future REVUE-107 adds backend alternatives.
+3. **Feature flag default OFF** - `preserve_comment_threads: false` is backwards-compatible. Customers opt in explicitly.
+4. **All 3 platforms at once** - No Bitbucket-only shortcuts. GitHub and GitLab supported in same PR to avoid tech debt accumulation pre-MVP.
+5. **Breaking return type change** - `post_review_comment()` and `post_summary_comment()` return `str | None` (comment ID) instead of `bool`. Clean break preferred over workarounds.
 
 ---
 
-## What's Ready to Ship
+## Critical Notes for Next Session
 
-- PR #29 fixes a silent P1 that produced 0 findings on every paid-tier review
-- PR #28 delivers the comment auto-resolution feature (REVUE-98)
-- Both need CI green + merge before shipping
+**Dual codebase until REVUE-102:** Any fix to shared modules applies to BOTH `src/revue/core/` AND `src/AIReviewer/core/`.
+
+**SDLC:** Spawn real agents for every role - do not roleplay John, Winston, Bob, or Amelia directly.
+- John (PM) drafts stories -> spawn John
+- Winston (Architect) reviews technical ACs -> spawn Winston
+- Bob (SM) gates DoR and DoD -> spawn Bob
+- Amelia (Dev) implements -> spawn Amelia (Claude Code via coding-agent skill)
+
+**Test command (both suites):**
+```bash
+cd src && PYTHONPATH=$(pwd) pytest revue/tests/ AIReviewer/tests/ -q
+pytest tests/ -q
+```
+
+**Anthropic credits:** Top up at console.anthropic.com if `revue-review` CI step shows 401/credit errors.
+
+---
+
+## Session Stats
+- Duration: ~2h
+- Stories completed: REVUE-104 (implementation + tests)
+- Commits: 2 on feat/REVUE-104-comment-thread-preservation
+- Tests: 1087 passing (up from 1065)
+- PRs opened: #32
+- New tests: 22
 
 ---
 
 ## Continuation Prompt (Next Session)
 
 ```
-Read docs/session-continuation.md for full context.
+Read docs/HANDOFF.md for full context.
 
-Two PRs need merging: PR #29 (REVUE-99, agent fix) FIRST, then PR #28 (REVUE-98).
-After merging, check pipeline log for "Shared analysis unavailable (" to diagnose recurring failure.
-Next story: REVUE-97 (Enhanced PR summary comment).
-Always run both test suites before pushing:
-  pytest tests/ -q
-  cd src && PYTHONPATH=$(pwd) pytest revue/tests/ -q
+PR #32 (REVUE-104) is open - check CI status and merge if green, then close Jira ticket.
+
+Priority order after merge:
+1. REVUE-93 - auto-heuristic quality scorer (completes Epic REVUE-87)
+2. REVUE-94 - .revue.yml pattern support (completes Epic REVUE-87)
+3. REVUE-102 - retire AIReviewer (dedicated session)
+
+SDLC: spawn real agents for every role. BMad Master orchestrates only - never writes
+code, runs tests, or fills scorecards directly.
+
+Until REVUE-102: fixes to shared modules apply to BOTH revue/core/ AND AIReviewer/core/.
 ```
-
----
-
-## Session Stats
-
-- **Duration:** ~2h 37min
-- **Stories worked:** 2 (REVUE-98, REVUE-99)
-- **Bugs fixed:** 5 (agent mapping, Nova in parallel pool, shared analysis logging,
-  file count display, pipeline 3-tuple return)
-- **Process fixes:** 6 (SDLC recovery, branch protection, Jira API, Bitbucket auth,
-  test suite coverage, party mode roles)
-- **Commits:** 3 on feature branches
-- **Tests:** 540 + 66 passing
-- **PRs opened:** #28, #29
-- **Party mode agents used:** John, Winston, Mary, Bob, Amelia
-
----
-
-**Next session: Merge PRs #29 and #28, then start REVUE-97.**

@@ -15,6 +15,8 @@ class Platform(Enum):
 
 class CommentState(Enum):
     """Comment resolution states."""
+    ACTIVE = "active"
+    RESOLVED = "resolved"
     UNRESOLVED = "unresolved"
     AUTO_RESOLVED = "auto_resolved"
     MANUALLY_RESOLVED_WITH_REPLY = "manually_resolved_with_reply"

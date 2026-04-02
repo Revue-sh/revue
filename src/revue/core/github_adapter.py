@@ -134,14 +134,16 @@ class GitHubAdapter:
 
     def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
-    ) -> bool:
+    ) -> str | None:
         """Post an inline review comment via the GitHub Review API.
 
         Uses ``POST /repos/{owner}/{repo}/pulls/{pr_id}/reviews`` with
         ``event=COMMENT`` so the comment is published immediately without
         requiring a pending review.
 
-        Returns True on success, False on any error (logs the exception).
+        Returns:
+            The review comment ID as a string on success, None on failure.
+            GitHub returns the ID in the first comment of the ``comments`` array.
         """
         payload: dict[str, Any] = {
             "event": "COMMENT",
@@ -154,15 +156,18 @@ class GitHubAdapter:
             ],
         }
         try:
-            self._request(
+            resp = self._request(
                 "POST",
                 f"/repos/{self._repo}/pulls/{pr_id}/reviews",
                 payload,
             )
-            return True
+            # GitHub returns the review object; comments are nested
+            comments = resp.get("comments", []) if isinstance(resp, dict) else []
+            comment_id = comments[0].get("id") if comments else resp.get("id")
+            return str(comment_id) if comment_id is not None else None
         except Exception as exc:
             logger.error("post_review_comment failed for PR %d: %s", pr_id, exc)
-            return False
+            return None
 
     # Backward-compat alias — remove in v2.0
     post_inline_comment = post_review_comment
@@ -302,6 +307,50 @@ class GitHubAdapter:
             True if the signature is valid.
         """
         return self._verify_webhook_signature_with_secret(payload, signature, self._webhook_secret)
+
+    def resolve_inline_comment(
+        self, pr_id: int, comment_id: str, reply_body: str
+    ) -> bool:
+        """Resolve a GitHub review comment thread.
+
+        GitHub has native thread resolution via the Discussions API:
+        PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}
+        with { "resolved": true }
+
+        Optionally posts a reply before resolving (for context).
+
+        Args:
+            pr_id:       Pull request ID (unused for resolution, kept for protocol compliance).
+            comment_id:  The GitHub review comment ID.
+            reply_body:  Optional reply message before resolving.
+
+        Returns:
+            True on success, False on error.
+        """
+        # Post reply if provided
+        if reply_body:
+            try:
+                self._request(
+                    "POST",
+                    f"/repos/{self._repo}/pulls/{pr_id}/comments/{comment_id}/replies",
+                    {"body": reply_body},
+                )
+            except Exception as exc:
+                logger.warning("resolve_inline_comment: reply failed for PR %d comment %s: %s", pr_id, comment_id, exc)
+                # Continue to resolve even if reply fails
+
+        # Resolve the thread
+        try:
+            self._request(
+                "PATCH",
+                f"/repos/{self._repo}/pulls/comments/{comment_id}",
+                {"resolved": True},
+            )
+            logger.info("Resolved comment thread %s on PR %d", comment_id, pr_id)
+            return True
+        except Exception as exc:
+            logger.warning("resolve_inline_comment failed for PR %d comment %s: %s", pr_id, comment_id, exc)
+            return False
 
     @staticmethod
     def _verify_webhook_signature_with_secret(

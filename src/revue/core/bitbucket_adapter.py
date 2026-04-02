@@ -156,12 +156,15 @@ class BitbucketAdapter:
 
     def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
-    ) -> bool:
+    ) -> str | None:
         """Post an inline comment on a PR.
 
         POST /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments
         Bitbucket inline comments use an ``inline`` key with ``path`` and ``to``
         (the new-file line number).
+
+        Returns:
+            The Bitbucket comment ID as a string on success, None on failure.
         """
         payload: dict[str, Any] = {
             "content": {"raw": body},
@@ -171,11 +174,12 @@ class BitbucketAdapter:
             },
         }
         try:
-            self._request("POST", f"/pullrequests/{pr_id}/comments", body=payload)
-            return True
+            resp = self._request("POST", f"/pullrequests/{pr_id}/comments", body=payload)
+            comment_id = resp.get("id")
+            return str(comment_id) if comment_id is not None else None
         except Exception as exc:
             _LOG.warning("post_review_comment failed for PR %s: %s", pr_id, exc)
-            return False
+            return None
 
     # Backward-compat alias
     post_inline_comment = post_review_comment
@@ -269,6 +273,36 @@ class BitbucketAdapter:
             ).hexdigest()
         )
         return hmac.compare_digest(expected, signature)
+
+    def resolve_inline_comment(
+        self, pr_id: int, comment_id: str, reply_body: str
+    ) -> bool:
+        """Resolve an inline comment thread via reply (Bitbucket has no native resolution).
+
+        Bitbucket does not have a native "resolve thread" API like GitHub/GitLab.
+        We post a reply to the existing comment as a workaround.
+
+        POST /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments/{comment_id}
+
+        Args:
+            pr_id:       Pull request ID.
+            comment_id:  The Bitbucket comment ID to reply to.
+            reply_body:  The reply message (e.g. "✅ Issue appears to be resolved").
+
+        Returns:
+            True on success, False on error.
+        """
+        payload: dict[str, Any] = {
+            "content": {"raw": reply_body},
+            "parent": {"id": int(comment_id)},
+        }
+        try:
+            self._request("POST", f"/pullrequests/{pr_id}/comments", body=payload)
+            _LOG.info("Posted resolution reply to comment %s on PR %s", comment_id, pr_id)
+            return True
+        except Exception as exc:
+            _LOG.warning("resolve_inline_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
+            return False
 
     # ------------------------------------------------------------------
     # Bitbucket-specific extras

@@ -56,9 +56,17 @@ class VCSAdapter(Protocol):
 
     def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
-    ) -> bool: ...
+    ) -> str | None:
+        """Post an inline review comment.
 
-    def post_summary_comment(self, pr_id: int, body: str) -> bool: ...
+        Returns:
+            The platform comment ID as a string on success, None on failure.
+        """
+        ...
+
+    def post_summary_comment(self, pr_id: int, body: str) -> str | None: ...
+
+    def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool: ...
 
     def get_existing_comments(self, pr_id: int) -> list[dict]: ...
 
@@ -78,6 +86,26 @@ class VCSAdapter(Protocol):
         Returns:
             True if the signature is valid, False otherwise.
             Must use a timing-safe comparison (hmac.compare_digest).
+        """
+        ...
+
+    def resolve_inline_comment(
+        self, pr_id: int, comment_id: str, reply_body: str
+    ) -> bool:
+        """Resolve an inline comment thread (platform-specific behavior).
+
+        Args:
+            pr_id:       Pull/merge request ID.
+            comment_id:  Platform-specific comment identifier.
+            reply_body:  Optional message to post when resolving.
+
+        Platform behavior:
+            - GitHub: Mark discussion thread as resolved + optional reply.
+            - GitLab: Mark discussion as resolved + optional reply.
+            - Bitbucket: Post reply (no native resolution, reply-based UX).
+
+        Returns:
+            True if successful, False otherwise.
         """
         ...
 

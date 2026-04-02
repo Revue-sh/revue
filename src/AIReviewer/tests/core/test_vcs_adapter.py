@@ -68,17 +68,20 @@ def test_diff_position_gitlab_fields() -> None:
 
 
 class _MinimalAdapter:
-    """Minimal concrete class satisfying VCSAdapter structurally (all 6 methods)."""
+    """Minimal concrete class satisfying VCSAdapter structurally (all methods)."""
 
     def get_diff(self, pr_id: int) -> list[FileChange]:
         return []
 
     def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
-    ) -> bool:
-        return True
+    ) -> str | None:
+        return "1"
 
-    def post_summary_comment(self, pr_id: int, body: str) -> bool:
+    def post_summary_comment(self, pr_id: int, body: str) -> str | None:
+        return "1"
+
+    def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool:
         return True
 
     def get_existing_comments(self, pr_id: int) -> list[dict]:
@@ -92,16 +95,21 @@ class _MinimalAdapter:
     def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
         return True
 
+    def resolve_inline_comment(self, pr_id: int, comment_id: str, reply_body: str) -> bool:
+        return True
+
 
 class _MissingWebhookAdapter:
     """Adapter that omits verify_webhook_signature — must NOT satisfy protocol."""
 
     def get_diff(self, pr_id: int) -> list[FileChange]: return []
-    def post_review_comment(self, pr_id, position, body) -> bool: return True
-    def post_summary_comment(self, pr_id, body) -> bool: return True
+    def post_review_comment(self, pr_id, position, body) -> str | None: return "1"
+    def post_summary_comment(self, pr_id, body) -> str | None: return "1"
+    def update_comment(self, pr_id, comment_id, body) -> bool: return True
     def get_existing_comments(self, pr_id) -> list[dict]: return []
     def resolve_position(self, file_path, line_number, diff) -> DiffPosition:
         return DiffPosition(file_path=file_path, line_number=line_number)
+    def resolve_inline_comment(self, pr_id, comment_id, reply_body) -> bool: return True
 
 
 def test_vcs_adapter_protocol_structural() -> None:

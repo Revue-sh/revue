@@ -403,7 +403,7 @@ def test_github_get_diff_skips_binary_files() -> None:
 
 
 def test_github_post_inline_comment_success() -> None:
-    """post_inline_comment returns True when Review API responds successfully."""
+    """post_inline_comment returns comment ID string when Review API responds successfully (REVUE-104)."""
     review_body = json.dumps({"id": 10, "state": "COMMENTED"}).encode()
 
     adapter = GitHubAdapter(token="tok", repo="org/repo")
@@ -412,7 +412,7 @@ def test_github_post_inline_comment_success() -> None:
     with patch("urllib.request.urlopen", return_value=_make_resp(review_body)):
         result = adapter.post_inline_comment(10, position, "Looks good!")
 
-    assert result is True
+    assert result == "10"  # Returns comment ID as string (REVUE-104)
 
 
 def test_github_post_summary_comment_success() -> None:
@@ -424,7 +424,7 @@ def test_github_post_summary_comment_success() -> None:
     with patch("urllib.request.urlopen", return_value=_make_resp(comment_body)):
         result = adapter.post_summary_comment(10, "Overall LGTM.")
 
-    assert result is True
+    assert result == "99"  # Returns comment ID as string
 
 
 def test_github_get_existing_comments() -> None:
@@ -547,7 +547,7 @@ def test_gitlab_get_diff_handles_renamed_file() -> None:
 
 
 def test_gitlab_post_inline_comment_with_position() -> None:
-    """post_inline_comment sends correct position structure and returns True."""
+    """post_inline_comment sends correct position structure and returns discussion ID (REVUE-104)."""
     adapter = GitLabAdapter(token="tok", project_id=42)
     pos = DiffPosition(
         file_path="src/app.py",
@@ -556,10 +556,10 @@ def test_gitlab_post_inline_comment_with_position() -> None:
         new_line=10,
     )
 
-    with patch.object(adapter, "_request", return_value={}) as mock_req:
+    with patch.object(adapter, "_request", return_value={"id": "disc-1"}) as mock_req:
         result = adapter.post_inline_comment(1, pos, "Fix this!")
 
-    assert result is True
+    assert result == "disc-1"  # Returns discussion ID as string (REVUE-104)
     method, path, body = mock_req.call_args[0]
     assert method == "POST"
     assert path.endswith("/discussions")
@@ -574,12 +574,12 @@ def test_gitlab_post_inline_comment_with_position() -> None:
 
 
 def test_gitlab_post_summary_comment_success() -> None:
-    """post_summary_comment returns True on success."""
+    """post_summary_comment returns note ID string on success (REVUE-104)."""
     adapter = GitLabAdapter(token="tok", project_id=42)
     with patch.object(adapter, "_request", return_value={"id": 1}):
         result = adapter.post_summary_comment(1, "Overall LGTM")
 
-    assert result is True
+    assert result == "1"  # Returns note ID as string
 
 
 def test_gitlab_get_existing_comments_flattens_discussions() -> None:
@@ -777,43 +777,43 @@ def test_gitlab_post_apply_suggestion_api_error() -> None:
 # =====================================================================
 
 def test_github_post_review_comment_canonical_name() -> None:
-    """post_review_comment (canonical name) works correctly."""
+    """post_review_comment (canonical name) returns comment ID string (REVUE-104)."""
     review_body = json.dumps({"id": 10, "state": "COMMENTED"}).encode()
     adapter = GitHubAdapter(token="tok", repo="org/repo")
     position = DiffPosition(file_path="src/app.py", line_number=5, position=3)
     with patch("urllib.request.urlopen", return_value=_make_resp(review_body)):
         result = adapter.post_review_comment(10, position, "Looks good!")
-    assert result is True
+    assert result == "10"
 
 
 def test_github_post_inline_comment_alias_still_works() -> None:
-    """post_inline_comment alias continues to work (backward compat)."""
+    """post_inline_comment alias returns comment ID string (REVUE-104)."""
     review_body = json.dumps({"id": 11, "state": "COMMENTED"}).encode()
     adapter = GitHubAdapter(token="tok", repo="org/repo")
     position = DiffPosition(file_path="src/app.py", line_number=5, position=3)
     with patch("urllib.request.urlopen", return_value=_make_resp(review_body)):
         result = adapter.post_inline_comment(10, position, "Still works!")
-    assert result is True
+    assert result == "11"
 
 
 def test_gitlab_post_review_comment_canonical_name() -> None:
-    """GitLab post_review_comment (canonical name) posts to discussions API."""
+    """GitLab post_review_comment returns discussion ID string (REVUE-104)."""
     discussion_resp = json.dumps({"id": "abc123"}).encode()
     adapter = GitLabAdapter(token="tok", project_id=42)
     position = DiffPosition(file_path="lib/auth.rb", line_number=10)
     with patch("urllib.request.urlopen", return_value=_make_resp(discussion_resp)):
         result = adapter.post_review_comment(1, position, "Fix this")
-    assert result is True
+    assert result == "abc123"
 
 
 def test_gitlab_post_inline_comment_alias_still_works() -> None:
-    """GitLab post_inline_comment alias continues to work (backward compat)."""
+    """GitLab post_inline_comment alias returns discussion ID string (REVUE-104)."""
     discussion_resp = json.dumps({"id": "abc124"}).encode()
     adapter = GitLabAdapter(token="tok", project_id=42)
     position = DiffPosition(file_path="lib/auth.rb", line_number=10)
     with patch("urllib.request.urlopen", return_value=_make_resp(discussion_resp)):
         result = adapter.post_inline_comment(1, position, "Still works!")
-    assert result is True
+    assert result == "abc124"
 
 
 # =====================================================================

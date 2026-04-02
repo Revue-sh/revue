@@ -69,6 +69,9 @@ review:
     - "package-lock.json"
     - "*.min.js"
 
+features:
+  preserve_comment_threads: false  # Preserve conversation threads across commits (experimental)
+
 output:
   comment_style: per-issue      # "per-issue" = one inline comment per finding (default)
                                 # "summary"   = one grouped comment per file
@@ -164,6 +167,11 @@ def load_config(
     agents: dict[str, object] = raw.get("agents", {}) or {}  # type: ignore[assignment]
     _set_if(config, "agents_team", agents, "team")
     _set_if(config, "custom_agents_dir", agents, "custom_agents_dir")
+
+    # --- features section ---
+    features: dict[str, object] = raw.get("features", {}) or {}  # type: ignore[assignment]
+    if "preserve_comment_threads" in features:
+        config.preserve_comment_threads = bool(features["preserve_comment_threads"])
 
     # --- output section ---
     output: dict[str, object] = raw.get("output", {}) or {}  # type: ignore[assignment]
