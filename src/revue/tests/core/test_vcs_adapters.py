@@ -907,3 +907,133 @@ def test_gitlab_set_review_status_api_error_returns_false() -> None:
     with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
         result = adapter.set_review_status(5, "unapproved")
     assert result is False
+
+
+# =====================================================================
+# [REVUE-104] GitHub — resolve_inline_comment
+# =====================================================================
+
+
+def test_github_resolve_inline_comment_patches_and_replies() -> None:
+    """resolve_inline_comment calls PATCH on /pulls/comments/{id} with resolved=True
+    and POSTs reply when reply_body is non-empty."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    calls = []
+
+    def mock_request(method, path, body=None):
+        calls.append((method, path, body))
+        return {}
+
+    with patch.object(adapter, "_request", side_effect=mock_request):
+        result = adapter.resolve_inline_comment(
+            pr_id=10, comment_id="55", reply_body="Fixed!"
+        )
+
+    assert result is True
+    assert len(calls) == 2
+
+    # First call: POST reply
+    assert calls[0][0] == "POST"
+    assert "/pulls/10/comments/55/replies" in calls[0][1]
+    assert calls[0][2] == {"body": "Fixed!"}
+
+    # Second call: PATCH to resolve
+    assert calls[1][0] == "PATCH"
+    assert "/pulls/comments/55" in calls[1][1]
+    assert calls[1][2] == {"resolved": True}
+
+
+def test_github_resolve_inline_comment_no_reply_body() -> None:
+    """resolve_inline_comment skips reply POST when reply_body is empty."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    calls = []
+
+    def mock_request(method, path, body=None):
+        calls.append((method, path, body))
+        return {}
+
+    with patch.object(adapter, "_request", side_effect=mock_request):
+        result = adapter.resolve_inline_comment(
+            pr_id=10, comment_id="55", reply_body=""
+        )
+
+    assert result is True
+    # Only the PATCH call, no reply
+    assert len(calls) == 1
+    assert calls[0][0] == "PATCH"
+    assert calls[0][2] == {"resolved": True}
+
+
+def test_github_resolve_inline_comment_returns_false_on_error() -> None:
+    """resolve_inline_comment returns False when PATCH fails."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+    with patch.object(adapter, "_request", side_effect=Exception("Network")):
+        result = adapter.resolve_inline_comment(
+            pr_id=10, comment_id="55", reply_body=""
+        )
+    assert result is False
+
+
+# =====================================================================
+# [REVUE-104] GitLab — resolve_inline_comment
+# =====================================================================
+
+
+def test_gitlab_resolve_inline_comment_puts_and_replies() -> None:
+    """resolve_inline_comment calls PUT on /discussions/{id} with resolved=True
+    and POSTs reply note when reply_body is non-empty."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    calls = []
+
+    def mock_request(method, path, body=None):
+        calls.append((method, path, body))
+        return {}
+
+    with patch.object(adapter, "_request", side_effect=mock_request):
+        result = adapter.resolve_inline_comment(
+            pr_id=5, comment_id="disc-abc", reply_body="All good now."
+        )
+
+    assert result is True
+    assert len(calls) == 2
+
+    # First call: POST reply note
+    assert calls[0][0] == "POST"
+    assert "/merge_requests/5/discussions/disc-abc/notes" in calls[0][1]
+    assert calls[0][2] == {"body": "All good now."}
+
+    # Second call: PUT to resolve
+    assert calls[1][0] == "PUT"
+    assert "/merge_requests/5/discussions/disc-abc" in calls[1][1]
+    assert calls[1][2] == {"resolved": True}
+
+
+def test_gitlab_resolve_inline_comment_no_reply_body() -> None:
+    """resolve_inline_comment skips reply POST when reply_body is empty."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    calls = []
+
+    def mock_request(method, path, body=None):
+        calls.append((method, path, body))
+        return {}
+
+    with patch.object(adapter, "_request", side_effect=mock_request):
+        result = adapter.resolve_inline_comment(
+            pr_id=5, comment_id="disc-abc", reply_body=""
+        )
+
+    assert result is True
+    # Only the PUT call, no reply
+    assert len(calls) == 1
+    assert calls[0][0] == "PUT"
+    assert calls[0][2] == {"resolved": True}
+
+
+def test_gitlab_resolve_inline_comment_returns_false_on_error() -> None:
+    """resolve_inline_comment returns False when PUT fails."""
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch.object(adapter, "_request", side_effect=Exception("Network")):
+        result = adapter.resolve_inline_comment(
+            pr_id=5, comment_id="disc-abc", reply_body=""
+        )
+    assert result is False
