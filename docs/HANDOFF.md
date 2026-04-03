@@ -1,15 +1,15 @@
-# Session Handoff - 2026-04-02 (Session 3)
-**Duration:** 16:00 - 17:40 GMT (~1h 40min) | **Agent:** BMad Master
+# Session Handoff - 2026-04-03
+**Duration:** 18:12 - 19:30 GMT (~1h 18min) | **Agent:** BMad Master
 
 ---
 
 ## Session Summary
 
-Merged PR #32 (REVUE-104) and implemented REVUE-93 (auto-heuristic quality scorer)
-end-to-end: John drafted story, Bob gated DoR, Amelia implemented, party mode reviewed,
-Amelia addressed review findings. Epic REVUE-87 is now 16/18 stories Done. A REVUE-104
-regression (`NameError: config in _post_to_bitbucket`) was caught by CI and fixed by Amelia.
-SDLC violation logged (4th): BMad Master wrote fixes directly instead of spawning Amelia.
+Fixed and merged REVUE-95 (orchestrator agent selection transparency). Started with a
+production regression (Anthropic returning wrong schema/empty responses) and ended with
+a fully tested, SRP-compliant implementation with local CI simulation guide. PR #36 merged
+with 630 tests passing. Created REVUE-107 (model-aware diff limits) and REVUE-108 (SRP
+extraction) as follow-up stories.
 
 ---
 
@@ -17,140 +17,191 @@ SDLC violation logged (4th): BMad Master wrote fixes directly instead of spawnin
 
 | Metric | Value |
 |--------|-------|
-| Tests passing | 1004 src + 96 workspace = 1100 total |
-| Open PRs | None |
-| Epic REVUE-87 | 16/18 stories Done (REVUE-94, REVUE-95 remain) |
+| Tests passing | 630 (up from 596) |
+| Open PRs | None (PR #36 merged) |
+| Epic REVUE-87 | 17/18 stories Done (only REVUE-105 remains) |
 | Jira board | https://urukia.atlassian.net/jira/software/projects/REVUE/boards/101 |
 
 ---
 
 ## Completed This Session
 
-- **PR #32 (REVUE-104) merged** - `4650ba6` - tests were green, self-review failed due to
-  Anthropic Tier 1 rate limit (not a code issue)
-- **REVUE-104 -> Done in Jira**
-- **REVUE-93 story drafted by John** - `docs/stories/REVUE-93-auto-heuristic-quality-scorer.md`
-- **REVUE-93 DoR gate passed by Bob** - 20/20 criteria
-- **REVUE-93 implemented by Amelia** - `3574e7b` - `src/db/auto_scorer.py` + 17 tests
-- **REVUE-104 regression fixed by Amelia** - `9fa86e5` - `NameError: config` in
-  `_post_to_bitbucket` (config was a free variable, now passed as param)
-- **Cache fix by Amelia** - `e44fc5b` - `_lookup_id` mutable default arg -> module-level
-  `_LOOKUP_CACHE`
-- **conftest.py fix** - `003b433` - registered `integration` pytest marker
-- **Code review by Amelia** (party mode) - HIGH: SQL injection whitelist; MEDIUM: missing
-  "fix" verb in ACTION_VERBS
-- **Review findings addressed by Amelia** - `3344c96` - whitelist + ACTION_VERBS expanded
-- **PR #33 merged** - REVUE-93 -> Done in Jira
+- **REVUE-95 root cause diagnosis** - Claude returning wrong schema (classification/risk_level
+  instead of detected_areas/selected_agents) due to conditional prompt language
+- **REVUE-95 implemented** - `ecb06bb` - changed `SHARED_ANALYSIS_PROMPT` from "When
+  announcing..." to "You MUST respond using ONLY this exact JSON schema"
+- **Regression fixes** - `5655bb3`, `ff9bb44`, `fe50e60` - fence-stripping regex (optional
+  newline), split exception handling (JSONDecodeError/ValueError -> warning, OSError/
+  AttributeError -> error with exc_info=True), security warnings in docs
+- **Local CI simulation guide** - `3688a05` - `docs/local-ci-simulation.md` - full guide
+  for running Revue locally before CI push (lesson: 6+ CI iterations vs 1 local run)
+- **Unit tests** - `5655bb3`, `ff9bb44` - 8 new tests covering Anthropic response patterns
+  (wrong schema, empty fences, valid schema, mandatory prompt language)
+- **CLI output fix** - `59fd79e` - removed extra blank lines in per-file review output
+  (explicit `\n` in f-string + `print()` newline)
+- **REVUE-108 created** - Extract format_selection_message() to revue.core.formatting (SRP)
+- **REVUE-108 implemented** - `096dbb7` - SRP restored, merge-blocking issue resolved
+- **REVUE-107 created** - Model-aware diff limits (10K lines is 6% of Claude Sonnet 4.5's
+  200K context - unnecessarily conservative)
+- **TODO comments -> Jira** - `e34a892` - replaced all TODOs with REVUE-107/REVUE-108 refs
+- **PR #36 merged** - REVUE-95 -> Done in Jira
 
 ---
 
 ## What We Built (Session Highlights)
 
-### REVUE-93 - Auto-Heuristic Quality Scorer
+### REVUE-95 - Orchestrator Agent Selection Transparency
 
-**New module:** `src/db/auto_scorer.py`
-- `compute_clarity_score(finding)` - heuristic: +2 both fields non-empty, +1 len>20,
-  +1 no vague words, +1 file/line ref. Clamped to [1..5].
-- `compute_actionability_score(finding)` - heuristic: +2 rec non-empty, +1 code/path,
-  +1 action verb (add/remove/fix/implement/...), +1 exact change (path+verb). Clamped [1..5].
-- `score_findings(cursor, [(finding_id, dict)])` - batch insert into `finding_quality`
-  with `rated_by=auto`. Two rows per finding (clarity + actionability dimension).
-- `ON CONFLICT DO NOTHING` for idempotency (AC5).
-- `_ALLOWED_LOOKUP_TABLES` whitelist guards the `_lookup_id` f-string (HIGH review finding).
-- `_LOOKUP_CACHE` module-level (not mutable default arg).
-- Human ratings take precedence at read-time via `DISTINCT ON` convention documented in code.
+**Core fix:** `src/revue/core/shared_analysis.py`
+- Changed `SHARED_ANALYSIS_PROMPT` to use mandatory language: "You MUST respond using
+  ONLY this exact JSON schema" (no other format accepted)
+- Provider-aware JSON handling: OpenAI/Google/Groq/Azure omit suffix, Anthropic appends
+  explicit JSON instruction + no-fence prohibition
+- Regex fence-stripping with optional newline: `r"^```(?:json)?\s*\n?"`, `r"\n?```\s*$"`
+- Empty response guard after fence-stripping (prevents `JSONDecodeError` on empty string)
+- Split exception handling: parsing errors (JSONDecodeError, ValueError, KeyError, TypeError)
+  log at `warning`, system errors (OSError, AttributeError) log at `error` with `exc_info=True`
+- `SharedAnalysisResult.orchestrator_response` field (optional, repr=False) for new format
 
-**Integration:** `import_comparison()` in `src/db/import_review.py` now calls
-`score_findings()` after findings insert, before `conn.commit()`.
+**New module:** `src/revue/core/formatting.py`
+- Extracted `format_selection_message()` from `shared_analysis.py` to restore SRP
+- Handles presentation concerns: emoji-friendly output, detected areas, selected agents
+
+**Integration:** `src/revue/core/pipeline.py`
+- Passes `provider` to `run_shared_analysis()`
+- Logs transparency message with guard for empty `detected_areas`/`selected_agents`
+- Imports `format_selection_message` from `revue.core.formatting`
 
 **Tests added:**
-- `tests/db/test_auto_scorer.py` - 13 unit tests, no DB required
-- `tests/db/test_auto_scorer_integration.py` - 4 integration tests, DB-gated
-- `tests/fixtures/scorer_ground_truth.json` - 5 hand-scored ground truth findings
+- 8 new tests in `test_shared_analysis.py`: wrong schema fallback, empty fenced response,
+  plain empty string, valid new schema, valid schema in fences, mandatory prompt language,
+  wrong schema with summary field graceful fallback, valid mandatory schema returns
+  orchestrator_response
 
-### REVUE-104 Regression Fix
+**Documentation:**
+- `docs/local-ci-simulation.md` - step-by-step guide for running Revue locally
+- Prerequisites, diff generation, PR description fetch, CLI invocation, debugging tips
+- Security warnings: API key placeholder, never commit `~/.zshenv`, shell history exposure
 
-`_post_to_bitbucket()` referenced `config` as a free variable (only exists in
-`cmd_review()` scope). Fixed: `config=None` parameter added to `_post_to_bitbucket`.
-`test_cli_preserve_threads.py` updated to pass config directly rather than patching
-as module-global. This was crashing every CI self-review since PR #32 merged.
+### Key Implementation Details
+
+**Prompt engineering fix (root cause):**
+Old: "When announcing your agent selection, structure your JSON response as:"
+New: "You MUST respond using ONLY this exact JSON schema - no other format is accepted:"
+
+This fixed Claude defaulting to its own schema. The old conditional language gave Claude
+choice; the new mandatory language forces compliance.
+
+**Fence-stripping edge case:**
+Claude sometimes returns `"```json\n```"` with no content between fences. Made `\n`
+optional in both regex patterns to handle this edge case without crashing.
+
+**Exception handling philosophy:**
+Parsing errors (JSONDecodeError, ValueError, KeyError, TypeError) are expected in the
+fallback path and log at `warning`. System errors (OSError, AttributeError) indicate
+programming errors or permission issues and log at `error` with full stack trace.
 
 ---
 
 ## Remaining Work - Next Steps
 
-1. **REVUE-94** (P2, 5pts) - `.revue.yml` allowed_patterns / disallowed_patterns support
-   - Dependencies: REVUE-89 Done (patterns tables in schema)
-   - First action: spawn John to draft story file with full DoR context
-   - Key context: 4 known false positives documented in E8-EPIC-PLAN.md and REVUE-94 ticket
-   - AC summary: extend .revue.yml schema, inject patterns into agent system prompts,
-     populate .revue.yml with 4 known FPs, show FP reduction, update docs
+1. **REVUE-105** (To Do, 3pts) - CI UX improvements (HumanizedLogger + emoji vocabulary)
+   - Dependencies: REVUE-95 Done (orchestrator transparency merged)
+   - First action: read REVUE-105 Jira ticket, spawn John to draft story file with DoR
+   - Context: Final story in Epic REVUE-87, builds on orchestrator transparency
+   - AC summary: structured logging with emojis, human-readable progress, CI-friendly output
 
-2. **REVUE-95** (To Do) - Enhanced orchestration logging with tier-based detail levels
-   - First action: read REVUE-95 Jira ticket, spawn John to check DoR
+2. **REVUE-107** (To Do) - Model-aware diff limits
+   - Context: Current 10,000 line limit is 6% of Claude Sonnet 4.5's 200K context
+   - Suggestion: 50K lines for Claude/GPT-4o, 10K for unknown models
+   - First action: spawn John to draft story file
 
-3. **REVUE-102** (Done in Jira, NOT implemented) - Retire AIReviewer, consolidate into
-   `revue/core/` - dedicated session recommended
-   - Note: Jira says Done but code still has dual codebase. Until resolved, ALL fixes to
-     shared modules apply to BOTH `src/revue/core/` AND `src/AIReviewer/core/`
+3. **REVUE-108** (Done) - format_selection_message extraction
+   - Completed in this session (`096dbb7`)
 
-4. **REVUE-100** (Low) - Fix main branch pipeline phantom self-hosted runner labels
+4. **REVUE-106** (Done) - AIReviewer package absorption
+   - Completed in previous session
+   - Single canonical package: `src/revue/` only (no more `src/AIReviewer/`)
 
 ---
 
 ## Key Architectural Decisions (Session)
 
-1. **AC4 synthetic benchmark** - REVUE-93 originally specified "benchmarked against REVUE-86
-   human ratings" but no baseline run was ever completed (DB offline, AI_API_KEY unavailable).
-   Replaced with 5-finding ground truth fixture in tests. Practical and testable today.
+1. **Mandatory schema language in SHARED_ANALYSIS_PROMPT** - Changed from conditional
+   ("When announcing your agent selection, structure...") to mandatory ("You MUST respond
+   using ONLY this exact JSON schema") because Claude was defaulting to its own schema
+   (classification, risk_level, review_priority) instead of the required schema
+   (detected_areas, selected_agents, languages, risk_areas, summary).
 
-2. **Read-time human override convention** - Auto-scorer writes freely; human ratings win
-   at read-time via `DISTINCT ON ... ORDER BY CASE rs.name WHEN 'human' THEN 0 ELSE 1 END`.
-   Documented as code comment in `auto_scorer.py`. No DB view/helper in scope for this story.
+2. **Optional newline in fence-stripping regex** - Made `\n` optional in both fence-strip
+   patterns to handle edge case where Claude returns `"```json\n```"` with no content
+   between fences.
 
-3. **`config` as parameter not module global** - `_post_to_bitbucket` signature changed from
-   accessing a free variable to accepting `config=None`. Safer, more testable, avoids
-   module-global state.
+3. **Local simulation as debugging tool** - Discovered `git diff FETCH_HEAD...HEAD` +
+   CLI run catches issues faster than CI iterations. Documented in
+   `docs/local-ci-simulation.md` for team.
+
+4. **SRP extraction merge-blocking** - User decision: `format_selection_message()` SRP
+   violation must be fixed before merge, not deferred. Rationale: leaving tech debt now
+   means refactoring later when it's harder. Eliminated immediately.
+
+5. **Exception handling split** - Parsing errors (expected fallback path) log at `warning`,
+   system errors (programming bugs or permission issues) log at `error` with `exc_info=True`
+   for security review.
+
+---
+
+## Lessons Learned
+
+- **Features must be config-enabled AND documented.** Default-off features can slip through DoD if config isn't updated. REVUE-104 code was merged and marked Done, but `.revue.yml` lacked `preserve_comment_threads: true` — so the feature was dead in production. Config enablement must be an explicit AC or DoD gate.
 
 ---
 
 ## Critical Notes for Next Session
 
-**Dual codebase until REVUE-102 is actually implemented:** Any fix to shared modules
-applies to BOTH `src/revue/core/` AND `src/AIReviewer/core/`. REVUE-102 is Done in Jira
-but the consolidation has NOT been done in code.
+**REVUE-95 merged successfully** - All orchestrator transparency work is now in `main`.
+The 630 tests include full coverage of Anthropic edge cases (wrong schema, empty fences,
+valid schema in/out of fences).
 
-**SDLC discipline (4 violations logged):** Spawn real agents for every role. BMad Master
-orchestrates only. The pattern that keeps triggering violations: CI/test output reveals a
-bug -> urgency -> BMad Master writes the fix directly. Correct response always: document
-the bug, spawn Amelia, wait, relay.
-- John (PM) drafts stories -> spawn John
-- Winston (Architect) reviews technical ACs -> spawn Winston
-- Bob (SM) gates DoR and DoD -> spawn Bob
-- Amelia (Dev) implements and fixes bugs -> spawn Amelia
+**REVUE-106 completed** - Single canonical package: `src/revue/` only. The dual codebase
+issue from previous sessions is resolved. `src/AIReviewer/` no longer exists.
 
-**Test command (both suites):**
+**SDLC discipline reminder** - Spawn real agents for every role. This session had one
+near-violation (Amelia spawned for unit tests after user requested them explicitly) but
+was caught and corrected. The pattern: CI/test reveals bug -> urgency -> spawn Amelia
+(never implement directly).
+
+**Test command (single suite):**
 ```bash
-cd src && PYTHONPATH=$(pwd) pytest revue/tests/ AIReviewer/tests/ -q
-pytest tests/ -q -k "not integration"
+cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q
 ```
 
-**Anthropic Tier 1 rate limit:** Self-review CI step times out under rate limiting.
-Tests step passes independently. Merge policy: if tests green and self-review fails
-only due to rate limit/timeout, merge is acceptable.
+**Local CI simulation:**
+```bash
+source ~/.zshenv && cd Projects/revue.io
+git fetch "https://x-token-auth:${BITBUCKET_API_TOKEN}@bitbucket.org/cbscd/revue.git" main
+git diff FETCH_HEAD...HEAD > /tmp/revue_pr.diff
+# (see docs/local-ci-simulation.md for full steps)
+```
+
+**Environment variables (required for local testing):**
+- `AI_API_KEY`, `AI_PROVIDER`, `AI_MODEL`
+- `REVUE_TIER_OVERRIDE=pro` (staging only)
+- `BITBUCKET_USERNAME`, `BITBUCKET_API_TOKEN`
+- `APP_ENV=staging`
 
 ---
 
 ## Session Stats
 
-- Duration: ~1h 40min
-- Stories completed: REVUE-93 (implementation + tests + review fixes)
-- PRs merged: #32 (REVUE-104), #33 (REVUE-93)
-- Commits on REVUE-93 branch: 5
-- Tests: 1100 passing (up from 1087)
-- New files: auto_scorer.py, test_auto_scorer.py, test_auto_scorer_integration.py,
-  scorer_ground_truth.json
-- Party mode agents used: John, Winston, Amelia, Bob
+- Duration: ~1h 18min
+- Stories completed: REVUE-95 (root cause diagnosis + implementation + tests + SRP fix)
+- Follow-up stories created: REVUE-107, REVUE-108
+- PRs merged: #36 (REVUE-95)
+- Commits: 10 (ecb06bb to 096dbb7)
+- Tests: 630 passing (up from 596)
+- New files: formatting.py, local-ci-simulation.md
+- Party mode agents used: Amelia (implementation + tests + fixes), Bob (DoD gates)
 
 ---
 
@@ -159,15 +210,16 @@ only due to rate limit/timeout, merge is acceptable.
 ```
 Read docs/HANDOFF.md for full context.
 
-Epic REVUE-87 is 16/18 Done. Two stories remain:
-1. REVUE-94 - .revue.yml allowed/disallowed patterns (5pts, unblocked)
-2. REVUE-95 - Enhanced orchestration logging (To Do, read ticket first)
+Epic REVUE-87 is 17/18 Done. One story remains:
+- REVUE-105 - CI UX improvements (HumanizedLogger + emoji vocabulary) - 3pts
 
-Start with REVUE-94: spawn John to draft the story file with full DoR context.
-Key context in docs/E8-EPIC-PLAN.md and REVUE-94 Jira ticket (4 known FPs documented).
+Start with REVUE-105: read the Jira ticket, spawn John to draft the story file with
+full DoR context. This builds on REVUE-95 (orchestrator transparency) which is now
+merged.
 
 SDLC: spawn real agents for every role. BMad Master orchestrates only - never writes
-code, runs tests, or fixes bugs directly. CI bug found -> spawn Amelia, always.
+code, runs tests, or fixes bugs directly.
 
-Dual codebase until REVUE-102 is actually implemented (Jira says Done, code does not).
+Test command: cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q
+Local CI guide: docs/local-ci-simulation.md
 ```
