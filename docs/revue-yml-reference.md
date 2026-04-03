@@ -141,12 +141,35 @@ Controls the post-consolidation noise suppression layer that removes false posit
 | `low-confidence` | Findings below the `low_confidence_threshold` |
 | `duplicate` | Duplicate findings across agents |
 
+### `allowed_patterns` and `disallowed_patterns`
+
+Define patterns that represent intentional design decisions (allowed) or patterns that should always be flagged (disallowed). These are injected into agent system prompts as natural-language guidance before every review.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `allowed_patterns` | list[object] | `[]` | Patterns the agent should **not** flag. Each entry has `pattern` (string) and `rationale` (string). |
+| `disallowed_patterns` | list[object] | `[]` | Patterns the agent should **always** flag. Same structure as above. |
+
+Each entry requires:
+- **`pattern`** (string, required): A natural-language description of the code pattern.
+- **`rationale`** (string, required): Why this pattern is allowed or disallowed.
+
 ```yaml
 noise_filters:
   disable:
-    - "swift-di"         # disable Swift DI filter (e.g. you want to see those findings)
+    - "swift-di"
   low_confidence_threshold: 0.6
+  allowed_patterns:
+    - pattern: "_def attribute access on LoadedAgent"
+      rationale: "Internal implementation detail, no public API"
+    - pattern: "Bare except in _inject_pr_context"
+      rationale: "Intentional catch-all, PR context injection must not crash the review loop"
+  disallowed_patterns:
+    - pattern: "TODO comments in production code"
+      rationale: "TODOs should be tracked as Jira tickets"
 ```
+
+Allowed patterns are injected under a `## Allowed Patterns — Do Not Flag` heading in each agent's system prompt. Disallowed patterns appear under `## Disallowed Patterns — Always Flag`. When both lists are empty, no injection occurs.
 
 ---
 

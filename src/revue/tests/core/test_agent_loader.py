@@ -531,3 +531,54 @@ def test_agent_runner_partial_failure_continues():
     assert len(failures) == 1
     assert successes[0].agent_name == "good"
     assert len(successes[0].findings) == 1
+
+
+# ---------------------------------------------------------------------------
+# REVUE-94: Pattern injection into system prompts (AC2)
+# ---------------------------------------------------------------------------
+
+from revue.core.pattern_injection import build_pattern_prompt_sections, inject_patterns
+
+
+def test_allowed_patterns_injected_into_system_prompt():
+    """AC2: Allowed patterns appear in system prompt under correct header."""
+    patterns = [
+        {"pattern": "_def attribute access on LoadedAgent", "rationale": "Internal implementation detail, no public API"},
+        {"pattern": "Inline lazy httpx import", "rationale": "Intentional lazy loading pattern"},
+    ]
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    agent = LoadedAgent(defn, _mock_client())
+    inject_patterns([agent], allowed_patterns=patterns, disallowed_patterns=[])
+    prompt = agent._def.system_prompt
+    assert "## Allowed Patterns \u2014 Do Not Flag" in prompt
+    assert "_def attribute access on LoadedAgent" in prompt
+    assert "Internal implementation detail, no public API" in prompt
+    assert "Inline lazy httpx import" in prompt
+
+
+def test_disallowed_patterns_injected_into_system_prompt():
+    """AC2: Disallowed patterns appear in system prompt under correct header."""
+    patterns = [
+        {"pattern": "TODO comments in production code", "rationale": "TODOs should be tracked as Jira tickets"},
+    ]
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    agent = LoadedAgent(defn, _mock_client())
+    inject_patterns([agent], allowed_patterns=[], disallowed_patterns=patterns)
+    prompt = agent._def.system_prompt
+    assert "## Disallowed Patterns \u2014 Always Flag" in prompt
+    assert "TODO comments in production code" in prompt
+    assert "TODOs should be tracked as Jira tickets" in prompt
+
+
+def test_empty_patterns_no_injection():
+    """AC2: When both lists are empty, no pattern section headers appear."""
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    agent = LoadedAgent(defn, _mock_client())
+    original_prompt = agent._def.system_prompt
+    inject_patterns([agent], allowed_patterns=[], disallowed_patterns=[])
+    assert agent._def.system_prompt == original_prompt
+    assert "Allowed Patterns" not in agent._def.system_prompt
+    assert "Disallowed Patterns" not in agent._def.system_prompt

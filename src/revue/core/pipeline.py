@@ -23,6 +23,7 @@ from .license_validator import LicenseInfo, validate as validate_license
 from .models import FileChange
 from .pr_description_adapter import PRDescription
 from .pr_context import PRContextExtractor
+from .pattern_injection import inject_patterns
 from .usage_tracker import check_reviews_left, track as track_usage
 
 # ---------------------------------------------------------------------------
@@ -36,11 +37,11 @@ _FREE_TIER_AGENTS = frozenset({"orchestrator", "code-quality-expert", "consolida
 #
 # TIER_ALL_AGENTS in license_validator.py uses display-style names (e.g.
 # "code-quality-expert") for readability and backward compat with the license
-# server API. The actual AIReviewer agent files use short codenames (e.g.
+# server API. The actual revue agent files use short codenames (e.g.
 # "maya"). This map resolves the mismatch without touching either side.
 # ---------------------------------------------------------------------------
 _LICENCE_NAME_TO_AGENT: dict[str, str] = {
-    # Licence display name → AIReviewer agent file name (name: field inside file)
+    # Licence display name → revue agent file name (name: field inside file)
     "code-quality-expert": "maya",
     "security-expert": "zara",
     "performance-expert": "kai",
@@ -84,22 +85,22 @@ _INFRASTRUCTURE_AGENTS = frozenset({"cleo", "nova"})
 # ---------------------------------------------------------------------------
 
 def _import_orchestration():
-    """Lazy-import AIReviewer orchestration modules.
+    """Lazy-import revue orchestration modules.
 
     Kept lazy so free-tier pipeline starts faster and import errors
     are surfaced only when orchestration is actually needed.
     """
     try:
-        from AIReviewer.core.agent_loader import load_all_agents
-        from AIReviewer.core.agent_runner import run_agents_parallel
-        from AIReviewer.core.nova_consolidator import consolidate
-        from AIReviewer.core.shared_analysis import run_shared_analysis
-        from AIReviewer.core.cleo_router import route
+        from revue.core.agent_loader import load_all_agents
+        from revue.core.agent_runner import run_agents_parallel
+        from revue.core.nova_consolidator import consolidate
+        from revue.core.shared_analysis import run_shared_analysis
+        from revue.core.cleo_router import route
         return load_all_agents, run_agents_parallel, consolidate, run_shared_analysis, route
     except ImportError as exc:
         raise RuntimeError(
             f"Orchestration engine unavailable: {exc}. "
-            "Ensure AIReviewer is on PYTHONPATH."
+            "Ensure revue is on PYTHONPATH."
         ) from exc
 
 
@@ -391,7 +392,7 @@ class ReviewPipeline:
                 )
         except Exception as exc:
             print(f"[revue]   Shared analysis failed ({exc}) — using fallback.", flush=True)
-            from AIReviewer.core.shared_analysis import SharedAnalysisResult
+            from revue.core.shared_analysis import SharedAnalysisResult
             shared = SharedAnalysisResult.fallback(
                 languages=[fc.file_path.rsplit(".", 1)[-1] for fc in included]
             )
@@ -445,6 +446,21 @@ class ReviewPipeline:
             extractor = PRContextExtractor(pr_description)
             _inject_pr_context(allowed_agents, extractor)
             print("[revue]   PR context injected — smart filtering active.", flush=True)
+
+        # 2c. Pattern injection (REVUE-94) — inject allowed/disallowed patterns
+        #     from .revue.yml into each agent's system prompt.
+        if self.config.allowed_patterns or self.config.disallowed_patterns:
+            inject_patterns(
+                allowed_agents,
+                self.config.allowed_patterns,
+                self.config.disallowed_patterns,
+            )
+            print(
+                f"[revue]   Pattern guidance injected — "
+                f"{len(self.config.allowed_patterns)} allowed, "
+                f"{len(self.config.disallowed_patterns)} disallowed.",
+                flush=True,
+            )
 
         # 3. Cleo routing — select agents relevant to this diff
         print("[revue]   Routing files to agents (Cleo)...", flush=True)

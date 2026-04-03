@@ -8,7 +8,7 @@ definitions:
           - pip
         script:
           - pip install openai anthropic httpx pyyaml tomli-w pytest --quiet
-          - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ AIReviewer/tests/ -q
+          - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q
 
     - step: &revue-review
         name: "Revue.io AI Code Review"

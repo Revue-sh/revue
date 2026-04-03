@@ -217,3 +217,102 @@ def test_validate_config_confidence_out_of_range() -> None:
     config.min_confidence = 150
     errors = validate_config(config)
     assert any("min_confidence" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# REVUE-94: Pattern support in noise_filters
+# ---------------------------------------------------------------------------
+
+def test_yaml_parser_reads_allowed_patterns(tmp_path: Path) -> None:
+    """AC1: Parser reads allowed_patterns with pattern and rationale fields."""
+    yml = """\
+version: "1"
+ai:
+  provider: anthropic
+noise_filters:
+  allowed_patterns:
+    - pattern: "_def attribute access on LoadedAgent"
+      rationale: "Internal implementation detail, no public API"
+    - pattern: "Inline lazy httpx import"
+      rationale: "Intentional lazy loading pattern"
+"""
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert len(config.allowed_patterns) == 2
+    assert config.allowed_patterns[0]["pattern"] == "_def attribute access on LoadedAgent"
+    assert config.allowed_patterns[0]["rationale"] == "Internal implementation detail, no public API"
+    assert config.allowed_patterns[1]["pattern"] == "Inline lazy httpx import"
+
+
+def test_yaml_parser_reads_disallowed_patterns(tmp_path: Path) -> None:
+    """AC1: Parser reads disallowed_patterns with pattern and rationale fields."""
+    yml = """\
+version: "1"
+ai:
+  provider: anthropic
+noise_filters:
+  disallowed_patterns:
+    - pattern: "TODO comments in production code"
+      rationale: "TODOs should be tracked as Jira tickets"
+"""
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert len(config.disallowed_patterns) == 1
+    assert config.disallowed_patterns[0]["pattern"] == "TODO comments in production code"
+    assert config.disallowed_patterns[0]["rationale"] == "TODOs should be tracked as Jira tickets"
+
+
+def test_yaml_parser_backward_compatible(tmp_path: Path) -> None:
+    """AC1: Existing configs without pattern keys still work — empty lists, no error."""
+    path = _write_yml(tmp_path, _minimal_yml())
+    config = load_config(config_path=path)
+    assert config.allowed_patterns == []
+    assert config.disallowed_patterns == []
+
+
+def test_yaml_parser_rejects_invalid_pattern(tmp_path: Path) -> None:
+    """AC1: Pattern entry missing 'pattern' key produces a clear validation error."""
+    yml = """\
+version: "1"
+ai:
+  provider: anthropic
+noise_filters:
+  allowed_patterns:
+    - rationale: "Missing the pattern key"
+"""
+    path = _write_yml(tmp_path, yml)
+    with pytest.raises(ValueError, match="pattern"):
+        load_config(config_path=path)
+
+
+def test_yaml_parser_rejects_non_string_pattern(tmp_path: Path) -> None:
+    """AC1: Non-string pattern value produces a validation error."""
+    yml = """\
+version: "1"
+ai:
+  provider: anthropic
+noise_filters:
+  allowed_patterns:
+    - pattern: 123
+      rationale: "Bad type"
+"""
+    path = _write_yml(tmp_path, yml)
+    with pytest.raises(ValueError, match="pattern"):
+        load_config(config_path=path)
+
+
+def test_revue_yml_contains_four_allowed_patterns() -> None:
+    """AC3: Project .revue.yml has exactly four allowed_patterns with correct content."""
+    project_yml = Path(__file__).resolve().parents[4] / ".revue.yml"
+    config = load_config(config_path=str(project_yml))
+    assert len(config.allowed_patterns) == 4
+    for entry in config.allowed_patterns:
+        assert "pattern" in entry
+        assert "rationale" in entry
+        assert isinstance(entry["pattern"], str)
+        assert isinstance(entry["rationale"], str)
+    pattern_texts = [e["pattern"] for e in config.allowed_patterns]
+    assert "_def attribute access on LoadedAgent" in pattern_texts
+    assert "Inline lazy httpx import in pr_description_adapter" in pattern_texts
+    assert "test_vcs_adapter.py deletion" in pattern_texts
+    assert "Bare except in _inject_pr_context" in pattern_texts

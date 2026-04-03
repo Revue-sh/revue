@@ -90,7 +90,7 @@ class LoadedAgent:
             f'[{{"file_path": "...", "line_number": 1, "severity": "high|medium|low|info", '
             f'"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}}]'
         )
-        # Severity vocabulary used by AIReviewer agents → cli.py display names
+        # Severity vocabulary used by revue agents → cli.py display names
         _SEV_MAP = {
             "critical": "high",
             "major": "medium",

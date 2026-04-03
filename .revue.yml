@@ -24,3 +24,15 @@ output:
 noise_filters:
   disable: []
   low_confidence_threshold: 0.5
+  allowed_patterns:
+    - pattern: "_def attribute access on LoadedAgent"
+      rationale: "Internal implementation detail, no public API"
+    - pattern: "Inline lazy httpx import in pr_description_adapter"
+      rationale: "Intentional lazy loading pattern, now replaced with module-level import"
+    - pattern: "test_vcs_adapter.py deletion"
+      rationale: "Test coverage consolidated into test_vcs_adapters.py"
+    - pattern: "Bare except in _inject_pr_context"
+      rationale: "Intentional catch-all, PR context injection must not crash the review loop"
+  disallowed_patterns:
+    - pattern: "TODO comments in production code"
+      rationale: "TODOs should be tracked as Jira tickets"

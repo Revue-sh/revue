@@ -162,6 +162,10 @@ def load_config(
         config.disabled_noise_filters = list(nf["disable"])  # type: ignore[arg-type]
     if "low_confidence_threshold" in nf:
         config.noise_filter_confidence_threshold = float(nf["low_confidence_threshold"])  # type: ignore[arg-type]
+    if "allowed_patterns" in nf:
+        config.allowed_patterns = _validate_patterns(nf["allowed_patterns"], "allowed_patterns", config_path)  # type: ignore[arg-type]
+    if "disallowed_patterns" in nf:
+        config.disallowed_patterns = _validate_patterns(nf["disallowed_patterns"], "disallowed_patterns", config_path)  # type: ignore[arg-type]
 
     # --- agents section ---
     agents: dict[str, object] = raw.get("agents", {}) or {}  # type: ignore[assignment]
@@ -245,6 +249,53 @@ def validate_config(config: AIConfig) -> list[str]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _validate_patterns(
+    entries: object,
+    field_name: str,
+    config_path: str,
+) -> list[dict[str, str]]:
+    """Validate and return a list of pattern dicts from noise_filters config.
+
+    Each entry must be a dict with 'pattern' (str) and 'rationale' (str) keys.
+    Raises ValueError with a descriptive message on invalid entries.
+    """
+    if not entries:
+        return []
+    if not isinstance(entries, list):
+        raise ValueError(
+            f"{config_path}: noise_filters.{field_name} must be a list."
+        )
+    validated: list[dict[str, str]] = []
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"{config_path}: noise_filters.{field_name}[{i}] must be a mapping "
+                f"with 'pattern' and 'rationale' keys."
+            )
+        if "pattern" not in entry:
+            raise ValueError(
+                f"{config_path}: noise_filters.{field_name}[{i}] is missing "
+                f"required 'pattern' key."
+            )
+        if not isinstance(entry["pattern"], str):
+            raise ValueError(
+                f"{config_path}: noise_filters.{field_name}[{i}].pattern must be "
+                f"a string, got {type(entry['pattern']).__name__}."
+            )
+        if "rationale" not in entry:
+            raise ValueError(
+                f"{config_path}: noise_filters.{field_name}[{i}] is missing "
+                f"required 'rationale' key."
+            )
+        if not isinstance(entry["rationale"], str):
+            raise ValueError(
+                f"{config_path}: noise_filters.{field_name}[{i}].rationale must be "
+                f"a string, got {type(entry['rationale']).__name__}."
+            )
+        validated.append({"pattern": entry["pattern"], "rationale": entry["rationale"]})
+    return validated
+
 
 def _set_if(config: AIConfig, attr: str, source: dict[str, object], key: str) -> None:
     """Set *config.attr* from *source[key]* if the key is present and non-None."""

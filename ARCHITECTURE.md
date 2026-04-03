@@ -441,6 +441,53 @@ tests/
 
 ---
 
+## Data Persistence Strategy
+
+### Local JSON Storage (MVP - Current)
+
+While the architecture above describes the target layered design with database-backed repositories, the MVP uses a simpler persistence model to validate the product before introducing infrastructure dependencies.
+
+**Decision (2026-04-03):** Store review metadata, quality scores, and agent analytics in JSON files under `.revue/` folder in the local repository.
+
+**Rationale:**
+- MVP simplicity — no external infrastructure needed
+- Version-controlled alongside code (except ephemeral analytics)
+- Local developer workflow (no network dependencies)
+- Easy to inspect and debug
+- Migration is transparent via repository abstraction layer (swap JSON → DB implementation without changing business logic)
+
+**Structure:**
+```
+.revue/
+  reviews/
+    REVUE-123.json          # Review metadata (committed)
+    REVUE-124.json
+  quality/
+    scores.json             # Quality score history (committed)
+  analytics/
+    agent_usage.json        # Agent performance metrics (.gitignored)
+```
+
+**JSON Schema:** Follows the domain models defined in `src/revue/models.py` (e.g., `Review`, `Finding`, `QualityScore`).
+
+**Concurrency:** Single-writer assumption — concurrent access (e.g., CI + local dev writing simultaneously) is out of scope for MVP. If this becomes a pain point, migrate to PostgreSQL.
+
+**Git Configuration:**
+- `.revue/reviews/` and `.revue/quality/` are committed (historical record)
+- `.revue/analytics/` is `.gitignore`d (ephemeral local metrics)
+
+**Future Migration Path:**
+
+When query complexity or multi-user access outgrows flat files, migrate via repository abstraction:
+- **Reviews data** → PostgreSQL (likely to outgrow JSON first — complex joins, filtering)
+- **Quality scores** → PostgreSQL or cloud storage (S3, Supabase)
+- **Analytics** → Time-series DB or analytics service (DataDog, Posthog)
+- **Hybrid option:** JSON for local dev, DB for CI/production
+
+The repository pattern (described above) makes this swap transparent to business logic — swap `JsonReviewRepository` → `PostgresReviewRepository` without changing service layer.
+
+---
+
 ## Real-World Example (Coming Soon)
 
 Once REVUE-91 is implemented, this section will show concrete code examples from production.
