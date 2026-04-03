@@ -7,13 +7,17 @@ Follows OCP: SharedAnalysisResult is immutable; agents read, never write.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import logging
+import re
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .ai_client import AIClient
 
 from .models import FileChange
+
+_log = logging.getLogger(__name__)
 
 _EXT_TO_LANG: dict[str, str] = {
     ".py": "python", ".js": "javascript", ".ts": "typescript",
@@ -24,20 +28,126 @@ _EXT_TO_LANG: dict[str, str] = {
     ".sh": "shell", ".bash": "shell",
 }
 
+# Providers that natively support response_format={"type": "json_object"}.
+# NOTE: The AIClient protocol does not yet pass response_format through to
+# the underlying SDK, so json_object mode is *not* actually sent today.
+# For providers in this set we omit the prompt-engineering JSON suffix
+# (they reliably return JSON from the structured prompt alone).
+# For all other providers (Anthropic, unknown) the suffix is appended.
+# REVUE-107: Extend AIClient.complete() to accept and forward response_format
+#            for OpenAI-compatible providers.
+_JSON_FORMAT_PROVIDERS = frozenset({
+    "openai", "azure", "openrouter", "custom", "google", "groq",
+})
+
 SHARED_ANALYSIS_PROMPT = """\
 You are a code review orchestrator. Analyse this diff and respond with valid JSON only.
 
 Diff summary:
 {diff_summary}
 
-Respond with this exact JSON structure:
+You MUST respond using ONLY this exact JSON schema — no other format is accepted:
+
+TEMPLATE:
 {{
-  "languages": ["list of programming languages detected"],
-  "risk_areas": ["areas of concern e.g. authentication, database, concurrency, file-io, api-boundary"],
-  "suggested_agents": ["which specialist agents to activate: zara=security, kai=performance, maya=quality, leo=architecture"],
-  "summary": "1-2 sentence plain English summary of what this diff does"
+  "detected_areas": [
+    {{"emoji": "<relevant emoji>", "description": "<area detected in the diff>"}}
+  ],
+  "selected_agents": [
+    {{"emoji": "<agent emoji>", "name": "<Agent Name>", "reason": "<high-level reason e.g. for auth review>"}}
+  ],
+  "languages": ["<detected programming languages>"],
+  "risk_areas": ["<risk labels e.g. authentication, database, api-boundary, concurrency>"],
+  "summary": "<1-2 sentence plain English summary of what this diff does>"
+}}
+
+EXAMPLE:
+{{
+  "detected_areas": [
+    {{"emoji": "🔐", "description": "Authentication middleware (login flow updated)"}},
+    {{"emoji": "🗄️", "description": "Database migrations (users table schema change)"}},
+    {{"emoji": "⚡", "description": "API endpoints (new rate limiting logic)"}}
+  ],
+  "selected_agents": [
+    {{"emoji": "🛡️", "name": "Security Agent", "reason": "for auth review"}},
+    {{"emoji": "🗄️", "name": "Data Agent", "reason": "for schema validation"}},
+    {{"emoji": "⚡", "name": "Performance Agent", "reason": "for API optimization"}}
+  ],
+  "languages": ["python"],
+  "risk_areas": ["authentication", "database", "api-boundary"],
+  "summary": "This diff updates the login flow, migrates the users table, and adds rate limiting to API endpoints."
 }}"""
 
+_ANTHROPIC_JSON_SUFFIX = "\n\nRespond with raw JSON only. No markdown formatting. No code fences."
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator response models (dataclasses — pydantic not in dependencies)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DetectedArea:
+    emoji: str
+    description: str
+
+
+@dataclass
+class SelectedAgent:
+    emoji: str
+    name: str
+    reason: str
+
+
+@dataclass
+class OrchestratorResponse:
+    detected_areas: list[DetectedArea]
+    selected_agents: list[SelectedAgent]
+    languages: list[str]
+    risk_areas: list[str]
+    summary: str
+
+
+def _parse_orchestrator_response(raw: str) -> OrchestratorResponse:
+    """Parse raw JSON string into OrchestratorResponse.
+
+    Raises ValueError on malformed or incomplete data so callers can
+    fall back gracefully.
+    """
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("Expected JSON object")
+
+    for key in ("detected_areas", "selected_agents", "languages", "risk_areas", "summary"):
+        if key not in data:
+            raise ValueError(f"Missing required field: {key}")
+
+    detected_areas = [
+        DetectedArea(emoji=str(a.get("emoji", "")), description=str(a.get("description", "")))
+        for a in data["detected_areas"]
+        if isinstance(a, dict)
+    ]
+    selected_agents = [
+        SelectedAgent(
+            emoji=str(a.get("emoji", "")),
+            name=str(a.get("name", "")),
+            reason=str(a.get("reason", "")),
+        )
+        for a in data["selected_agents"]
+        if isinstance(a, dict)
+    ]
+
+    return OrchestratorResponse(
+        detected_areas=detected_areas,
+        selected_agents=selected_agents,
+        languages=[str(lang) for lang in data["languages"]],
+        risk_areas=[str(r) for r in data["risk_areas"]],
+        summary=str(data["summary"]),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal result (passed to agents — unchanged contract)
+# ---------------------------------------------------------------------------
 
 @dataclass
 class SharedAnalysisResult:
@@ -49,6 +159,7 @@ class SharedAnalysisResult:
     summary: str
     raw_response: str = ""
     error: str = ""
+    orchestrator_response: OrchestratorResponse | None = field(default=None, repr=False)
 
     @property
     def success(self) -> bool:
@@ -84,31 +195,79 @@ def _build_diff_summary(changes: list[FileChange], max_lines_per_file: int) -> s
     return "\n\n".join(parts)
 
 
+def _detect_provider(client: "AIClient") -> str:
+    """Best-effort provider detection from client instance type name."""
+    type_name = type(client).__name__.lower()
+    if "anthropic" in type_name:
+        return "anthropic"
+    if "azure" in type_name:
+        return "azure"
+    if "openrouter" in type_name:
+        return "openrouter"
+    if "openai" in type_name:
+        return "openai"
+    return ""
+
+
 def run_shared_analysis(
     changes: list[FileChange],
     client: "AIClient",
     max_diff_summary_lines: int = 100,
+    provider: str = "",
 ) -> SharedAnalysisResult:
     """
     Run the shared analysis AI call.
 
     - Builds a compact diff summary (first max_diff_summary_lines lines per file)
     - Calls client.complete() with SHARED_ANALYSIS_PROMPT
-    - Parses JSON response into SharedAnalysisResult
+    - Parses JSON response into OrchestratorResponse for transparency logging
+    - Converts to SharedAnalysisResult for internal agent consumption
+    - Provider-aware: Anthropic gets explicit JSON suffix; OpenAI-compatible
+      providers (openai, azure, openrouter, google, groq, custom) omit the
+      suffix.  NOTE: response_format=json_object is not yet forwarded via
+      AIClient.complete() — see REVUE-107.
     - On any failure: returns SharedAnalysisResult.fallback() — never raises
     """
     languages = _detect_languages(changes)
     try:
         diff_summary = _build_diff_summary(changes, max_diff_summary_lines)
         prompt = SHARED_ANALYSIS_PROMPT.format(diff_summary=diff_summary)
+
+        # AC5: Provider-specific JSON handling
+        resolved_provider = provider or _detect_provider(client)
+        if resolved_provider not in _JSON_FORMAT_PROVIDERS:
+            # Anthropic and unknown providers: prompt engineering for JSON
+            prompt += _ANTHROPIC_JSON_SUFFIX
+
         raw = client.complete([{"role": "user", "content": prompt}])
-        data = json.loads(raw)
+        _log.debug("Shared analysis raw response (%d chars): %.300r", len(raw), raw)
+        # Strip markdown code fences that LLMs often wrap responses in
+        clean = raw.strip()
+        clean = re.sub(r"^```(?:json)?\s*\n?", "", clean)
+        clean = re.sub(r"\n?```\s*$", "", clean)
+        clean = clean.strip()
+        if not clean:
+            raise ValueError("LLM returned empty response after fence stripping")
+        data = json.loads(clean)
+
+        # Try to parse the structured OrchestratorResponse (new format)
+        orch_response: OrchestratorResponse | None = None
+        try:
+            orch_response = _parse_orchestrator_response(clean)
+        except (ValueError, KeyError, TypeError):
+            pass  # Graceful degradation — legacy format still works
+
         return SharedAnalysisResult(
             languages=data.get("languages", languages),
             risk_areas=data.get("risk_areas", []),
             suggested_agents=data.get("suggested_agents", ["zara", "kai", "maya", "leo"]),
             summary=data.get("summary", ""),
             raw_response=raw,
+            orchestrator_response=orch_response,
         )
-    except Exception:
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
+        _log.warning("Shared analysis failed: %s", exc)
+        return SharedAnalysisResult.fallback(languages)
+    except (OSError, AttributeError) as exc:
+        _log.error("Shared analysis failed (system error): %s", exc, exc_info=True)
         return SharedAnalysisResult.fallback(languages)

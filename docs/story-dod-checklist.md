@@ -142,6 +142,7 @@ The goal is quality delivery, not just checking boxes.]]
      - Types: `feat`, `fix`, `chore`, `refactor`, `test`, `docs`, `ci`
    - [ ] PR title follows the same format: `feat(scope)[TICKET-ID]: Short description`
    - [ ] Branch name references the ticket: `feat/TICKET-ID-short-description` or `fix/TICKET-ID-short-description`
+   - [ ] PR description follows the official template at `.bitbucket/pull_request_template.md` — every required section filled in (🎯 Ticket, 📝 Summary, 🔧 Changes, ✅ Acceptance Criteria, 🧪 Testing, 📊 Impact, 📋 Checklist). See `docs/PR_TEMPLATE_GUIDE.md` for guidance.
    - [ ] PR links back to the ticket (in description or via smart commit if using Jira)
 
 9. **Board Sync (NON-NEGOTIABLE — story is NOT done until PR is merged AND Jira is updated):**

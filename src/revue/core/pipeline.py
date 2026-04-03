@@ -95,8 +95,9 @@ def _import_orchestration():
         from revue.core.agent_runner import run_agents_parallel
         from revue.core.nova_consolidator import consolidate
         from revue.core.shared_analysis import run_shared_analysis
+        from revue.core.formatting import format_selection_message
         from revue.core.cleo_router import route
-        return load_all_agents, run_agents_parallel, consolidate, run_shared_analysis, route
+        return load_all_agents, run_agents_parallel, consolidate, run_shared_analysis, route, format_selection_message
     except ImportError as exc:
         raise RuntimeError(
             f"Orchestration engine unavailable: {exc}. "
@@ -373,16 +374,27 @@ class ReviewPipeline:
             flush=True,
         )
 
-        load_all_agents, run_agents_parallel, consolidate, run_shared_analysis, route = (
+        load_all_agents, run_agents_parallel, consolidate, run_shared_analysis, route, format_selection_message = (
             _import_orchestration()
         )
 
         # 1. Shared analysis — one AI call to classify the diff for all agents
         print("[revue]   Running shared diff analysis...", flush=True)
         try:
-            shared = run_shared_analysis(included, self._client)
+            shared = run_shared_analysis(
+                included, self._client, provider=self.config.provider,
+            )
             if shared.success:
-                print(f"[revue]   Shared analysis: {shared.summary[:80]}...", flush=True)
+                # REVUE-95: log human-readable selection transparency message
+                if shared.orchestrator_response and (
+                    shared.orchestrator_response.detected_areas or
+                    shared.orchestrator_response.selected_agents
+                ):
+                    msg = format_selection_message(shared.orchestrator_response)
+                    for line in msg.splitlines():
+                        print(f"[revue]   {line}", flush=True)
+                else:
+                    print(f"[revue]   Shared analysis: {shared.summary[:80]}...", flush=True)
             else:
                 # Surface the actual error so it's diagnosable in CI logs
                 print(

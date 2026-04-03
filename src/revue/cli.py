@@ -303,9 +303,8 @@ def cmd_review(
     else:
         # markdown (default)
         for r in results:
-            print(f"## {r['file']}\n")
+            print(f"## {r['file']}")
             print(r["review"])
-            print()
 
     return 0
 
