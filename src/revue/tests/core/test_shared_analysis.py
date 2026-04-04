@@ -203,6 +203,37 @@ def test_format_selection_message_empty_agents():
     assert "Starting review..." in msg
 
 
+def test_format_selection_message_both_empty():
+    """REVUE-95: when both lists are empty, show explanation with summary."""
+    resp = OrchestratorResponse(
+        detected_areas=[],
+        selected_agents=[],
+        languages=["yaml"],
+        risk_areas=[],
+        summary="Configuration file update.",
+    )
+    msg = format_selection_message(resp)
+    assert "🔍 Analyzing your changes..." in msg
+    assert "No specialist agents required" in msg
+    assert "Summary: Configuration file update." in msg
+    assert "Starting review..." in msg
+
+
+def test_format_selection_message_both_empty_no_summary():
+    """REVUE-95: empty lists with no summary still shows explanation."""
+    resp = OrchestratorResponse(
+        detected_areas=[],
+        selected_agents=[],
+        languages=[],
+        risk_areas=[],
+        summary="",
+    )
+    msg = format_selection_message(resp)
+    assert "No specialist agents required" in msg
+    assert "Summary:" not in msg
+    assert "Starting review..." in msg
+
+
 # ---------------------------------------------------------------------------
 # REVUE-95: OrchestratorResponse validation tests
 # ---------------------------------------------------------------------------

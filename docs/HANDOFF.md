@@ -149,6 +149,7 @@ programming errors or permission issues and log at `error` with full stack trace
    system errors (programming bugs or permission issues) log at `error` with `exc_info=True`
    for security review.
 
+
 ---
 
 ## Lessons Learned

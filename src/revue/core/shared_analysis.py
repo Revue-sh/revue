@@ -254,8 +254,8 @@ def run_shared_analysis(
         orch_response: OrchestratorResponse | None = None
         try:
             orch_response = _parse_orchestrator_response(clean)
-        except (ValueError, KeyError, TypeError):
-            pass  # Graceful degradation — legacy format still works
+        except (ValueError, KeyError, TypeError) as exc:
+            _log.info("OrchestratorResponse parse failed (%s) — using legacy format", exc)
 
         return SharedAnalysisResult(
             languages=data.get("languages", languages),
