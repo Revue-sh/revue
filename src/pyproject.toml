@@ -24,7 +24,7 @@ revue = "revue.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["revue*", "cli*", "reviews*", "db*"]
-exclude = ["AIReviewer*", "web*"]
+exclude = ["web*"]
 
 [tool.pytest.ini_options]
 testpaths = ["revue/tests"]
