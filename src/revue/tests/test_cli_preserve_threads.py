@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
-"""Tests for CLI comment thread preservation logic (REVUE-104 DoD — Gap 2).
+"""Tests for CLI duplicate comment deduplication (REVUE-110 AC1/AC2/AC4/AC5).
 
-Tests exercise the per-issue comment loop in _post_to_bitbucket() with
-the preserve_comment_threads feature flag on and off.
+The preserve_threads feature flag was removed in REVUE-110. Deduplication is
+now always on via PerPRCommentStore. These tests verify that behaviour.
 
-Strategy: mock the adapter, state store, file store, and config so that
-we can observe call patterns without real I/O.
+Strategy:
+- Real PerPRCommentStore rooted at tmp_path (via patched os.getcwd)
+- Mocked BitbucketAdapter (no real API calls)
+- Mocked CommentFileStore (summary tracking — not under test here)
+- Mocked parse_diff_file (returns empty list → fingerprint falls back to line_number)
 """
-
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from revue.comments.models import CommentState, Platform
+from revue.comments.json_store import PerPRCommentStore
+from revue.comments.models import CommentState
 
 
 # =====================================================================
@@ -26,14 +30,12 @@ from revue.comments.models import CommentState, Platform
 
 @dataclass
 class _FakeReviewResult:
-    """Lightweight stand-in for ReviewResult (avoids importing pipeline)."""
     file_path: str
     response: str
     error: str = ""
 
 
 def _make_args(**overrides) -> argparse.Namespace:
-    """Build a minimal argparse.Namespace for _post_to_bitbucket."""
     defaults = dict(
         pr_id="42",
         workspace="ws",
@@ -41,249 +43,460 @@ def _make_args(**overrides) -> argparse.Namespace:
         bb_username="user",
         bb_token="tok",
         comment_style="per-issue",
+        diff="/tmp/fake.diff",
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
 
 def _make_review_response(findings: list[dict]) -> str:
-    """Return a JSON review response string with the given findings."""
     return json.dumps({"findings": findings, "summary": "ok"})
 
 
-_FINDING_A = {"severity": "high", "issue": "SQL injection", "line": 10}
-_FINDING_B = {"severity": "medium", "issue": "Unused import", "line": 20}
+_FINDING_A = {"severity": "high", "issue": "SQL injection", "line": 10,
+              "details": "Unsanitised input", "recommendation": "Use parameterised queries"}
+_FINDING_B = {"severity": "medium", "issue": "Unused import", "line": 20,
+              "details": "Remove it", "recommendation": "Delete line"}
 
 
-def _make_config(preserve: bool) -> MagicMock:
-    """Return a mock AIConfig with preserve_comment_threads flag."""
-    cfg = MagicMock()
-    cfg.preserve_comment_threads = preserve
-    return cfg
+def _run(args, review_results, *, tmp_path, adapter=None, pre_seed=None):
+    """Call _post_to_bitbucket with real PerPRCommentStore (rooted at tmp_path).
 
-
-# Fake PRComment for state store returns
-def _make_pr_comment(fingerprint: str, comment_id: str) -> MagicMock:
-    c = MagicMock()
-    c.finding_fingerprint = fingerprint
-    c.platform_comment_id = comment_id
-    return c
-
-
-# =====================================================================
-# Shared patches
-# =====================================================================
-
-# We need to patch:
-# 1. revue.cli.config (module-global accessed by _post_to_bitbucket)
-# 2. revue.core.bitbucket_adapter.BitbucketAdapter (adapter construction)
-# 3. revue.comments.file_store.CommentFileStore (summary store)
-# 4. revue.comments.state_store.CommentStateStore (thread state)
-# 5. revue.comments.fingerprint.fingerprint (deterministic FPs)
-
-
-def _run_post_to_bitbucket(
-    args,
-    review_results,
-    *,
-    preserve: bool,
-    mock_adapter: MagicMock | None = None,
-    existing_comments: list | None = None,
-    fingerprint_side_effect=None,
-    capsys=None,
-) -> tuple[MagicMock, MagicMock]:
-    """Call _post_to_bitbucket with all dependencies mocked.
-
-    Returns (mock_adapter, mock_state_store).
+    pre_seed: optional callable(PerPRCommentStore) to add entries before the call.
     """
     from revue.cli import _post_to_bitbucket
 
-    adapter = mock_adapter or MagicMock()
-    adapter.post_review_comment.return_value = "new-comment-id"
-    adapter.post_summary_comment.return_value = "summary-id"
-    adapter.update_comment.return_value = False  # no existing summary
-    adapter.resolve_inline_comment.return_value = True
+    mock_adapter = adapter or MagicMock()
+    mock_adapter.post_review_comment.return_value = "new-id-1"
+    mock_adapter.post_summary_comment.return_value = "summary-id"
+    mock_adapter.update_comment.return_value = False
+    mock_adapter.resolve_inline_comment.return_value = True
 
-    mock_config = _make_config(preserve)
+    mock_summary_store = MagicMock()
+    mock_summary_store.get_summary_for_pr.return_value = None
 
-    # Mock FileStore (summary persistence — not under test here)
-    mock_file_store = MagicMock()
-    mock_file_store.get_summary_for_pr.return_value = None
-
-    # Mock StateStore
-    mock_state_store = MagicMock()
-    mock_state_store.get_comments_for_pr.return_value = existing_comments or []
-
-    fp_values = fingerprint_side_effect or (lambda fp, ln, iss: f"fp_{fp}_{ln}_{iss[:8]}")
+    if pre_seed:
+        pre_seed(PerPRCommentStore(tmp_path))
 
     with (
-        patch("revue.core.bitbucket_adapter.BitbucketAdapter", return_value=adapter),
-        patch("revue.comments.file_store.CommentFileStore", return_value=mock_file_store),
-        patch("revue.comments.state_store.CommentStateStore", return_value=mock_state_store),
-        patch("revue.comments.fingerprint.fingerprint", side_effect=fp_values),
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch("revue.core.bitbucket_adapter.BitbucketAdapter", return_value=mock_adapter),
+        patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
+        patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
     ):
-        _post_to_bitbucket(args, review_results, mock_config)
+        _post_to_bitbucket(args, review_results)
 
-    return adapter, mock_state_store
+    return mock_adapter
+
+
+def _run_github(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id="42"):
+    """Call _post_to_github with real PerPRCommentStore (rooted at tmp_path)."""
+    from revue.cli import _post_to_github
+
+    args = argparse.Namespace(
+        pr_id=pr_id,
+        comment_style="per-issue",
+        diff="/tmp/fake.diff",
+    )
+    mock_adapter = adapter or MagicMock()
+    mock_adapter.post_review_comment.return_value = "gh-id-1"
+    mock_adapter.post_summary_comment.return_value = "gh-summary-id"
+    mock_adapter.update_comment.return_value = False
+    mock_adapter.resolve_inline_comment.return_value = True
+
+    mock_summary_store = MagicMock()
+    mock_summary_store.get_summary_for_pr.return_value = None
+
+    if pre_seed:
+        pre_seed(PerPRCommentStore(tmp_path))
+
+    with (
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch.dict(os.environ, {"GITHUB_TOKEN": "tok", "GITHUB_REPOSITORY": "ws/repo"}, clear=False),
+        patch("revue.core.github_adapter.GitHubAdapter", return_value=mock_adapter),
+        patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
+        patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+    ):
+        _post_to_github(args, review_results)
+
+    return mock_adapter
+
+
+def _run_gitlab(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id="42"):
+    """Call _post_to_gitlab with real PerPRCommentStore (rooted at tmp_path)."""
+    from revue.cli import _post_to_gitlab
+
+    args = argparse.Namespace(
+        pr_id=pr_id,
+        comment_style="per-issue",
+        diff="/tmp/fake.diff",
+    )
+    mock_adapter = adapter or MagicMock()
+    mock_adapter.post_review_comment.return_value = "gl-id-1"
+    mock_adapter.post_summary_comment.return_value = "gl-summary-id"
+    mock_adapter.update_comment.return_value = False
+    mock_adapter.resolve_inline_comment.return_value = True
+
+    mock_summary_store = MagicMock()
+    mock_summary_store.get_summary_for_pr.return_value = None
+
+    if pre_seed:
+        pre_seed(PerPRCommentStore(tmp_path))
+
+    with (
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch.dict(os.environ, {"GITLAB_TOKEN": "tok", "CI_PROJECT_PATH": "ws/repo"}, clear=False),
+        patch("revue.core.gitlab_adapter.GitLabAdapter", return_value=mock_adapter),
+        patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
+        patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+    ):
+        _post_to_gitlab(args, review_results)
+
+    return mock_adapter
 
 
 # =====================================================================
-# Flag OFF — default behaviour
+# TC2: No store file → all findings posted, file created
 # =====================================================================
 
-
-def test_flag_off_posts_all_findings_no_state_store(capsys) -> None:
-    """preserve_comment_threads=False: every finding posted, StateStore never used."""
+def test_no_existing_store_all_findings_posted(tmp_path) -> None:
+    """First review: no .json file exists → all findings posted and file created."""
     review_results = [
         _FakeReviewResult(
             file_path="src/app.py",
             response=_make_review_response([_FINDING_A, _FINDING_B]),
-        ),
+        )
     ]
+    adapter = _run(_make_args(), review_results, tmp_path=tmp_path)
 
-    adapter, state_store = _run_post_to_bitbucket(
-        _make_args(), review_results, preserve=False, capsys=capsys,
-    )
-
-    # Both findings should be posted
     assert adapter.post_review_comment.call_count == 2
-
-    # CommentStateStore should never have been called
-    state_store.get_comments_for_pr.assert_not_called()
-    state_store.save_comment.assert_not_called()
-
-
-# =====================================================================
-# Flag ON — new finding
-# =====================================================================
-
-
-def test_flag_on_new_finding_posts_and_saves(capsys) -> None:
-    """Flag ON + fingerprint NOT in state: comment posted, then saved to state."""
-    review_results = [
-        _FakeReviewResult(
-            file_path="src/app.py",
-            response=_make_review_response([_FINDING_A]),
-        ),
-    ]
-
-    adapter, state_store = _run_post_to_bitbucket(
-        _make_args(), review_results,
-        preserve=True,
-        existing_comments=[],  # no prior comments
-        capsys=capsys,
-    )
-
-    # Finding is new — should be posted
-    assert adapter.post_review_comment.call_count == 1
-
-    # And saved to state store
-    assert state_store.save_comment.call_count == 1
-    save_call = state_store.save_comment.call_args
-    assert save_call.kwargs.get("platform_comment_id") == "new-comment-id"
+    # Store file must now exist
+    store_file = tmp_path / ".revue" / "comments" / "bitbucket-PR-42.json"
+    assert store_file.exists()
 
 
 # =====================================================================
-# Flag ON — existing finding (AC1: preserve thread)
+# TC1: Existing fingerprint → post NOT called (AC1)
 # =====================================================================
 
+def test_existing_fingerprint_skips_post(tmp_path, capsys) -> None:
+    """Re-review: fingerprint already in store → post_review_comment NOT called."""
+    # Pre-seed the store with FINDING_A's fingerprint.
+    # fingerprint(file_path, line, diff="") → sha256("src/app.py:10")[:16]
+    from revue.comments.fingerprint import fingerprint as fp_func
 
-def test_flag_on_existing_finding_skips_post(capsys) -> None:
-    """Flag ON + fingerprint IS in state: post_review_comment NOT called (AC1)."""
-    # The fingerprint function will be called with (file_path, line, issue)
-    # We need the returned fingerprint to match one in existing_comments
-    fp_value = "fp_existing"
+    pre_fp = fp_func("src/app.py", 10, "")
+
+    def pre_seed(store: PerPRCommentStore):
+        store.save_finding(
+            platform="bitbucket", pr_number=42,
+            file_path="src/app.py", fingerprint=pre_fp,
+            platform_comment_id="old-id-99", line_number=10,
+            comment_body="old body",
+        )
 
     review_results = [
         _FakeReviewResult(
             file_path="src/app.py",
-            response=_make_review_response([_FINDING_A]),
-        ),
+            response=_make_review_response([_FINDING_A]),  # same finding
+        )
     ]
+    adapter = _run(_make_args(), review_results, tmp_path=tmp_path, pre_seed=pre_seed)
 
-    existing = [_make_pr_comment(fingerprint=fp_value, comment_id="old-id-999")]
-
-    adapter, state_store = _run_post_to_bitbucket(
-        _make_args(), review_results,
-        preserve=True,
-        existing_comments=existing,
-        fingerprint_side_effect=lambda *_args: fp_value,
-        capsys=capsys,
-    )
-
-    # Existing thread preserved — no new comment posted
+    # Already posted → must be skipped
     adapter.post_review_comment.assert_not_called()
 
-    # Skipped count should be 1 — check output
+    # Output must mention "preserved"
     captured = capsys.readouterr()
-    assert "preserved" in captured.out.lower() or "1 preserved" in captured.out
+    assert "preserved" in captured.out.lower()
 
 
 # =====================================================================
-# Flag ON — fixed finding (AC3: auto-resolve)
+# TC4: New finding → posted and saved to store (AC2)
 # =====================================================================
 
+def test_new_finding_posted_and_saved_to_store(tmp_path) -> None:
+    """New finding: posted to platform and saved to PerPRCommentStore."""
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([_FINDING_A]),
+        )
+    ]
+    adapter = _run(_make_args(), review_results, tmp_path=tmp_path)
 
-def test_flag_on_fixed_finding_resolves_comment(capsys) -> None:
-    """Flag ON + fingerprint in state but NOT in new review: resolve_inline_comment called (AC3)."""
-    # Old finding that no longer appears in review
-    old_fp = "fp_old_fixed"
-    existing = [_make_pr_comment(fingerprint=old_fp, comment_id="old-comment-77")]
+    assert adapter.post_review_comment.call_count == 1
 
-    # New review has NO findings (the old one is fixed)
+    store = PerPRCommentStore(tmp_path)
+    from revue.comments.fingerprint import fingerprint as fp_func
+    fp = fp_func("src/app.py", 10, "")
+    assert store.has_fingerprint("bitbucket", 42, "src/app.py", fp)
+
+
+# =====================================================================
+# TC5: Fixed finding → auto-resolve called (AC5)
+# =====================================================================
+
+def test_fixed_finding_triggers_auto_resolve(tmp_path) -> None:
+    """Finding in store + absent from new review → resolve_inline_comment called."""
+    from revue.comments.fingerprint import fingerprint as fp_func
+
+    old_fp = fp_func("src/app.py", 10, "")
+
+    def pre_seed(store: PerPRCommentStore):
+        store.save_finding(
+            platform="bitbucket", pr_number=42,
+            file_path="src/app.py", fingerprint=old_fp,
+            platform_comment_id="old-comment-77", line_number=10,
+            comment_body="old finding",
+        )
+
+    # New review has NO findings for this file → old finding is now fixed
     review_results = [
         _FakeReviewResult(
             file_path="src/app.py",
             response=_make_review_response([]),
-        ),
+        )
     ]
+    adapter = _run(_make_args(), review_results, tmp_path=tmp_path, pre_seed=pre_seed)
 
-    adapter, state_store = _run_post_to_bitbucket(
-        _make_args(), review_results,
-        preserve=True,
-        existing_comments=existing,
-        capsys=capsys,
-    )
-
-    # resolve_inline_comment should be called with the old comment ID
     adapter.resolve_inline_comment.assert_called_once_with(
         pr_id=42,
         comment_id="old-comment-77",
-        reply_body="\u2705 Issue appears to be resolved in latest commit.",
+        reply_body="✅ Issue appears to be resolved in latest commit.",
     )
 
-    # State store transition should record the resolution
-    state_store.transition_state.assert_called_once()
-    t_call = state_store.transition_state.call_args
-    assert t_call.kwargs.get("fingerprint") == old_fp
-    assert t_call.kwargs.get("to_state") == CommentState.RESOLVED
-    assert t_call.kwargs.get("reason") == "auto-resolved"
+    # State must be updated in store
+    store = PerPRCommentStore(tmp_path)
+    unresolved = store.get_unresolved_fingerprints("bitbucket", 42)
+    assert old_fp not in unresolved
 
 
 # =====================================================================
-# Flag ON — output message includes "preserved"
+# Separate PRs are isolated
 # =====================================================================
 
+def test_separate_pr_numbers_are_isolated(tmp_path) -> None:
+    """Findings for PR 42 do not bleed into PR 43."""
+    from revue.comments.fingerprint import fingerprint as fp_func
+    fp = fp_func("src/app.py", 10, "")
 
-def test_flag_on_skipped_output_message_includes_preserved(capsys) -> None:
-    """When skipped > 0, stdout includes 'preserved' in the message."""
-    fp_value = "fp_dup"
-    existing = [_make_pr_comment(fingerprint=fp_value, comment_id="888")]
+    def pre_seed(store: PerPRCommentStore):
+        store.save_finding(
+            platform="bitbucket", pr_number=42,
+            file_path="src/app.py", fingerprint=fp,
+            platform_comment_id="id-pr42", line_number=10, comment_body="x",
+        )
+
+    # Review against PR 43 — store has nothing for it → should post
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([_FINDING_A]),
+        )
+    ]
+    adapter = _run(_make_args(pr_id="43"), review_results, tmp_path=tmp_path, pre_seed=pre_seed)
+
+    assert adapter.post_review_comment.call_count == 1
+
+
+# =====================================================================
+# GitHub: AC2 new finding posted + AC1 duplicate skipped (TC4/TC1)
+# =====================================================================
+
+def test_github_new_finding_posted(tmp_path) -> None:
+    """GitHub: first review → finding posted, stored under platform='github'."""
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([_FINDING_A]),
+        )
+    ]
+    adapter = _run_github(review_results, tmp_path=tmp_path)
+
+    assert adapter.post_review_comment.call_count == 1
+
+    store = PerPRCommentStore(tmp_path)
+    from revue.comments.fingerprint import fingerprint as fp_func
+    fp = fp_func("src/app.py", 10, "")
+    assert store.has_fingerprint("github", 42, "src/app.py", fp)
+
+
+def test_github_existing_fingerprint_skips_post(tmp_path) -> None:
+    """GitHub: fingerprint already in store → post_review_comment NOT called."""
+    from revue.comments.fingerprint import fingerprint as fp_func
+
+    pre_fp = fp_func("src/app.py", 10, "")
+
+    def pre_seed(store: PerPRCommentStore):
+        store.save_finding(
+            platform="github", pr_number=42,
+            file_path="src/app.py", fingerprint=pre_fp,
+            platform_comment_id="gh-old-99", line_number=10,
+            comment_body="old body",
+        )
 
     review_results = [
         _FakeReviewResult(
             file_path="src/app.py",
             response=_make_review_response([_FINDING_A]),
-        ),
+        )
     ]
+    adapter = _run_github(review_results, tmp_path=tmp_path, pre_seed=pre_seed)
 
-    _run_post_to_bitbucket(
-        _make_args(), review_results,
-        preserve=True,
-        existing_comments=existing,
-        fingerprint_side_effect=lambda *_args: fp_value,
-        capsys=capsys,
+    adapter.post_review_comment.assert_not_called()
+
+
+def test_github_fixed_finding_triggers_auto_resolve(tmp_path) -> None:
+    """GitHub: finding in store + absent from new review → resolve_inline_comment called."""
+    from revue.comments.fingerprint import fingerprint as fp_func
+
+    old_fp = fp_func("src/app.py", 10, "")
+
+    def pre_seed(store: PerPRCommentStore):
+        store.save_finding(
+            platform="github", pr_number=42,
+            file_path="src/app.py", fingerprint=old_fp,
+            platform_comment_id="gh-comment-77", line_number=10,
+            comment_body="old finding",
+        )
+
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([]),
+        )
+    ]
+    adapter = _run_github(review_results, tmp_path=tmp_path, pre_seed=pre_seed)
+
+    adapter.resolve_inline_comment.assert_called_once_with(
+        pr_id=42,
+        comment_id="gh-comment-77",
+        reply_body="✅ Issue appears to be resolved in latest commit.",
     )
 
+    store = PerPRCommentStore(tmp_path)
+    unresolved = store.get_unresolved_fingerprints("github", 42)
+    assert old_fp not in unresolved
+
+
+# =====================================================================
+# GitLab: AC2 new finding posted + AC1 duplicate skipped (TC4/TC1)
+# =====================================================================
+
+def test_gitlab_new_finding_posted(tmp_path) -> None:
+    """GitLab: first review → finding posted, stored under platform='gitlab'."""
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([_FINDING_A]),
+        )
+    ]
+    adapter = _run_gitlab(review_results, tmp_path=tmp_path)
+
+    assert adapter.post_review_comment.call_count == 1
+
+    store = PerPRCommentStore(tmp_path)
+    from revue.comments.fingerprint import fingerprint as fp_func
+    fp = fp_func("src/app.py", 10, "")
+    assert store.has_fingerprint("gitlab", 42, "src/app.py", fp)
+
+
+def test_gitlab_existing_fingerprint_skips_post(tmp_path) -> None:
+    """GitLab: fingerprint already in store → post_review_comment NOT called."""
+    from revue.comments.fingerprint import fingerprint as fp_func
+
+    pre_fp = fp_func("src/app.py", 10, "")
+
+    def pre_seed(store: PerPRCommentStore):
+        store.save_finding(
+            platform="gitlab", pr_number=42,
+            file_path="src/app.py", fingerprint=pre_fp,
+            platform_comment_id="gl-old-99", line_number=10,
+            comment_body="old body",
+        )
+
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([_FINDING_A]),
+        )
+    ]
+    adapter = _run_gitlab(review_results, tmp_path=tmp_path, pre_seed=pre_seed)
+
+    adapter.post_review_comment.assert_not_called()
+
+
+def test_gitlab_fixed_finding_triggers_auto_resolve(tmp_path) -> None:
+    """GitLab: finding in store + absent from new review → resolve_inline_comment called."""
+    from revue.comments.fingerprint import fingerprint as fp_func
+
+    old_fp = fp_func("src/app.py", 10, "")
+
+    def pre_seed(store: PerPRCommentStore):
+        store.save_finding(
+            platform="gitlab", pr_number=42,
+            file_path="src/app.py", fingerprint=old_fp,
+            platform_comment_id="gl-comment-77", line_number=10,
+            comment_body="old finding",
+        )
+
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([]),
+        )
+    ]
+    adapter = _run_gitlab(review_results, tmp_path=tmp_path, pre_seed=pre_seed)
+
+    adapter.resolve_inline_comment.assert_called_once_with(
+        pr_id=42,
+        comment_id="gl-comment-77",
+        reply_body="✅ Issue appears to be resolved in latest commit.",
+    )
+
+    store = PerPRCommentStore(tmp_path)
+    unresolved = store.get_unresolved_fingerprints("gitlab", 42)
+    assert old_fp not in unresolved
+
+
+# =====================================================================
+# Missing credentials → warning printed, nothing posted (Quinn #6)
+# =====================================================================
+
+def test_github_missing_token_prints_warning_and_skips(tmp_path, capsys) -> None:
+    """GITHUB_TOKEN absent → stderr warning, post_review_comment never called."""
+    from revue.cli import _post_to_github
+
+    args = argparse.Namespace(pr_id="42", comment_style="per-issue", diff="/tmp/fake.diff")
+    mock_adapter = MagicMock()
+
+    with (
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch.dict(os.environ, {}, clear=True),  # no GITHUB_TOKEN
+        patch("revue.core.github_adapter.GitHubAdapter", return_value=mock_adapter),
+    ):
+        _post_to_github(args, [])
+
     captured = capsys.readouterr()
-    assert "preserved" in captured.out.lower()
+    assert "GITHUB_TOKEN" in captured.err
+    mock_adapter.post_review_comment.assert_not_called()
+
+
+def test_gitlab_missing_token_prints_warning_and_skips(tmp_path, capsys) -> None:
+    """GITLAB_TOKEN absent → stderr warning, post_review_comment never called."""
+    from revue.cli import _post_to_gitlab
+
+    args = argparse.Namespace(pr_id="42", comment_style="per-issue", diff="/tmp/fake.diff")
+    mock_adapter = MagicMock()
+
+    with (
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch.dict(os.environ, {}, clear=True),  # no GITLAB_TOKEN
+        patch("revue.core.gitlab_adapter.GitLabAdapter", return_value=mock_adapter),
+    ):
+        _post_to_gitlab(args, [])
+
+    captured = capsys.readouterr()
+    assert "GITLAB_TOKEN" in captured.err
+    mock_adapter.post_review_comment.assert_not_called()
