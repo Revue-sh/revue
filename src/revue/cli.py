@@ -765,13 +765,39 @@ def _post_to_platform(
             print(f"Warning: Failed to post review summary to {pr_label}", file=sys.stderr)
 
     if comment_style == "per-issue":
-        posted, skipped, total_findings = _run_per_issue_dedup(
-            adapter, pr_num, platform_str, review_results, diff_by_file, dedup_store
-        )
+        # Pre-count from Nova's consolidated list so summary is always accurate
+        # whether it's posted before or after inline comments.
+        total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
+        for rr in review_results:
+            if rr.error or not rr.response:
+                continue
+            try:
+                findings, _ = _parse_findings(rr.response)
+                for f in findings:
+                    sev = f.get("severity", "low").lower()
+                    if sev in total_findings:
+                        total_findings[sev] += 1
+            except Exception:
+                pass
+
         summary_body = _build_enhanced_summary(
             review_results, total_findings, _revision, _last_updated
         )
-        _post_or_update_summary(summary_body)
+
+        # GitLab shows comments newest-first: post inline first, summary last
+        # (summary lands at the top).  Bitbucket/GitHub show oldest-first: post
+        # summary first so it stays pinned at the top of the thread.
+        gitlab_order = (platform_str == "gitlab")
+        if not gitlab_order:
+            _post_or_update_summary(summary_body)
+
+        posted, skipped, _ = _run_per_issue_dedup(
+            adapter, pr_num, platform_str, review_results, diff_by_file, dedup_store
+        )
+
+        if gitlab_order:
+            _post_or_update_summary(summary_body)
+
         if skipped > 0:
             print(f"[revue] Review posted to {pr_label} #{pr_id} — {posted} new, {skipped} preserved inline comment(s)")
         else:
