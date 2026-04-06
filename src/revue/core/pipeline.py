@@ -57,6 +57,29 @@ _LICENCE_NAME_TO_AGENT: dict[str, str] = {
 _VIRTUAL_AGENTS = frozenset({"orchestrator", "sage"})
 
 
+def _short_error(error: str) -> str:
+    """Return a brief, human-readable summary of an agent error string.
+
+    Rate-limit JSON blobs and other verbose SDK errors are condensed to a
+    single line so the '⚠ Agent X failed:' log stays readable. The full
+    reason has already been printed by _with_retry's ❌ RATE LIMIT ERROR block.
+    """
+    if not error:
+        return "unknown error"
+    low = error.lower()
+    if "rate_limit" in low or "rate limit" in low or "429" in low:
+        return "rate limit exceeded (see ❌ RATE LIMIT ERROR above)"
+    if "timeout" in low or "timed out" in low:
+        return "timed out"
+    if "401" in low or "403" in low or "authentication" in low or "unauthorized" in low:
+        return "authentication error"
+    if "500" in low or "502" in low or "503" in low:
+        return "server error"
+    # Fallback: first line only, capped at 120 chars
+    first_line = error.split("\n")[0]
+    return first_line[:120] + ("…" if len(first_line) > 120 else "")
+
+
 class AllAgentsFailedError(RuntimeError):
     """Raised when all reviewer agents failed due to a fatal infrastructure error.
 
@@ -506,7 +529,7 @@ class ReviewPipeline:
         failed = [r for r in parallel_result.agent_results if not r.success]
         if failed:
             for f in failed:
-                reason = "timed out" if f.timed_out else f.error
+                reason = "timed out" if f.timed_out else _short_error(f.error)
                 print(f"[revue]   ⚠ Agent {f.agent_name} failed: {reason}", flush=True)
 
         # Per-agent finding count — makes 0-finding runs diagnosable
@@ -528,11 +551,6 @@ class ReviewPipeline:
         # This keeps process control out of the pipeline (SRP/OCP).
         if reviewer_agents and not agents_used:
             first_error = failed[0].error if failed else "unknown"
-            print(
-                f"[revue] ✗ All agents failed — review aborted.\n"
-                f"[revue]   Check API credentials, credit balance, and network connectivity.",
-                flush=True,
-            )
             raise AllAgentsFailedError(first_error)
 
         # 5. Nova consolidation — deduplicate across agents

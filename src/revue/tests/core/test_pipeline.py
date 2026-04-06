@@ -584,9 +584,6 @@ def test_pipeline_aborts_when_all_agents_fail(capsys):
     # first_error attribute carries the raw agent error (not in __str__ to avoid re-exposure)
     assert "credit balance too low" in exc_info.value.first_error
     assert "All agents failed" in str(exc_info.value)
-    captured = capsys.readouterr()
-    assert "All agents failed" in captured.out
-    assert "aborted" in captured.out
 
 
 def test_partial_failure_does_not_abort_agent_runner():
