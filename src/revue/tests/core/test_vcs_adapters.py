@@ -556,7 +556,9 @@ def test_gitlab_post_inline_comment_with_position() -> None:
         new_line=10,
     )
 
-    with patch.object(adapter, "_request", return_value={"id": "disc-1"}) as mock_req:
+    version_resp = [{"base_commit_sha": "base111", "start_commit_sha": "start222", "head_commit_sha": "head333"}]
+    discussion_resp = {"id": "disc-1"}
+    with patch.object(adapter, "_request", side_effect=[version_resp, discussion_resp]) as mock_req:
         result = adapter.post_inline_comment(1, pos, "Fix this!")
 
     assert result == "disc-1"  # Returns discussion ID as string (REVUE-104)
@@ -565,8 +567,9 @@ def test_gitlab_post_inline_comment_with_position() -> None:
     assert path.endswith("/discussions")
     assert body["body"] == "Fix this!"
     pos_obj = body["position"]
-    assert pos_obj["base_sha"] == "abc123def456"
-    assert pos_obj["head_sha"] == "abc123def456"
+    assert pos_obj["base_sha"] == "base111"
+    assert pos_obj["start_sha"] == "start222"
+    assert pos_obj["head_sha"] == "head333"
     assert pos_obj["new_path"] == "src/app.py"
     assert pos_obj["old_path"] == "src/app.py"
     assert pos_obj["new_line"] == 10
@@ -798,20 +801,22 @@ def test_github_post_inline_comment_alias_still_works() -> None:
 
 def test_gitlab_post_review_comment_canonical_name() -> None:
     """GitLab post_review_comment returns discussion ID string (REVUE-104)."""
+    versions_resp = json.dumps([{"base_commit_sha": "b1", "start_commit_sha": "s1", "head_commit_sha": "h1"}]).encode()
     discussion_resp = json.dumps({"id": "abc123"}).encode()
     adapter = GitLabAdapter(token="tok", project_id=42)
     position = DiffPosition(file_path="lib/auth.rb", line_number=10)
-    with patch("urllib.request.urlopen", return_value=_make_resp(discussion_resp)):
+    with patch("urllib.request.urlopen", side_effect=[_make_resp(versions_resp), _make_resp(discussion_resp)]):
         result = adapter.post_review_comment(1, position, "Fix this")
     assert result == "abc123"
 
 
 def test_gitlab_post_inline_comment_alias_still_works() -> None:
     """GitLab post_inline_comment alias returns discussion ID string (REVUE-104)."""
+    versions_resp = json.dumps([{"base_commit_sha": "b2", "start_commit_sha": "s2", "head_commit_sha": "h2"}]).encode()
     discussion_resp = json.dumps({"id": "abc124"}).encode()
     adapter = GitLabAdapter(token="tok", project_id=42)
     position = DiffPosition(file_path="lib/auth.rb", line_number=10)
-    with patch("urllib.request.urlopen", return_value=_make_resp(discussion_resp)):
+    with patch("urllib.request.urlopen", side_effect=[_make_resp(versions_resp), _make_resp(discussion_resp)]):
         result = adapter.post_inline_comment(1, position, "Still works!")
     assert result == "abc124"
 

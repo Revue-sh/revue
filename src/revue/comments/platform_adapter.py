@@ -300,6 +300,21 @@ class GitLabAdapter(PlatformAdapter):
         self.base_url = f"{base_url}/api/v4"
         self.headers = {"PRIVATE-TOKEN": token}
     
+    def _get_mr_version_shas(self, project_id: str, pr_number: int) -> tuple[str, str, str]:
+        """Return (base_commit_sha, start_commit_sha, head_commit_sha) from the latest MR version.
+
+        GitLab's discussions API requires these exact SHAs — computing them from the commits
+        list produces wrong values and causes HTTP 400 rejections.
+        """
+        versions_url = f"{self.base_url}/projects/{project_id}/merge_requests/{pr_number}/versions"
+        resp = httpx.get(versions_url, headers=self.headers)
+        resp.raise_for_status()
+        versions = resp.json()
+        if not versions:
+            raise ValueError(f"No MR versions found for MR {pr_number}")
+        latest = versions[0]  # most recent version is first
+        return latest["base_commit_sha"], latest["start_commit_sha"], latest["head_commit_sha"]
+
     def post_comment(
         self,
         repo_owner: str,
@@ -312,36 +327,30 @@ class GitLabAdapter(PlatformAdapter):
     ) -> tuple[str, Optional[str]]:
         """Post discussion note to GitLab MR."""
         project_id = f"{repo_owner}%2F{repo_name}"
-        
-        # Get base commit (parent of head)
-        commits_url = f"{self.base_url}/projects/{project_id}/merge_requests/{pr_number}/commits"
-        commits_response = httpx.get(commits_url, headers=self.headers)
-        commits_response.raise_for_status()
-        commits = commits_response.json()
-        
-        base_sha = commits[-1]['parent_ids'][0] if len(commits) > 1 else commits[0]['parent_ids'][0]
-        
+
+        base_sha, start_sha, head_sha = self._get_mr_version_shas(project_id, pr_number)
+
         url = f"{self.base_url}/projects/{project_id}/merge_requests/{pr_number}/discussions"
-        
+
         payload = {
             "body": body,
             "position": {
                 "base_sha": base_sha,
-                "head_sha": commit_sha,
-                "start_sha": base_sha,
+                "head_sha": head_sha,
+                "start_sha": start_sha,
                 "position_type": "text",
                 "new_path": file_path,
                 "new_line": line_number
             }
         }
-        
+
         response = httpx.post(url, json=payload, headers=self.headers)
         response.raise_for_status()
-        
+
         data = response.json()
         discussion_id = data['id']
         note_id = str(data['notes'][0]['id'])
-        
+
         return (note_id, discussion_id)
     
     def resolve_comment(

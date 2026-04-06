@@ -24,9 +24,12 @@ revue-review:
   stage: review
   image: python:3.12-slim
   cache:
-    key: pip-$CI_COMMIT_REF_SLUG
-    paths:
-      - .pip-cache/
+    - key: pip-$CI_COMMIT_REF_SLUG
+      paths:
+        - .pip-cache/
+    - key: revue-state-$CI_MERGE_REQUEST_IID
+      paths:
+        - .revue/
   variables:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
     APP_ENV: staging

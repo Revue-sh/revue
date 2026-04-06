@@ -133,6 +133,19 @@ class GitLabAdapter:
             )
         return changes
 
+    def _get_mr_version_shas(self, pr_id: int) -> tuple[str, str, str]:
+        """Return (base_commit_sha, start_commit_sha, head_commit_sha) from the latest MR version.
+
+        GET /projects/{project_id}/merge_requests/{iid}/versions
+        GitLab's discussions API requires these exact SHAs — using commit_id for
+        base_sha/head_sha or omitting start_sha causes HTTP 400 rejections.
+        """
+        versions = self._request("GET", f"/merge_requests/{pr_id}/versions")
+        if not versions:
+            raise ValueError(f"No MR versions found for MR {pr_id}")
+        latest = versions[0]  # most recent version is first
+        return latest["base_commit_sha"], latest["start_commit_sha"], latest["head_commit_sha"]
+
     def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
     ) -> str | None:
@@ -144,9 +157,16 @@ class GitLabAdapter:
             The GitLab discussion ID as a string on success (used for thread
             resolution in resolve_inline_comment), None on failure.
         """
+        try:
+            base_sha, start_sha, head_sha = self._get_mr_version_shas(pr_id)
+        except Exception as exc:
+            _LOG.warning("post_review_comment: failed to get MR version SHAs for MR %s: %s", pr_id, exc)
+            return None
+
         pos_obj: dict[str, Any] = {
-            "base_sha": position.commit_id,
-            "head_sha": position.commit_id,
+            "base_sha": base_sha,
+            "start_sha": start_sha,
+            "head_sha": head_sha,
             "position_type": "text",
             "old_path": position.file_path,
             "new_path": position.file_path,
