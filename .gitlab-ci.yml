@@ -30,6 +30,7 @@ revue-review:
   variables:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
     APP_ENV: staging
+    GIT_DEPTH: "0"
   allow_failure: true
   script:
     - apt-get update -qq && apt-get install -y -qq git curl
