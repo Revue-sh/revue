@@ -36,9 +36,8 @@ revue-review:
     - apt-get update -qq && apt-get install -y -qq git curl
     - pip install openai anthropic httpx pyyaml tomli-w --quiet
 
-    # Generate diff against the MR target branch
-    - git fetch origin $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
-    - git diff origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME...HEAD > /tmp/revue_pr.diff
+    # Generate diff using GitLab's computed MR diff base (correct regardless of mirror state)
+    - git diff $CI_MERGE_REQUEST_DIFF_BASE_SHA HEAD > /tmp/revue_pr.diff
     - echo "[revue] Diff size $(wc -l < /tmp/revue_pr.diff) lines"
 
     # Fetch MR description for context filtering
