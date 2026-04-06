@@ -563,17 +563,15 @@ def _run_per_issue_dedup(
     review_results: list,
     diff_by_file: dict,
     dedup_store,
-) -> tuple[int, int]:
+) -> tuple[int, int, dict[str, int]]:
     """Core per-issue dedup loop shared across all platform posting functions.
 
-    Posts new findings, skips duplicates (AC1/AC2), and auto-resolves fixed
-    findings (AC5).  Returns ``(posted, skipped)``.
+    Nova's consolidated list is the authoritative set of findings — every item
+    in it is posted inline (WYSIWYG).  Cross-cycle dedup (AC1/AC2) prevents
+    re-posting a finding that already has an open comment from a prior review.
 
-    Fingerprint collision behaviour (Winston #7):
-    - Same fingerprint seen twice in THIS cycle (two findings in the same diff
-      hunk): second is skipped with a visible warning.
-    - Fingerprint already in the store from a PRIOR cycle: skipped silently
-      (counted as "preserved").
+    Returns ``(posted, skipped, total_findings)`` where ``total_findings`` is
+    the severity breakdown of Nova's full list — the number the summary shows.
     """
     from revue.comments.fingerprint import fingerprint as gen_fingerprint
     from revue.comments.models import CommentState
@@ -582,7 +580,9 @@ def _run_per_issue_dedup(
     prior_unresolved = dedup_store.get_unresolved_fingerprints(platform_str, pr_num)
     posted = 0
     skipped = 0
-    new_fingerprints: set[str] = set()
+    total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
+    # Hunk fps seen this cycle — used by AC5 to detect fixed findings.
+    seen_hunk_fps: set[str] = set()
 
     for rr in review_results:
         if rr.error or not rr.response:
@@ -601,23 +601,14 @@ def _run_per_issue_dedup(
             if not issue and not details:
                 continue
 
+            # Count every finding in Nova's list (WYSIWYG — summary reflects this).
+            if sev in total_findings:
+                total_findings[sev] += 1
+
             fp = gen_fingerprint(rr.file_path, line, diff_content)
+            seen_hunk_fps.add(fp)
 
-            # Fix #6 (Winston): hunk-level collision — two findings in the same
-            # diff hunk produce identical fingerprints; warn so it's not silent.
-            if fp in new_fingerprints:
-                print(
-                    f"[revue] Note: {rr.file_path}:{line} shares a diff hunk "
-                    "with another finding — only one comment posted per hunk. "
-                    "(Resolve via issue_type normalisation, REVUE-110 AC3 TODO.)",
-                    file=sys.stderr,
-                )
-                skipped += 1
-                continue
-
-            new_fingerprints.add(fp)
-
-            # AC1/AC2: skip if already posted in a previous review cycle
+            # AC1/AC2: skip if already posted in a previous review cycle.
             if dedup_store.has_fingerprint(platform_str, pr_num, rr.file_path, fp):
                 skipped += 1
                 continue
@@ -647,7 +638,8 @@ def _run_per_issue_dedup(
                 )
 
     # AC5: auto-resolve findings absent from new review
-    resolved_fps = set(prior_unresolved.keys()) - new_fingerprints
+    resolved_fps = set(prior_unresolved.keys()) - seen_hunk_fps
+
     for fp in resolved_fps:
         entry = prior_unresolved[fp]
         old_comment_id = entry.get("platform_comment_id")
@@ -667,7 +659,7 @@ def _run_per_issue_dedup(
                     reason="auto-resolved",
                 )
 
-    return posted, skipped
+    return posted, skipped, total_findings
 
 
 def _post_to_platform(
@@ -709,19 +701,6 @@ def _post_to_platform(
     _repo_path = Path(os.getcwd())
     dedup_store = PerPRCommentStore(_repo_path)
     pr_num = int(pr_id)
-
-    total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
-    for rr in review_results:
-        if rr.error or not rr.response:
-            continue
-        try:
-            findings, _ = _parse_findings(rr.response)
-            for f in findings:
-                sev = f.get("severity", "low").lower()
-                if sev in total_findings:
-                    total_findings[sev] += 1
-        except Exception:
-            pass
 
     _summary_store = CommentFileStore(_repo_path)
     _existing_summary = _summary_store.get_summary_for_pr(
@@ -786,7 +765,7 @@ def _post_to_platform(
             print(f"Warning: Failed to post review summary to {pr_label}", file=sys.stderr)
 
     if comment_style == "per-issue":
-        posted, skipped = _run_per_issue_dedup(
+        posted, skipped, total_findings = _run_per_issue_dedup(
             adapter, pr_num, platform_str, review_results, diff_by_file, dedup_store
         )
         summary_body = _build_enhanced_summary(
@@ -799,10 +778,19 @@ def _post_to_platform(
             print(f"[revue] Review posted to {pr_label} #{pr_id} — {posted} inline comment(s)")
     else:
         posted = 0
+        total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
         file_sections = []
         for rr in review_results:
             if rr.error or not rr.response:
                 continue
+            try:
+                findings, _ = _parse_findings(rr.response)
+                for f in findings:
+                    sev = f.get("severity", "low").lower()
+                    if sev in total_findings:
+                        total_findings[sev] += 1
+            except Exception:
+                pass
             file_sections.append(_format_file_review(rr.file_path, rr.response))
             posted += 1
         summary_body = _build_enhanced_summary(
