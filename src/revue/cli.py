@@ -712,20 +712,44 @@ def _post_to_platform(
     _revision = (_existing_summary.revision + 1) if _existing_summary else 1
     _last_updated = "just now"
 
+    _REVUE_SUMMARY_MARKER = "## 🤖 Revue.io — Code Review"
+
+    def _scan_for_existing_summary() -> Optional[str]:
+        """Scan live platform comments for a Revue summary, return its comment ID."""
+        try:
+            comments = adapter.get_existing_comments(pr_id=pr_num)
+            for c in comments:
+                body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
+                if _REVUE_SUMMARY_MARKER in body:
+                    return str(c.get("id", ""))
+        except Exception:
+            pass
+        return None
+
     def _post_or_update_summary(body: str) -> None:
         nonlocal _existing_summary, _revision
         now = datetime.now(timezone.utc)
-        if _existing_summary:
+
+        # Resolve the comment ID to update: prefer state file, fall back to
+        # scanning live comments so re-reviews never post a duplicate summary
+        # even when the local state file is stale or missing (e.g. ephemeral CI).
+        existing_comment_id = (
+            _existing_summary.platform_comment_id if _existing_summary
+            else _scan_for_existing_summary()
+        )
+
+        if existing_comment_id:
             ok = adapter.update_comment(
                 pr_id=pr_num,
-                comment_id=_existing_summary.platform_comment_id,
+                comment_id=existing_comment_id,
                 body=body,
             )
             if ok:
+                created_at = _existing_summary.created_at if _existing_summary else now
                 updated = SummaryComment(
                     id=None,
                     platform=platform_enum,
-                    platform_comment_id=_existing_summary.platform_comment_id,
+                    platform_comment_id=existing_comment_id,
                     pr_number=pr_num,
                     repo_owner=repo_owner,
                     repo_name=repo_name,
@@ -734,7 +758,7 @@ def _post_to_platform(
                     discussed_count=0,
                     remaining_count=sum(total_findings.values()),
                     last_updated_at=now,
-                    created_at=_existing_summary.created_at,
+                    created_at=created_at,
                     revision=_revision,
                 )
                 _summary_store.create_or_update_summary(updated)
