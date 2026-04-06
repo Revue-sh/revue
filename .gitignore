@@ -31,6 +31,9 @@ htmlcov/
 # Revue comment state (local only by default — set commit_state=true in .revue/config.toml to track)
 .revue/
 
+# Data
+postgres-data/
+
 # Web app
 src/web/revue.db
 src/web/.venv/

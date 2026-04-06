@@ -7,7 +7,6 @@ tracking call after completion.
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from typing import Optional
 
@@ -15,6 +14,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+TRACK_URL = "https://api.revue.io/usage/track"
 UPGRADE_URL = "https://revue.io/upgrade"
 
 
@@ -55,7 +55,6 @@ def track(
     agents_used: list[str],
     duration_ms: int,
     *,
-    track_url: str | None = None,
     _http_client: httpx.Client | None = None,
 ) -> None:
     """Fire-and-forget: POST usage data to the Revue API in a background thread.
@@ -67,11 +66,8 @@ def track(
         repo_id: Repository identifier.
         agents_used: Names of agents that participated in the review.
         duration_ms: Total review wall-clock time in milliseconds.
-        track_url: Override for the usage API URL.  Falls back to the
-            ``REVUE_USAGE_API_URL`` environment variable when *None*.
         _http_client: Injected httpx.Client for testing.
     """
-    url = track_url or os.getenv("REVUE_USAGE_API_URL")
     payload = {
         "key": key,
         "repo_id": repo_id,
@@ -81,9 +77,9 @@ def track(
 
     if _http_client is not None:
         # Synchronous path for tests (avoids threading complexity in unit tests)
-        _post_usage(payload, _http_client, url)
+        _post_usage(payload, _http_client)
     else:
-        t = threading.Thread(target=_post_usage, args=(payload, None, url), daemon=True)
+        t = threading.Thread(target=_post_usage, args=(payload, None), daemon=True)
         t.start()
 
 
@@ -91,17 +87,14 @@ def track(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _post_usage(payload: dict, client: httpx.Client | None, url: str | None) -> None:
+def _post_usage(payload: dict, client: httpx.Client | None) -> None:
     """Perform the HTTP POST; log but never raise."""
-    if not url:
-        logger.debug("Usage tracking disabled (REVUE_USAGE_API_URL not set)")
-        return
     try:
         if client is not None:
-            resp = client.post(url, json=payload, timeout=10.0)
+            resp = client.post(TRACK_URL, json=payload, timeout=10.0)
         else:
             with httpx.Client(timeout=10.0) as c:
-                resp = c.post(url, json=payload)
+                resp = c.post(TRACK_URL, json=payload)
         if resp.status_code not in (200, 201, 202, 204):
             logger.warning(
                 "Usage tracking returned unexpected status %s — continuing.",

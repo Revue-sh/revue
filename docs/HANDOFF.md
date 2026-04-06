@@ -1,226 +1,170 @@
-# Session Handoff - 2026-04-03
-**Duration:** 18:12 - 19:30 GMT (~1h 18min) | **Agent:** BMad Master
-
----
+# Session Handoff - 2026-04-06
+**Duration:** ~09:00 - 18:00 GMT+1 | **Agent:** BMad Master
 
 ## Session Summary
-
-Fixed and merged REVUE-95 (orchestrator agent selection transparency). Started with a
-production regression (Anthropic returning wrong schema/empty responses) and ended with
-a fully tested, SRP-compliant implementation with local CI simulation guide. PR #36 merged
-with 630 tests passing. Created REVUE-107 (model-aware diff limits) and REVUE-108 (SRP
-extraction) as follow-up stories.
-
----
+Full Epic 87 story design sprint via party mode (John, Winston, Mary, Bob). Drafted,
+reviewed, and created Stories B, C, and D in Jira. Updated Story B (REVUE-112) twice
+with significant design revisions arising from team discussion. Bob ran DoR gate on
+REVUE-110 (passed). All four stories under REVUE-87 are now in Jira, To Do.
 
 ## Project Status
-
 | Metric | Value |
 |--------|-------|
-| Tests passing | 630 (up from 596) |
-| Open PRs | None (PR #36 merged) |
-| Epic REVUE-87 | 17/18 stories Done (only REVUE-105 remains) |
-| Jira board | https://urukia.atlassian.net/jira/software/projects/REVUE/boards/101 |
-
----
+| Epic 87 status | Open - REVUE-110/111/112/113/114 all in Jira, To Do |
+| Stories created this session | REVUE-112, REVUE-113, REVUE-114 |
+| Story B updates | REVUE-112 updated twice with revised design |
+| DoR gate REVUE-110 | Passed (one note: dogfood Bitbucket PR needed for TC7) |
+| Story D | Now in Jira as REVUE-114 (was parking lot) |
+| Open PRs | Not checked this session |
+| Last commit | 5686f3a (previous session) |
 
 ## Completed This Session
-
-- **REVUE-95 root cause diagnosis** - Claude returning wrong schema (classification/risk_level
-  instead of detected_areas/selected_agents) due to conditional prompt language
-- **REVUE-95 implemented** - `ecb06bb` - changed `SHARED_ANALYSIS_PROMPT` from "When
-  announcing..." to "You MUST respond using ONLY this exact JSON schema"
-- **Regression fixes** - `5655bb3`, `ff9bb44`, `fe50e60` - fence-stripping regex (optional
-  newline), split exception handling (JSONDecodeError/ValueError -> warning, OSError/
-  AttributeError -> error with exc_info=True), security warnings in docs
-- **Local CI simulation guide** - `3688a05` - `docs/local-ci-simulation.md` - full guide
-  for running Revue locally before CI push (lesson: 6+ CI iterations vs 1 local run)
-- **Unit tests** - `5655bb3`, `ff9bb44` - 8 new tests covering Anthropic response patterns
-  (wrong schema, empty fences, valid schema, mandatory prompt language)
-- **CLI output fix** - `59fd79e` - removed extra blank lines in per-file review output
-  (explicit `\n` in f-string + `print()` newline)
-- **REVUE-108 created** - Extract format_selection_message() to revue.core.formatting (SRP)
-- **REVUE-108 implemented** - `096dbb7` - SRP restored, merge-blocking issue resolved
-- **REVUE-107 created** - Model-aware diff limits (10K lines is 6% of Claude Sonnet 4.5's
-  200K context - unnecessarily conservative)
-- **TODO comments -> Jira** - `e34a892` - replaced all TODOs with REVUE-107/REVUE-108 refs
-- **PR #36 merged** - REVUE-95 -> Done in Jira
-
----
+- Party mode analysis of previous HANDOFF.md - confirmed DoR on REVUE-110 was not
+  formally run; Bob confirmed it as Ready with one open note (TC7 dogfood PR)
+- Drafted Story B (won't-fix reply tracking) with John, Winston, Mary
+  - Multiple revision rounds: disallowed_patterns added, semantic intent detection,
+    lessons PR approach, PR template detection, synchronous creation
+  - Created as REVUE-112, then updated twice with final design
+- Drafted Story C (.revue.yml institutional memory / Nova AI agent)
+  - Key finding: REVUE-94 already built allowed/disallowed_patterns injection into
+    agents - Story C adds post-processing AI safety net (Nova as proper AI agent)
+  - Established Nova rename: algorithmic step -> "Deduplication Phase";
+    new AI call -> "Nova" proper agent with prompt file
+  - Created as REVUE-113
+- Drafted Story D (.revue/comments/ cleanup)
+  - Redesigned from webhook-based to check-at-cycle-start (simpler, no new infra)
+  - Pure housekeeping: merged -> delete JSON + commit to main;
+    closed without merge -> delete locally, no commit, lessons PR stays open
+  - Created as REVUE-114
 
 ## What We Built (Session Highlights)
 
-### REVUE-95 - Orchestrator Agent Selection Transparency
+### Key architectural decisions (full detail in section below)
 
-**Core fix:** `src/revue/core/shared_analysis.py`
-- Changed `SHARED_ANALYSIS_PROMPT` to use mandatory language: "You MUST respond using
-  ONLY this exact JSON schema" (no other format accepted)
-- Provider-aware JSON handling: OpenAI/Google/Groq/Azure omit suffix, Anthropic appends
-  explicit JSON instruction + no-fence prohibition
-- Regex fence-stripping with optional newline: `r"^```(?:json)?\s*\n?"`, `r"\n?```\s*$"`
-- Empty response guard after fence-stripping (prevents `JSONDecodeError` on empty string)
-- Split exception handling: parsing errors (JSONDecodeError, ValueError, KeyError, TypeError)
-  log at `warning`, system errors (OSError, AttributeError) log at `error` with `exc_info=True`
-- `SharedAnalysisResult.orchestrator_response` field (optional, repr=False) for new format
+**Story B - REVUE-112 (Won't-fix reply tracking)**
+- Consolidator determines developer intent semantically - no keywords required
+- Four decision types: allowed_pattern, disallowed_pattern, reason_missing,
+  not_acknowledged
+- Both allowed_patterns AND disallowed_patterns written to .revue.yml via lessons PR
+- Lessons PR: separate branch chore/revue-lessons-{pr-number}, one per feature PR,
+  accumulates all decisions, targets main (respects branch protection)
+- PR template detection via platform API before generating PR description
+- Humanised PR description (no AI writing patterns)
+- Synchronous lessons PR creation so PR number is in thread reply
+- Thread reply always includes lessons PR number and link
+- Fallback: if PR creation fails, post YAML block in thread for manual apply
 
-**New module:** `src/revue/core/formatting.py`
-- Extracted `format_selection_message()` from `shared_analysis.py` to restore SRP
-- Handles presentation concerns: emoji-friendly output, detected areas, selected agents
+**Story C - REVUE-113 (Nova AI pattern enforcement)**
+- REVUE-94 already injects patterns into reviewer agents (first line, done)
+- Story C adds second enforcement layer: one AI call to Nova after Deduplication Phase
+- Nova (proper AI agent, not algorithm) receives all surviving findings + both pattern
+  lists; returns suppress/protect decisions as structured JSON
+- Fail-safe: if Nova call fails, post all findings + PR summary notice with failure
+  reason so devs/DevOps know what to do
+- Deduplication Phase replaces the mislabelled "Nova consolidation" algorithmic step
+- Nova gets prompt file: src/revue/agents/nova.md + nova.yaml
+- End-to-end integration test proves full Epic 87 feedback loop (AC8)
 
-**Integration:** `src/revue/core/pipeline.py`
-- Passes `provider` to `run_shared_analysis()`
-- Logs transparency message with guard for empty `detected_areas`/`selected_agents`
-- Imports `format_selection_message` from `revue.core.formatting`
+**Story D - REVUE-114 (.revue/comments/ cleanup)**
+- Step 0 in pipeline: check PR status via platform API before any analysis
+- Merged: delete JSON file, commit deletion to main via bot identity
+- Closed without merge: delete locally, no commit; lessons PR stays open independently
+- Fail-safe: if status check fails, proceed with review (never block on status check)
 
-**Tests added:**
-- 8 new tests in `test_shared_analysis.py`: wrong schema fallback, empty fenced response,
-  plain empty string, valid new schema, valid schema in fences, mandatory prompt language,
-  wrong schema with summary field graceful fallback, valid mandatory schema returns
-  orchestrator_response
+## Remaining Work - Next Steps (ordered)
 
-**Documentation:**
-- `docs/local-ci-simulation.md` - step-by-step guide for running Revue locally
-- Prerequisites, diff generation, PR description fetch, CLI invocation, debugging tips
-- Security warnings: API key placeholder, never commit `~/.zshenv`, shell history exposure
+1. **Run DoR gate on REVUE-112, 113, 114** - Bob has not reviewed these stories yet.
+   Spawn Bob and point him at the three Jira tickets before Amelia starts.
+   First action: spawn Bob, provide REVUE-112/113/114 keys.
 
-### Key Implementation Details
+2. **Spawn Amelia for REVUE-110** (and REVUE-111 in parallel).
+   MANDATORY: include PR template instructions from docs/PR_TEMPLATE_GUIDE.md when
+   spawning. Flag TC7 open item: dogfood Bitbucket PR must exist before Amelia
+   finishes AC1-5. If it doesn't exist, raise it early.
+   First action: spawn Amelia with story + PR template instructions.
 
-**Prompt engineering fix (root cause):**
-Old: "When announcing your agent selection, structure your JSON response as:"
-New: "You MUST respond using ONLY this exact JSON schema - no other format is accepted:"
+3. **Story C check - does allowed_patterns already suppress in consolidator?**
+   Before Amelia implements Story C, verify whether the current pipeline passes
+   allowed_patterns to the Nova consolidate() call. Check nova_consolidator.py
+   consolidate() signature - it currently takes findings + strategies + min_confidence
+   only. Confirm patterns are NOT passed (expected), so AC3 is a genuine build item.
 
-This fixed Claude defaulting to its own schema. The old conditional language gave Claude
-choice; the new mandatory language forces compliance.
-
-**Fence-stripping edge case:**
-Claude sometimes returns `"```json\n```"` with no content between fences. Made `\n`
-optional in both regex patterns to handle this edge case without crashing.
-
-**Exception handling philosophy:**
-Parsing errors (JSONDecodeError, ValueError, KeyError, TypeError) are expected in the
-fallback path and log at `warning`. System errors (OSError, AttributeError) indicate
-programming errors or permission issues and log at `error` with full stack trace.
-
----
-
-## Remaining Work - Next Steps
-
-1. **REVUE-105** (To Do, 3pts) - CI UX improvements (HumanizedLogger + emoji vocabulary)
-   - Dependencies: REVUE-95 Done (orchestrator transparency merged)
-   - First action: read REVUE-105 Jira ticket, spawn John to draft story file with DoR
-   - Context: Final story in Epic REVUE-87, builds on orchestrator transparency
-   - AC summary: structured logging with emojis, human-readable progress, CI-friendly output
-
-2. **REVUE-107** (To Do) - Model-aware diff limits
-   - Context: Current 10,000 line limit is 6% of Claude Sonnet 4.5's 200K context
-   - Suggestion: 50K lines for Claude/GPT-4o, 10K for unknown models
-   - First action: spawn John to draft story file
-
-3. **REVUE-108** (Done) - format_selection_message extraction
-   - Completed in this session (`096dbb7`)
-
-4. **REVUE-106** (Done) - AIReviewer package absorption
-   - Completed in previous session
-   - Single canonical package: `src/revue/` only (no more `src/AIReviewer/`)
-
----
+4. **Create AGENTS.md** - referenced in HANDOFF.md and sprint notes but does not exist.
+   Suggested location: docs/AGENTS.md. Should document PR template instructions for
+   spawning Amelia and any other agent-spawn protocols.
+   First action: write docs/AGENTS.md with Amelia PR template requirement.
 
 ## Key Architectural Decisions (Session)
 
-1. **Mandatory schema language in SHARED_ANALYSIS_PROMPT** - Changed from conditional
-   ("When announcing your agent selection, structure...") to mandatory ("You MUST respond
-   using ONLY this exact JSON schema") because Claude was defaulting to its own schema
-   (classification, risk_level, review_priority) instead of the required schema
-   (detected_areas, selected_agents, languages, risk_areas, summary).
+1. **Semantic intent detection, no keywords** - Consolidator reads developer reply
+   semantics to determine allowed_pattern vs disallowed_pattern vs reason_missing vs
+   not_acknowledged. Developers reply in plain language.
 
-2. **Optional newline in fence-stripping regex** - Made `\n` optional in both fence-strip
-   patterns to handle edge case where Claude returns `"```json\n```"` with no content
-   between fences.
+2. **Lessons PR, not direct commit to feature branch** - .revue.yml changes go to a
+   dedicated branch chore/revue-lessons-{pr-number} as a PR targeting main. Respects
+   branch protection. One PR per feature PR, accumulates all decisions. If feature PR
+   is closed without merge, lessons PR stays open independently.
 
-3. **Local simulation as debugging tool** - Discovered `git diff FETCH_HEAD...HEAD` +
-   CLI run catches issues faster than CI iterations. Documented in
-   `docs/local-ci-simulation.md` for team.
+3. **Both allowed_patterns AND disallowed_patterns in Story B** - Developer can express
+   either direction: "this is fine, don't flag it" (allowed) or "always flag this"
+   (disallowed). Consolidator routes to the correct .revue.yml section.
 
-4. **SRP extraction merge-blocking** - User decision: `format_selection_message()` SRP
-   violation must be fixed before merge, not deferred. Rationale: leaving tech debt now
-   means refactoring later when it's harder. Eliminated immediately.
+4. **PR template detection via platform API** - Before generating lessons PR description,
+   Revue fetches the client repo's PR template (Bitbucket: .bitbucket/pull_request_template.md;
+   GitHub: .github/pull_request_template.md with fallbacks; GitLab: Default MR template API).
+   Falls back to Revue's own template if not found.
 
-5. **Exception handling split** - Parsing errors (expected fallback path) log at `warning`,
-   system errors (programming bugs or permission issues) log at `error` with `exc_info=True`
-   for security review.
+5. **Synchronous lessons PR creation** - Lessons PR created before thread replies are
+   posted, so PR number is available in the reply. Sequential: (1) consolidator call,
+   (2) create/update lessons PR, (3) post thread replies.
 
+6. **Nova is now a proper AI agent** - The algorithmic "Nova consolidation" step is
+   renamed to "Deduplication Phase". Nova becomes a real LLM agent (nova.md + nova.yaml)
+   that receives surviving findings + both pattern lists and returns structured JSON.
+   This corrects a naming debt from Story 007.
 
----
+7. **Story D: check-at-cycle-start, no webhooks** - PR status checked via existing
+   platform API auth at step 0 of every cycle. No new webhook infrastructure needed.
+   Pure cleanup: merged -> commit deletion to main; closed -> local delete only.
 
-## Lessons Learned
+8. **Fail-safe direction** - When Nova call fails, post all findings (never suppress
+   silently). Include failure reason in PR summary comment so devs/DevOps can act.
 
-- **Features must be config-enabled AND documented.** Default-off features can slip through DoD if config isn't updated. REVUE-104 code was merged and marked Done, but `.revue.yml` lacked `preserve_comment_threads: true` — so the feature was dead in production. Config enablement must be an explicit AC or DoD gate.
+9. **Post-MVP: configurable lessons branch prefix** - git.lessons_branch_prefix in
+   .revue.yml. Not in scope for any current story.
 
----
+## Epic 87 Board
 
-## Critical Notes for Next Session
+| Ticket | Story | Status | Notes |
+|--------|-------|--------|-------|
+| REVUE-110 | Story A - duplicate comments fix, 3-platform | To Do | DoR passed |
+| REVUE-111 | Sub-task - GitHub/GitLab pipelines | To Do | Parallel with A AC1-5 |
+| REVUE-112 | Story B - won't-fix reply tracking | To Do | DoR not yet run |
+| REVUE-113 | Story C - Nova AI pattern enforcement | To Do | DoR not yet run |
+| REVUE-114 | Story D - .revue/comments/ cleanup | To Do | DoR not yet run |
 
-**REVUE-95 merged successfully** - All orchestrator transparency work is now in `main`.
-The 630 tests include full coverage of Anthropic edge cases (wrong schema, empty fences,
-valid schema in/out of fences).
-
-**REVUE-106 completed** - Single canonical package: `src/revue/` only. The dual codebase
-issue from previous sessions is resolved. `src/AIReviewer/` no longer exists.
-
-**SDLC discipline reminder** - Spawn real agents for every role. This session had one
-near-violation (Amelia spawned for unit tests after user requested them explicitly) but
-was caught and corrected. The pattern: CI/test reveals bug -> urgency -> spawn Amelia
-(never implement directly).
-
-**Test command (single suite):**
-```bash
-cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q
-```
-
-**Local CI simulation:**
-```bash
-source ~/.zshenv && cd Projects/revue.io
-git fetch "https://x-token-auth:${BITBUCKET_API_TOKEN}@bitbucket.org/cbscd/revue.git" main
-git diff FETCH_HEAD...HEAD > /tmp/revue_pr.diff
-# (see docs/local-ci-simulation.md for full steps)
-```
-
-**Environment variables (required for local testing):**
-- `AI_API_KEY`, `AI_PROVIDER`, `AI_MODEL`
-- `REVUE_TIER_OVERRIDE=pro` (staging only)
-- `BITBUCKET_USERNAME`, `BITBUCKET_API_TOKEN`
-- `APP_ENV=staging`
-
----
+## Critical Notes
+- **AGENTS.md does not exist** - HANDOFF and PR_TEMPLATE_GUIDE reference it but the file
+  was never created. Use docs/PR_TEMPLATE_GUIDE.md for Amelia PR template instructions
+  until AGENTS.md is created.
+- **Nova naming correction is mandatory** - When Amelia implements Story C, renaming
+  nova_consolidator.py to Deduplication Phase and creating Nova as a proper agent is
+  not optional cleanup. It is an AC (AC4 of REVUE-113).
+- **SDLC discipline** - BMad Master orchestrates only. Never writes fixes directly.
+  CI/test failures -> document -> spawn Amelia -> wait -> relay.
 
 ## Session Stats
-
-- Duration: ~1h 18min
-- Stories completed: REVUE-95 (root cause diagnosis + implementation + tests + SRP fix)
-- Follow-up stories created: REVUE-107, REVUE-108
-- PRs merged: #36 (REVUE-95)
-- Commits: 10 (ecb06bb to 096dbb7)
-- Tests: 630 passing (up from 596)
-- New files: formatting.py, local-ci-simulation.md
-- Party mode agents used: Amelia (implementation + tests + fixes), Bob (DoD gates)
-
----
+- Duration: ~9h
+- Jira tickets created: REVUE-112, REVUE-113, REVUE-114
+- Jira tickets updated: REVUE-112 (updated twice)
+- Stories designed: 3 (B, C, D) - all in Jira
+- DoR gates run: REVUE-110 (passed)
+- Party mode agents: John (PM), Winston (Architect), Mary (Analyst), Bob (SM)
 
 ## Continuation Prompt (Next Session)
-
-```
-Read docs/HANDOFF.md for full context.
-
-Epic REVUE-87 is 17/18 Done. One story remains:
-- REVUE-105 - CI UX improvements (HumanizedLogger + emoji vocabulary) - 3pts
-
-Start with REVUE-105: read the Jira ticket, spawn John to draft the story file with
-full DoR context. This builds on REVUE-95 (orchestrator transparency) which is now
-merged.
-
-SDLC: spawn real agents for every role. BMad Master orchestrates only - never writes
-code, runs tests, or fixes bugs directly.
-
-Test command: cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q
-Local CI guide: docs/local-ci-simulation.md
-```
+Read docs/HANDOFF.md. Epic 87: REVUE-110/111 (Story A + sub-task) and REVUE-112/113/114
+(Stories B/C/D) are all in Jira, To Do. Before any implementation: spawn Bob to run DoR
+gate on REVUE-112, REVUE-113, REVUE-114. Then spawn Amelia for REVUE-110 in parallel
+with REVUE-111. MANDATORY when spawning Amelia: include PR template instructions from
+docs/PR_TEMPLATE_GUIDE.md. Flag TC7 open item (dogfood Bitbucket PR for integration
+test). AGENTS.md does not exist yet - use PR_TEMPLATE_GUIDE.md as the reference.

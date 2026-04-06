@@ -20,7 +20,6 @@ review:
 output:
   comment_style: per-issue   # "per-issue" = one inline comment per finding (default)
                               # "summary"   = one grouped comment per file
-  preserve_comment_threads: true  # REVUE-104: preserve inline comment threads across re-reviews
 
 noise_filters:
   disable: []

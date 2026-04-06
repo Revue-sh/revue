@@ -37,14 +37,5 @@ def format_selection_message(response: OrchestratorResponse) -> str:
             lines.append(f"  → {agent.emoji} {agent.name} {agent.reason}")
         lines.append("")
 
-    if not response.detected_areas and not response.selected_agents:
-        lines.append(
-            "No specialist agents required for this change type"
-            " (configuration/documentation)."
-        )
-        if response.summary:
-            lines.append(f"Summary: {response.summary}")
-        lines.append("")
-
     lines.append("Starting review...")
     return "\n".join(lines)

@@ -386,7 +386,10 @@ class ReviewPipeline:
             )
             if shared.success:
                 # REVUE-95: log human-readable selection transparency message
-                if shared.orchestrator_response:
+                if shared.orchestrator_response and (
+                    shared.orchestrator_response.detected_areas or
+                    shared.orchestrator_response.selected_agents
+                ):
                     msg = format_selection_message(shared.orchestrator_response)
                     for line in msg.splitlines():
                         print(f"[revue]   {line}", flush=True)
@@ -541,7 +544,7 @@ class ReviewPipeline:
             for finding in r.findings
         ]
 
-        consolidation = consolidate(all_findings, ai_client=self._client)
+        consolidation = consolidate(all_findings)
         print(
             f"[revue]   {consolidation.original_count} findings → "
             f"{len(consolidation.findings)} after deduplication "
