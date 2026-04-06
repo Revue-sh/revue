@@ -258,7 +258,7 @@ def cmd_review(
     from revue.core.pipeline import AllAgentsFailedError
     print(f"[revue] Validating license...")
     try:
-        review_results, excluded, files_reviewed = pipeline.run(str(diff_path), pr_description=pr_description)
+        review_results, excluded, files_reviewed, failed_agents = pipeline.run(str(diff_path), pr_description=pr_description)
     except AllAgentsFailedError as exc:
         # All reviewer agents failed (e.g. API credit exhausted, auth failure).
         # Log the generic message plus the first agent error to stderr for diagnostics.
@@ -295,6 +295,19 @@ def cmd_review(
         _post_to_github(args, review_results, config)
     elif platform == "gitlab":
         _post_to_gitlab(args, review_results, config)
+
+    # Fail the pipeline when any agent failed — review is incomplete.
+    # We post findings from successful agents first (above) so developers
+    # still see partial results, but exit non-zero signals the incomplete state.
+    if failed_agents:
+        print(
+            f"\n[revue] ❌ Review incomplete — {len(failed_agents)} agent(s) failed: "
+            f"{', '.join(failed_agents)}\n"
+            f"  Findings from failed agents are missing from this review.\n"
+            f"  Check the errors above for details (rate limits, timeouts, credentials).",
+            flush=True,
+        )
+        return 1
 
     fmt = config.output_format
     if fmt == "json":

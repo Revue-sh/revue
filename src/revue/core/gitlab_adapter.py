@@ -86,6 +86,14 @@ class GitLabAdapter:
                 raise RuntimeError(
                     f"GitLab resource not found: {url}"
                 ) from exc
+            if exc.code == 400:
+                try:
+                    body = exc.read().decode("utf-8", errors="replace")
+                except Exception:
+                    body = "(unreadable)"
+                raise RuntimeError(
+                    f"GitLab 400 Bad Request — {url}\n  Response: {body}"
+                ) from exc
             if exc.code >= 500:
                 raise RuntimeError(
                     f"GitLab server error {exc.code}: {exc.reason}"
@@ -182,7 +190,14 @@ class GitLabAdapter:
             discussion_id = resp.get("id")
             return str(discussion_id) if discussion_id is not None else None
         except Exception as exc:
-            _LOG.warning("post_review_comment failed for MR %s: %s", pr_id, exc)
+            _LOG.warning(
+                "post_review_comment failed for MR %s file=%s line=%s — %s\n  position=%s",
+                pr_id,
+                position.file_path,
+                position.new_line or position.line_number,
+                exc,
+                pos_obj,
+            )
             return None
 
     # Backward-compat alias — remove in v2.0

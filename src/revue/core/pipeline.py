@@ -255,7 +255,7 @@ class ReviewPipeline:
         limit_result = check_diff_limit(changes, self.config.max_diff_lines)
         if limit_result.exceeded:
             print(f"[revue]   ⚠ Diff too large — {limit_result.suggestion}", flush=True)
-            return [ReviewResult(file_path="[diff-limit]", response=limit_result.suggestion)], [], 0
+            return [ReviewResult(file_path="[diff-limit]", response=limit_result.suggestion)], [], 0, []
 
         included, excluded = filter_changes(
             changes, self.config.ignore_patterns, self.config.max_diff_lines
@@ -265,17 +265,17 @@ class ReviewPipeline:
 
         if not included:
             print("[revue]   No files to review after filtering.", flush=True)
-            return [], excluded, 0
+            return [], excluded, 0, []
 
         # ── Step 2: AI review ────────────────────────────────────────────────
         start_ms = int(time.time() * 1000)
 
         if _is_premium_tier(agents_allowed):
-            results, agents_used = self._run_orchestration(
+            results, agents_used, failed_agents = self._run_orchestration(
                 included, agents_allowed, pr_description=pr_description
             )
         else:
-            results, agents_used = self._run_simplified(included, agents_allowed)
+            results, agents_used, failed_agents = self._run_simplified(included, agents_allowed)
 
         # ── Step 3: Consolidation ─────────────────────────────────────────────
         total_findings = sum(
@@ -313,7 +313,7 @@ class ReviewPipeline:
                 duration_ms=duration_ms,
             )
 
-        return results, excluded, len(included)
+        return results, excluded, len(included), failed_agents
 
     # ------------------------------------------------------------------
     # Review paths
@@ -323,7 +323,7 @@ class ReviewPipeline:
         self,
         included: list[FileChange],
         agents_allowed: list[str],
-    ) -> tuple[list[ReviewResult], list[str]]:
+    ) -> tuple[list[ReviewResult], list[str], list[str]]:
         """Free-tier single-pass review loop.
 
         One client.complete() call per file. No agent routing or consolidation.
@@ -354,14 +354,14 @@ class ReviewPipeline:
                 print(f"[revue]   ✗ {fc.file_path}: {exc}", flush=True)
                 results.append(ReviewResult(file_path=fc.file_path, response="", error=str(exc)))
 
-        return results, agents_used
+        return results, agents_used, []
 
     def _run_orchestration(
         self,
         included: list[FileChange],
         agents_allowed: list[str],
         pr_description: Optional[PRDescription] = None,
-    ) -> tuple[list[ReviewResult], list[str]]:
+    ) -> tuple[list[ReviewResult], list[str], list[str]]:
         """Paid-tier full orchestration: shared analysis → Cleo routing →
         parallel agents → Nova consolidation.
 
@@ -564,4 +564,5 @@ class ReviewPipeline:
         if "orchestrator" not in agents_used:
             agents_used.insert(0, "orchestrator")
 
-        return results, agents_used
+        failed_agent_names = [f.agent_name for f in failed]
+        return results, agents_used, failed_agent_names

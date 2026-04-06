@@ -352,7 +352,7 @@ def test_cli_pr_description_file_defaults_none():
 def _make_mock_pipeline_ctx(mock_pipeline):
     """Shared mock config factory for pipeline-wired CLI tests."""
     from unittest.mock import MagicMock, patch
-    mock_pipeline.run.return_value = ([], [])
+    mock_pipeline.run.return_value = ([], [], 0, [])
     mock_cfg = MagicMock(
         output_format="markdown", comment_style=None,
         ignore_patterns=[], max_diff_lines=2000,

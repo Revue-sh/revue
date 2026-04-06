@@ -76,7 +76,7 @@ def test_pipeline_uses_injected_client():
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage"):
-        results, _, _ = pipeline.run("fake.diff")
+        results, _, _, _ = pipeline.run("fake.diff")
 
     assert mock_client.complete.called
     assert len(results) == 1
@@ -92,7 +92,7 @@ def test_pipeline_runs_included_files():
     with patch("revue.core.pipeline.parse_diff_file",
                return_value=[_fc("a.py"), _fc("b.py")]), \
          patch("revue.core.pipeline.track_usage"):
-        results, excluded, _ = pipeline.run("fake.diff")
+        results, excluded, _, _ = pipeline.run("fake.diff")
 
     assert mock_client.complete.call_count == 2
     assert len(results) == 2
@@ -109,7 +109,7 @@ def test_pipeline_excludes_filtered_files():
     with patch("revue.core.pipeline.parse_diff_file",
                return_value=[_fc("app.py"), _fc("README.md")]), \
          patch("revue.core.pipeline.track_usage"):
-        results, excluded, _ = pipeline.run("fake.diff")
+        results, excluded, _, _ = pipeline.run("fake.diff")
 
     assert mock_client.complete.call_count == 1
     assert len(results) == 1
@@ -126,7 +126,7 @@ def test_pipeline_returns_excluded_list():
     with patch("revue.core.pipeline.parse_diff_file",
                return_value=[_fc("main.py"), _fc("yarn.lock")]), \
          patch("revue.core.pipeline.track_usage"):
-        results, excluded, _ = pipeline.run("fake.diff")
+        results, excluded, _, _ = pipeline.run("fake.diff")
 
     assert len(excluded) == 1
     assert excluded[0].file_path == "yarn.lock"
@@ -141,7 +141,7 @@ def test_pipeline_handles_client_error():
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage"):
-        results, _, _ = pipeline.run("fake.diff")
+        results, _, _, _ = pipeline.run("fake.diff")
 
     assert len(results) == 1
     assert results[0].error == "API down"
@@ -171,7 +171,7 @@ def test_pipeline_stops_at_diff_limit():
         for i in range(2)
     ]
     with patch("revue.core.pipeline.parse_diff_file", return_value=big_files):
-        results, excluded, _ = pipeline.run("fake.diff")
+        results, excluded, _, _ = pipeline.run("fake.diff")
 
     assert not mock_client.complete.called
     assert len(results) == 1
@@ -209,7 +209,7 @@ def test_pipeline_proceeds_when_reviews_left_positive():
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("a.py")]), \
          patch("revue.core.pipeline.track_usage"):
-        results, _, _ = pipeline.run("fake.diff")
+        results, _, _, _ = pipeline.run("fake.diff")
 
     assert len(results) == 1
 
@@ -266,7 +266,7 @@ def test_pipeline_respects_free_tier_agents_allowed():
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage") as mock_track:
-        results, _, _ = pipeline.run("fake.diff")
+        results, _, _, _ = pipeline.run("fake.diff")
 
     # Verify agents_used sent to track_usage includes only allowed agents
     call_kwargs = mock_track.call_args[1]
@@ -305,7 +305,7 @@ def test_pipeline_respects_pro_tier_agents_allowed():
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage") as mock_track:
-        results, _, _ = pipeline.run("fake.diff")
+        results, _, _, _ = pipeline.run("fake.diff")
 
     # Orchestration path ran — track_usage called with agents_used
     assert mock_track.called
@@ -336,7 +336,7 @@ def test_pipeline_uses_simplified_path_for_free_tier():
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage"):
-        results, _, _ = pipeline.run("fake.diff")
+        results, _, _, _ = pipeline.run("fake.diff")
 
     # Simplified path calls client.complete() directly
     assert mock_client.complete.called
@@ -381,7 +381,7 @@ def test_pipeline_orchestration_falls_back_when_no_agents_match():
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage"):
-        results, excluded, _ = pipeline.run("fake.diff")
+        results, excluded, _, _ = pipeline.run("fake.diff")
 
     # Should complete without raising (graceful degradation)
     assert isinstance(results, list)
@@ -431,7 +431,7 @@ def test_pipeline_run_accepts_pr_description_param():
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("auth.py")]), \
          patch("revue.core.pipeline.track_usage"):
-        results, excluded, _ = pipeline.run("fake.diff", pr_description=pr)
+        results, excluded, _, _ = pipeline.run("fake.diff", pr_description=pr)
 
     assert isinstance(results, list)
 
@@ -444,7 +444,7 @@ def test_pipeline_run_no_pr_description_unaffected():
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage"):
-        results, excluded, _ = pipeline.run("fake.diff")  # no pr_description
+        results, excluded, _, _ = pipeline.run("fake.diff")  # no pr_description
 
     assert isinstance(results, list)
 
