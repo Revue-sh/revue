@@ -301,19 +301,12 @@ class GitLabAdapter(PlatformAdapter):
         self.headers = {"PRIVATE-TOKEN": token}
     
     def _get_mr_version_shas(self, project_id: str, pr_number: int) -> tuple[str, str, str]:
-        """Return (base_commit_sha, start_commit_sha, head_commit_sha) from the latest MR version.
-
-        GitLab's discussions API requires these exact SHAs — computing them from the commits
-        list produces wrong values and causes HTTP 400 rejections.
-        """
+        """Return (base_commit_sha, start_commit_sha, head_commit_sha) from the latest MR version."""
+        from revue.core.vcs_adapter import extract_gitlab_version_shas
         versions_url = f"{self.base_url}/projects/{project_id}/merge_requests/{pr_number}/versions"
         resp = httpx.get(versions_url, headers=self.headers)
         resp.raise_for_status()
-        versions = resp.json()
-        if not versions:
-            raise ValueError(f"No MR versions found for MR {pr_number}")
-        latest = versions[0]  # most recent version is first
-        return latest["base_commit_sha"], latest["start_commit_sha"], latest["head_commit_sha"]
+        return extract_gitlab_version_shas(resp.json())
 
     def post_comment(
         self,

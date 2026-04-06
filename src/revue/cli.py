@@ -801,8 +801,8 @@ def _post_to_platform(
                     sev = f.get("severity", "low").lower()
                     if sev in total_findings:
                         total_findings[sev] += 1
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[revue] Warning: failed to count findings for {rr.file_path}: {exc}", file=sys.stderr)
 
         summary_body = _build_enhanced_summary(
             review_results, total_findings, _revision, _last_updated

@@ -182,6 +182,28 @@ def translate_github_position(
     )
 
 
+def extract_gitlab_version_shas(versions: list) -> tuple[str, str, str]:
+    """Return (base_commit_sha, start_commit_sha, head_commit_sha) from a GitLab
+    MR versions API response (list of version dicts, most recent first).
+
+    Both GitLabAdapter implementations use this — single source of truth for the
+    SHA extraction logic required by GitLab's discussions positioning API.
+
+    Raises ValueError if the list is empty or required fields are missing.
+    """
+    if not versions:
+        raise ValueError("No MR versions found — cannot determine diff SHAs")
+    latest = versions[0]
+    try:
+        return (
+            latest["base_commit_sha"],
+            latest["start_commit_sha"],
+            latest["head_commit_sha"],
+        )
+    except KeyError as exc:
+        raise ValueError(f"MR version response missing expected SHA field: {exc}") from exc
+
+
 def translate_gitlab_line_code(
     base_commit_sha: str,
     head_commit_sha: str,

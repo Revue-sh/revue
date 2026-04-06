@@ -22,6 +22,7 @@ _LOG = logging.getLogger(__name__)
 from revue.core.models import FileChange, CodeFix
 from revue.core.vcs_adapter import (
     DiffPosition,
+    extract_gitlab_version_shas,
     translate_gitlab_line_code,
 )
 
@@ -136,15 +137,12 @@ class GitLabAdapter:
     def _get_mr_version_shas(self, pr_id: int) -> tuple[str, str, str]:
         """Return (base_commit_sha, start_commit_sha, head_commit_sha) from the latest MR version.
 
-        GET /projects/{project_id}/merge_requests/{iid}/versions
-        GitLab's discussions API requires these exact SHAs — using commit_id for
-        base_sha/head_sha or omitting start_sha causes HTTP 400 rejections.
+        Delegates extraction logic to the shared utility in vcs_adapter so both
+        GitLabAdapter implementations stay in sync.  Raises ValueError / RuntimeError
+        on failure — callers decide whether the failure is fatal.
         """
         versions = self._request("GET", f"/merge_requests/{pr_id}/versions")
-        if not versions:
-            raise ValueError(f"No MR versions found for MR {pr_id}")
-        latest = versions[0]  # most recent version is first
-        return latest["base_commit_sha"], latest["start_commit_sha"], latest["head_commit_sha"]
+        return extract_gitlab_version_shas(versions)
 
     def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
@@ -159,7 +157,7 @@ class GitLabAdapter:
         """
         try:
             base_sha, start_sha, head_sha = self._get_mr_version_shas(pr_id)
-        except Exception as exc:
+        except (ValueError, RuntimeError) as exc:
             _LOG.warning("post_review_comment: failed to get MR version SHAs for MR %s: %s", pr_id, exc)
             return None
 
