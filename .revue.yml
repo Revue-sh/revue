@@ -9,7 +9,8 @@ ai:
 review:
   max_diff_lines: 10000  # TODO: REVUE-96 - make this dynamic based on model context window
   min_confidence: 70
-  agent_timeout_seconds: 150
+  agent_timeout_seconds: 240
+  retry_on_rate_limit: false  # Set to true to retry agents with exponential backoff on 429 (default: fail-fast with visible error)
   ignore_patterns:
     - "*.lock"
     - "package-lock.json"

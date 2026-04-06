@@ -171,14 +171,16 @@ def test_retry_on_429(mock_sleep: MagicMock) -> None:
         nonlocal call_count
         call_count += 1
         if call_count < 3:
+            mock_response = MagicMock(status_code=429)
+            mock_response.headers.get.return_value = None  # force exponential backoff
             raise openai.RateLimitError(
                 message="rate limited",
-                response=MagicMock(status_code=429),
+                response=mock_response,
                 body=None,
             )
         return "success"
 
-    result = _with_retry(_flaky)
+    result = _with_retry(_flaky, max_attempts=3, base_delay=1.0)
     assert result == "success"
     assert call_count == 3
     assert mock_sleep.call_count == 2

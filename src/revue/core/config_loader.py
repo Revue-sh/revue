@@ -152,6 +152,8 @@ def load_config(
         config.ai_confidence = config.min_confidence
     if "agent_timeout_seconds" in review:
         config.agent_timeout_seconds = int(review["agent_timeout_seconds"])  # type: ignore[arg-type]
+    if "retry_on_rate_limit" in review:
+        config.retry_on_rate_limit = bool(review["retry_on_rate_limit"])  # type: ignore[arg-type]
     if "ignore_patterns" in review:
         patterns = review["ignore_patterns"]
         config.ignore_patterns = list(patterns) if patterns else []  # type: ignore[arg-type]

@@ -41,23 +41,69 @@ class AIClient(Protocol):
 # Retry helper
 # ---------------------------------------------------------------------------
 
+def _extract_rate_limit_message(exc: Exception) -> str:
+    """Pull the human-readable message out of a RateLimitError."""
+    try:
+        # anthropic / openai SDK errors expose .message or .body
+        return str(exc.message)  # type: ignore[union-attr]
+    except AttributeError:
+        pass
+    try:
+        body = exc.body  # type: ignore[union-attr]
+        if isinstance(body, dict):
+            return body.get("error", {}).get("message", str(exc))
+    except AttributeError:
+        pass
+    return str(exc)
+
+
+def _rate_limit_wait(exc: Exception, base_delay: float, attempt: int) -> float:
+    """Return seconds to wait before next retry, preferring the retry-after header."""
+    try:
+        headers = exc.response.headers  # type: ignore[union-attr]
+        val = headers.get("retry-after") or headers.get("x-ratelimit-reset-tokens")
+        if val:
+            return float(val)
+    except Exception:
+        pass
+    return base_delay * (2 ** attempt)
+
+
 def _with_retry(
     fn: Callable[[], str],
-    max_attempts: int = 3,
-    base_delay: float = 1.0,
+    max_attempts: int = 1,
+    base_delay: float = 60.0,
 ) -> str:
-    """Call *fn* with exponential back-off on 429 / RateLimitError.
+    """Call *fn*, surfacing rate-limit errors clearly.
 
-    TimeoutError is **not** caught and propagates immediately.
+    By default (``max_attempts=1``) this is fail-fast: a 429 is printed
+    in a readable format and re-raised immediately so the pipeline log
+    shows exactly why the agent failed.
+
+    When ``max_attempts > 1`` (opt-in via ``retry_on_rate_limit: true``
+    in .revue.yml) it retries with exponential back-off, preferring the
+    ``retry-after`` response header.  60 s base delay covers the Anthropic
+    30 k TPM per-minute reset window.
+
+    TimeoutError is never caught and propagates immediately.
     """
     for attempt in range(max_attempts):
         try:
             return fn()
-        except (openai.RateLimitError, anthropic.RateLimitError):
+        except (openai.RateLimitError, anthropic.RateLimitError) as exc:
+            msg = _extract_rate_limit_message(exc)
             if attempt == max_attempts - 1:
+                print(
+                    f"\n[revue] ❌ RATE LIMIT ERROR — agent failed.\n"
+                    f"  Reason : {msg}\n"
+                    f"  Action : reduce parallel agents, increase your API plan, or set\n"
+                    f"           retry_on_rate_limit: true in .revue.yml to retry with backoff.\n",
+                    flush=True,
+                )
                 raise
-            time.sleep(base_delay * (2 ** attempt))
-    # Unreachable, but keeps mypy happy
+            wait = _rate_limit_wait(exc, base_delay, attempt)
+            print(f"[revue] Rate limit hit — retrying in {wait:.0f}s (attempt {attempt + 1}/{max_attempts}): {msg}", flush=True)
+            time.sleep(wait)
     raise RuntimeError("_with_retry: exhausted attempts")  # pragma: no cover
 
 
@@ -70,6 +116,7 @@ class OpenAIClient:
 
     def __init__(self, config: AIConfig) -> None:
         self._model = config.model
+        self._max_attempts = 3 if config.retry_on_rate_limit else 1
         self._client = openai.OpenAI(
             api_key=config.resolve_api_key(),
             base_url=config.base_url or None,
@@ -92,7 +139,7 @@ class OpenAIClient:
             )
             return resp.choices[0].message.content or ""
 
-        return _with_retry(_call)
+        return _with_retry(_call, max_attempts=self._max_attempts)
 
 
 class AnthropicClient:
@@ -100,6 +147,7 @@ class AnthropicClient:
 
     def __init__(self, config: AIConfig) -> None:
         self._model = config.model
+        self._max_attempts = 3 if config.retry_on_rate_limit else 1
         self._client = anthropic.Anthropic(
             api_key=config.resolve_api_key(),
             timeout=_TIMEOUT,
@@ -121,7 +169,7 @@ class AnthropicClient:
             )
             return resp.content[0].text  # type: ignore[union-attr]
 
-        return _with_retry(_call)
+        return _with_retry(_call, max_attempts=self._max_attempts)
 
 
 class AzureOpenAIClient:
@@ -129,6 +177,7 @@ class AzureOpenAIClient:
 
     def __init__(self, config: AIConfig) -> None:
         self._model = config.azure_deployment or config.model
+        self._max_attempts = 3 if config.retry_on_rate_limit else 1
         self._client = openai.AzureOpenAI(
             api_key=config.resolve_api_key(),
             azure_endpoint=config.azure_endpoint,
@@ -152,7 +201,7 @@ class AzureOpenAIClient:
             )
             return resp.choices[0].message.content or ""
 
-        return _with_retry(_call)
+        return _with_retry(_call, max_attempts=self._max_attempts)
 
 
 class OpenRouterClient:
@@ -160,6 +209,7 @@ class OpenRouterClient:
 
     def __init__(self, config: AIConfig) -> None:
         self._model = config.model
+        self._max_attempts = 3 if config.retry_on_rate_limit else 1
         self._client = openai.OpenAI(
             api_key=config.resolve_api_key(),
             base_url="https://openrouter.ai/api/v1",
@@ -186,7 +236,7 @@ class OpenRouterClient:
             )
             return resp.choices[0].message.content or ""
 
-        return _with_retry(_call)
+        return _with_retry(_call, max_attempts=self._max_attempts)
 
 
 class CustomGatewayClient:
@@ -194,6 +244,7 @@ class CustomGatewayClient:
 
     def __init__(self, config: AIConfig) -> None:
         self._model = config.model
+        self._max_attempts = 3 if config.retry_on_rate_limit else 1
         self._client = openai.OpenAI(
             api_key=config.resolve_api_key(),
             base_url=config.base_url,
@@ -216,7 +267,7 @@ class CustomGatewayClient:
             )
             return resp.choices[0].message.content or ""
 
-        return _with_retry(_call)
+        return _with_retry(_call, max_attempts=self._max_attempts)
 
 
 # ---------------------------------------------------------------------------
