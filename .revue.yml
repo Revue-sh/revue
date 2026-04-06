@@ -9,7 +9,7 @@ ai:
 review:
   max_diff_lines: 10000  # TODO: REVUE-96 - make this dynamic based on model context window
   min_confidence: 70
-  agent_timeout_seconds: 120
+  agent_timeout_seconds: 150
   ignore_patterns:
     - "*.lock"
     - "package-lock.json"
