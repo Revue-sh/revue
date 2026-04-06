@@ -1051,6 +1051,7 @@ def test_gitlab_resolve_inline_comment_returns_false_on_error() -> None:
 from revue.core.vcs_adapter import (
     translate_github_position,
     translate_gitlab_line_code,
+    compute_gitlab_line_code,
 )
 
 
@@ -1205,10 +1206,10 @@ def test_translate_github_position_multi_hunk() -> None:
 
 
 def test_translate_gitlab_line_code_format() -> None:
-    """Returned string contains both SHAs and the line number."""
+    """Legacy stub: returned string matches [0-9a-f]{8}_d+_d+ format."""
+    import re
     code = translate_gitlab_line_code("base123", "head456", "f.py", 42)
-    assert "base123" in code
-    assert "head456" in code
+    assert re.match(r"[0-9a-f]{8}_\d+_\d+", code), f"invalid format: {code!r}"
     assert "42" in code
 
 
@@ -1217,3 +1218,64 @@ def test_translate_gitlab_line_code_deterministic() -> None:
     a = translate_gitlab_line_code("b", "h", "f.py", 7)
     b = translate_gitlab_line_code("b", "h", "f.py", 7)
     assert a == b
+
+
+# =====================================================================
+# compute_gitlab_line_code — real SHA-based line code + diff snapping
+# =====================================================================
+
+_SAMPLE_DIFF = """\
+@@ -10,4 +12,5 @@
+ context_a
++added_line
+ context_b
+-removed_line
+ context_c
+"""
+
+
+def test_compute_gitlab_line_code_format() -> None:
+    """line_code matches GitLab's required /[0-9a-f]{8}_\\d+_\\d+/ format."""
+    import re
+    lc, _, _ = compute_gitlab_line_code("src/app.py", _SAMPLE_DIFF, 13)
+    assert re.match(r"[0-9a-f]{8}_\d+_\d+", lc), f"invalid format: {lc!r}"
+
+
+def test_compute_gitlab_line_code_added_line() -> None:
+    """Added (+) line: old_line = 0, new_line = target."""
+    lc, new, old = compute_gitlab_line_code("f.py", _SAMPLE_DIFF, 13)
+    assert new == 13
+    assert old == 0
+    assert lc.endswith("_0_13")
+
+
+def test_compute_gitlab_line_code_context_line() -> None:
+    """Context line: old_line is the corresponding old position."""
+    # new_line=12 is "context_a" — old_line=10 from @@ -10,4 +12,5 @@
+    lc, new, old = compute_gitlab_line_code("f.py", _SAMPLE_DIFF, 12)
+    assert new == 12
+    assert old == 10
+    assert lc.endswith("_10_12")
+
+
+def test_compute_gitlab_line_code_snaps_to_nearest_hunk_line() -> None:
+    """Line outside all hunks is snapped to the closest valid diff position."""
+    # new_line=999 is far beyond the diff — must snap to last valid line
+    lc, snapped, _ = compute_gitlab_line_code("f.py", _SAMPLE_DIFF, 999)
+    assert snapped != 999, "should have snapped to a hunk line"
+    assert snapped > 0
+
+
+def test_compute_gitlab_line_code_deterministic() -> None:
+    """Same inputs always produce identical output."""
+    a = compute_gitlab_line_code("app.py", _SAMPLE_DIFF, 13)
+    b = compute_gitlab_line_code("app.py", _SAMPLE_DIFF, 13)
+    assert a == b
+
+
+def test_compute_gitlab_line_code_empty_diff_fallback() -> None:
+    """Empty diff: returns best-effort code without crashing."""
+    lc, new, old = compute_gitlab_line_code("f.py", "", 42)
+    assert new == 42
+    assert old == 0
+    assert lc.endswith("_0_42")

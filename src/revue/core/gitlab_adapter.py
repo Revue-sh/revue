@@ -180,6 +180,8 @@ class GitLabAdapter:
         }
         if position.line_code:
             pos_obj["line_code"] = position.line_code
+        if position.old_line is not None and position.old_line > 0:
+            pos_obj["old_line"] = position.old_line
         try:
             resp = self._request(
                 "POST",

@@ -589,7 +589,7 @@ def _run_per_issue_dedup(
     """
     from revue.comments.fingerprint import fingerprint as gen_fingerprint
     from revue.comments.models import CommentState
-    from revue.core.vcs_adapter import DiffPosition
+    from revue.core.vcs_adapter import DiffPosition, compute_gitlab_line_code
 
     prior_unresolved = dedup_store.get_unresolved_fingerprints(platform_str, pr_num)
     posted = 0
@@ -636,7 +636,20 @@ def _run_per_issue_dedup(
                 body_parts.append(f"\n> 💡 **Recommendation:** {rec}")
             body = "\n".join(body_parts)
 
-            position = DiffPosition(file_path=rr.file_path, line_number=line, side="RIGHT")
+            if platform_str == "gitlab":
+                lc, resolved_line, old_ln = compute_gitlab_line_code(
+                    rr.file_path, diff_content, line
+                )
+                position = DiffPosition(
+                    file_path=rr.file_path,
+                    line_number=resolved_line,
+                    line_code=lc,
+                    new_line=resolved_line,
+                    old_line=old_ln if old_ln > 0 else None,
+                    side="RIGHT",
+                )
+            else:
+                position = DiffPosition(file_path=rr.file_path, line_number=line, side="RIGHT")
             comment_id = adapter.post_review_comment(pr_id=pr_num, position=position, body=body)
 
             if comment_id is not None:

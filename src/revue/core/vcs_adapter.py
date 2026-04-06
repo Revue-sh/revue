@@ -8,6 +8,7 @@ This module defines:
 - Translation helpers for GitHub sequential positions and GitLab line codes
 """
 
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Optional, Protocol, runtime_checkable
@@ -204,6 +205,79 @@ def extract_gitlab_version_shas(versions: list) -> tuple[str, str, str]:
         raise ValueError(f"MR version response missing expected SHA field: {exc}") from exc
 
 
+_DIFF_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def _map_diff_lines(diff_content: str) -> list[tuple[int, int]]:
+    """Return all (old_line, new_line) pairs reachable in the diff.
+
+    Added lines (+) have old_line=0 (no corresponding old position).
+    Context lines carry both counters.  Removed lines are excluded
+    (they have no new_line and cannot be commented on by a reviewer
+    looking at the new version).
+    """
+    result: list[tuple[int, int]] = []
+    cur_old = cur_new = 0
+
+    for raw in diff_content.splitlines():
+        m = _DIFF_HUNK_RE.match(raw)
+        if m:
+            cur_old = int(m.group(1))
+            cur_new = int(m.group(2))
+            continue
+        if raw.startswith(("+++", "---")):
+            continue
+        if cur_new == 0 and cur_old == 0:
+            continue  # before first hunk
+        if raw.startswith("+"):
+            result.append((0, cur_new))
+            cur_new += 1
+        elif raw.startswith("-"):
+            cur_old += 1
+        else:  # context
+            result.append((cur_old, cur_new))
+            cur_old += 1
+            cur_new += 1
+
+    return result
+
+
+def compute_gitlab_line_code(
+    file_path: str,
+    diff_content: str,
+    new_line: int,
+) -> tuple[str, int, int]:
+    """Compute a valid GitLab ``line_code`` for an inline diff comment.
+
+    GitLab validates line_code against ``/[0-9a-f]{8}_\\d+_\\d+/``.
+    The format is ``SHA1(file_path)[0:8]_{old_line}_{new_line}``.
+
+    ``old_line`` is 0 for purely-added lines.  If ``new_line`` falls
+    outside every diff hunk (the AI suggested a line not in the diff),
+    the position is snapped to the closest valid hunk line so the
+    comment still lands near the intended location.
+
+    Returns:
+        ``(line_code, resolved_new_line, old_line)`` — use
+        ``resolved_new_line`` (not the original) as ``new_line`` in the
+        GitLab position object, since it may have been snapped.
+    """
+    file_hash = hashlib.sha1(file_path.encode()).hexdigest()[:8]
+    pairs = _map_diff_lines(diff_content)
+
+    if pairs:
+        # Exact match first
+        for old, new in pairs:
+            if new == new_line:
+                return f"{file_hash}_{old}_{new}", new, old
+        # Snap to nearest valid hunk line
+        old, snapped = min(pairs, key=lambda p: abs(p[1] - new_line))
+        return f"{file_hash}_{old}_{snapped}", snapped, old
+
+    # Empty diff — best-effort fallback (no snapping possible)
+    return f"{file_hash}_0_{new_line}", new_line, 0
+
+
 def translate_gitlab_line_code(
     base_commit_sha: str,
     head_commit_sha: str,
@@ -211,12 +285,10 @@ def translate_gitlab_line_code(
     line_number: int,
     line_type: str = "new",
 ) -> str:
-    """Compute a GitLab ``line_code`` string.
+    """Legacy stub — kept for backward compatibility with resolve_position.
 
-    GitLab uses ``line_code`` to anchor inline discussion threads.  The
-    canonical format is ``{base_sha}_{head_sha}_{line_number}``.
-
-    Full SHA-1 hash computation is deferred to Story [013].
+    Prefer ``compute_gitlab_line_code`` for new call sites; it uses the
+    correct SHA1(file_path) format that GitLab's validator accepts.
     """
-
-    return f"{base_commit_sha}_{head_commit_sha}_{line_number}"
+    file_hash = hashlib.sha1(file_path.encode()).hexdigest()[:8]
+    return f"{file_hash}_0_{line_number}"
