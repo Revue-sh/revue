@@ -323,6 +323,8 @@ def test_resolve_pr_id_from_env_non_numeric(monkeypatch):
     """Returns None for non-numeric values (AC1)."""
     from revue.cli import _resolve_pr_id_from_env
     monkeypatch.setenv("BITBUCKET_PR_ID", "not-a-number")
+    monkeypatch.delenv("GITHUB_PR_NUMBER", raising=False)
+    monkeypatch.delenv("CI_MERGE_REQUEST_IID", raising=False)
     assert _resolve_pr_id_from_env() is None
 
 

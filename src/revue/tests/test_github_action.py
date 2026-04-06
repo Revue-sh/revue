@@ -100,16 +100,16 @@ class TestWorkflowTemplateUsesAction:
         on_triggers = workflow.get("on", workflow.get(True, {}))
         assert "pull_request" in on_triggers
 
-    def test_workflow_uses_revue_action(self, workflow) -> None:
-        """At least one step must use revue-io/action@v1."""
+    def test_workflow_runs_revue_cli_review(self, workflow) -> None:
+        """At least one run step must invoke revue cli.py review with --platform github."""
         steps = []
         for job in workflow.get("jobs", {}).values():
             steps.extend(job.get("steps", []))
-        uses_revue = any(
-            "revue-io/action" in str(step.get("uses", ""))
+        runs_revue = any(
+            "revue" in str(step.get("run", "")) and "--platform github" in str(step.get("run", ""))
             for step in steps
         )
-        assert uses_revue, "No step uses revue-io/action — update workflow template"
+        assert runs_revue, "No run step invokes revue review with --platform github"
 
     def test_workflow_has_pull_requests_write_permission(self, workflow) -> None:
         permissions = workflow.get("permissions", {})
