@@ -17,10 +17,53 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: AI Code Review
-        uses: revue-io/action@v1
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          ai_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          ai_provider: anthropic
-          ai_model: claude-sonnet-4-5-20250929
-          mode: multi-agent
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install openai anthropic httpx pyyaml tomli-w --quiet
+
+      - name: Generate diff
+        run: |
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/revue_pr.diff
+          echo "[revue] Diff size $(wc -l < /tmp/revue_pr.diff) lines"
+
+      - name: Fetch PR description
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -sf \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('body',''))" \
+            > /tmp/revue_pr_description.txt \
+          && echo "[revue] PR description fetched ($(wc -c < /tmp/revue_pr_description.txt) bytes)" \
+          || echo "[revue] PR description fetch failed — continuing without context"
+
+      - name: Validate config
+        run: PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
+
+      - name: AI Code Review
+        env:
+          AI_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AI_PROVIDER: anthropic
+          AI_MODEL: claude-sonnet-4-5-20250929
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          APP_ENV: staging
+        run: |
+          echo "[revue] Starting AI code review..."
+          PYTHONPATH="$(pwd)/src" python3 -u src/revue/cli.py review \
+            --diff /tmp/revue_pr.diff \
+            --platform github \
+            --pr-id "${{ github.event.pull_request.number }}" \
+            --provider "${AI_PROVIDER}" \
+            --model "${AI_MODEL}" \
+            --config .revue.yml \
+            --comment-style per-issue \
+            --pr-description-file /tmp/revue_pr_description.txt
+          echo "[revue] Review complete"
