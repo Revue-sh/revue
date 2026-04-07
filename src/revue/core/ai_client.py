@@ -101,8 +101,18 @@ def _with_retry(
                 print(
                     f"\n[revue] ❌ RATE LIMIT ERROR — agent failed.\n"
                     f"  Reason : {msg}\n"
-                    f"  Action : reduce parallel agents, increase your API plan, or set\n"
-                    f"           retry_on_rate_limit: true in .revue.yml to retry with backoff.\n",
+                    f"\n"
+                    f"  How to fix this:\n"
+                    f"  1. Keep PRs small (< ~500 lines). Large diffs send more tokens per agent\n"
+                    f"     call than your plan's per-minute limit allows.\n"
+                    f"  2. Upgrade your Anthropic API tier. Tier 2 (90k TPM) requires $40 spend\n"
+                    f"     and resolves most large-diff rate limits. Visit console.anthropic.com\n"
+                    f"     → Settings → Billing, or contact sales to request a limit increase.\n"
+                    f"  3. Set retry_on_rate_limit: true in .revue.yml to automatically wait\n"
+                    f"     and retry when the rate limit resets (makes large-diff reviews slow\n"
+                    f"     but reliable).\n"
+                    f"  4. Set max_parallel_agents: 1 in .revue.yml to run agents sequentially\n"
+                    f"     and avoid multiple agents consuming your token budget at once.\n",
                     flush=True,
                 )
                 raise
