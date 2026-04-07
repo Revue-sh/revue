@@ -1,126 +1,127 @@
 # Session Handoff - 2026-04-07
-**Duration:** ~4h | **Agent:** Amelia (bmad-agent-dev)
+**Duration:** ~3h | **Agent:** BMad Master (party mode: Winston, Amelia, Bob)
 
 ## Session Summary
-This session continued REVUE-110 (`feat/REVUE-110-duplicate-comments-fix`) after the previous
-handoff. Five commits were landed: rate-limit error handling, partial-failure pipeline exit,
-GitLab `line_code` computation for inline comments, and Anthropic Prompt Caching to eliminate
-re-review 429 rate limits. All 673 tests pass; branch is pushed to all three remotes.
+This session fixed the broken Anthropic Prompt Caching from commit 448a77e (per-block
+cache_control was silently ignored because agent system prompts are below the 1,024-token
+minimum), implemented proper top-level cache_control via SDK 0.87.0's native parameter
+(REVUE-115), then added OpenAI prompt caching observability and prompt_cache_key routing
+for re-review cache hits (REVUE-116). All changes ride the existing REVUE-110 branch.
+682 tests pass; all 3 pipeline files updated with debug logging to confirm caching in CI.
 
 ## Project Status
 | Metric | Value |
 |--------|-------|
-| Stories complete | REVUE-110, REVUE-111 in review |
-| Tests passing | 673 |
+| Stories complete | REVUE-115 done, REVUE-116 done (both In Progress in Jira) |
+| Tests passing | 682 |
 | Open PRs | Bitbucket PR #36, GitHub PR, GitLab MR #2 (feat/REVUE-110) |
 | Branch | feat/REVUE-110-duplicate-comments-fix |
 
 ## Completed this session
-- `dd3a080` feat(rate-limit): fail-fast 429 errors with visible `RATE LIMIT ERROR` block +
-  `retry_on_rate_limit` config opt-in; all 5 AI clients unified
-- `b04334c` fix(pipeline): fail CI on partial agent failures (not just all-fail); 400 debug logging
-  added to GitLab adapter; pipeline returns 4-tuple with `failed_agents`
-- `4f7d746` fix(logging): consistent failure structure between GitLab (partial) and Bitbucket (all)
-  log formats; `_short_error()` helper; `AllAgentsFailedError` unified to stdout
-- `3dd35e8` fix(gitlab): implement `compute_gitlab_line_code()` in `vcs_adapter.py` - real
-  SHA1-based `{hash}_{old}_{new}` format + diff parsing + out-of-hunk snapping; fixes HTTP 400
-  "line_code can't be blank" errors
-- `448a77e` feat(cache): Anthropic + OpenAI Prompt Caching (attempted) - `cache_control: ephemeral`
-  on system prompt + diff blocks (Anthropic explicit); `_openai_messages()` restructures for OpenAI
-  automatic prefix caching + strips `cache_control` to avoid 422; all 5 clients updated
+
+- `6df420d` feat(cache)[REVUE-115]: top-level cache_control in AnthropicClient + observability
+  - Replaced per-block cache_control (448a77e) with SDK-native top-level `cache_control={"type":"ephemeral"}`
+  - Removed Anthropic-specific branches from agent_loader.py and shared_analysis.py entirely
+  - AnthropicClient.complete() now logs cache_creation_input_tokens + cache_read_input_tokens
+  - 4 new tests (TC1-TC4); 677 passing
+
+- `e8d1f04` feat(cache)[REVUE-116]: OpenAI cached_tokens logging + prompt_cache_key routing
+  - _log_openai_usage() helper logs usage.prompt_tokens_details.cached_tokens for all 4 OpenAI clients
+  - AIClient protocol gains `cache_key: str | None = None`; OpenAI clients forward as prompt_cache_key
+  - LoadedAgent.analyse() + run_shared_analysis() compute SHA256[:16] of diff as cache_key
+  - 5 new tests (TC1-TC5); 682 passing
+
+- `02eaee0` chore(ci): --log-cli-level=DEBUG to pytest + REVUE_LOG_LEVEL=DEBUG to review steps
+  - cli.py reads REVUE_LOG_LEVEL env var (default WARNING) via logging.basicConfig()
+  - Bitbucket, GitLab, GitHub Actions all updated
+
+- Story files created: docs/stories/REVUE-115.md, docs/stories/REVUE-116.md
+- Jira tickets created: REVUE-115 (In Progress), REVUE-116 (In Progress)
 
 ## What We Built (Session Highlights)
 
-### Rate Limit Handling - REVUE-110 fix
-`ai_client.py`: All 5 clients use `self._max_attempts = 3 if retry_on_rate_limit else 1`.
-Default is fail-fast with a visible error block naming the reason. `_with_retry()` prefers
-`retry-after` header for backoff delay. `.revue.yml` now has `retry_on_rate_limit: false`.
+### REVUE-115 - Anthropic Prompt Caching Fix
+Root cause: agent system prompts (~400-600 tokens) are below the 1,024-token minimum for
+Sonnet 4.6. Per-block cache_control was silently ignored. Fix: SDK 0.87.0 supports
+`cache_control={"type":"ephemeral"}` as a top-level parameter on messages.create() (confirmed
+via inspect.signature). AnthropicClient.complete() now passes it at the top level; the SDK
+auto-determines the last cacheable block. Callers (agent_loader.py, shared_analysis.py) are
+now clean - no provider-specific branching. Cache debug log added to resp.usage readback.
 
-### Partial Agent Failure - REVUE-110 fix
-`pipeline.py`: `run()` now returns 4-tuple `(results, excluded, files_reviewed, failed_agents)`.
-CLI unpacks it and exits 1 if `failed_agents` non-empty, after posting partial findings.
-All pipeline tests updated to unpack 4-tuple.
+### REVUE-116 - OpenAI Prompt Caching Observability + Routing
+OpenAI caching is automatic (no cache_control needed). Two gaps filled:
+1. Observability: usage.prompt_tokens_details.cached_tokens now logged at DEBUG for all 4
+   OpenAI-compatible clients (OpenAI, Azure, OpenRouter, Custom).
+2. Routing: prompt_cache_key (SHA256[:16] of diff content) passed to chat.completions.create()
+   so re-reviews of the same PR are routed to the same cache server. Anthropic ignores cache_key.
+SDK 2.30.0 (installed) supports prompt_cache_key as a native chat.completions.create() parameter.
 
-### GitLab line_code Fix - REVUE-110 AC
-`vcs_adapter.py`: Added `_map_diff_lines()` and `compute_gitlab_line_code()`. Parses `@@ -old +new @@`
-hunks, maps new-line -> old-line, computes `sha1(file_path)[0:8]_{old}_{new}`. Snaps lines
-outside hunks to nearest valid position. Fixes all HTTP 400 errors on inline GitLab comments.
-
-### Anthropic + OpenAI Prompt Caching - REVUE-110 performance fix (attempted)
-Root cause from CSV: `usage_input_tokens_cache_write_5m: 0`, `cache_read: 0` — zero cache
-usage on every call. Every token sent cold. 4 agents x 8k tokens = 32k effective TPM vs 30k limit.
-
-**Anthropic (explicit):** `agent_loader.py` detects `AnthropicClient` and builds structured call:
-- `system` = `[{text: system_prompt, cache_control: ephemeral}]`
-- `user[0]` = `{text: diff_text, cache_control: ephemeral}` (cacheable per PR across agents)
-- `user[1]` = `{text: shared_context + instructions}` (not cached - dynamic)
-
-`shared_analysis.py`: Same split for the orchestrator call. Target: re-reviews drop from
-~32k to ~3.2k effective TPM (cached tokens count at 10% rate).
-
-**OpenAI/Azure/OpenRouter/Custom (structural - relies on automatic prefix caching):**
-`_openai_messages()` helper restructures messages: system prompt prepended as `role: system`
-message first (static, large - triggers OpenAI automatic prefix caching for GPT-4o+ at
->1024 tokens), then strips `cache_control` fields (OpenAI API rejects them with 422).
-Not explicitly configured - relies on OpenAI's automatic caching activating.
-
-All 5 `complete()` signatures now accept `system: str | list[dict] | None = None`.
-Status: **implemented, not yet confirmed** - next CI run with cache CSV will show
-non-zero `cache_write_5m` / `cache_read` columns for Anthropic; OpenAI caching is opaque.
+### CI Cache Verification
+All 3 pipeline files updated. Expected log lines after next CI run:
+  DEBUG revue.core.ai_client [anthropic] cache_creation=N cache_read=N input=N output=N
+  DEBUG revue.core.ai_client [openai] cached=N prompt=N completion=N
+cache_creation > 0 on first review; cache_read > 0 on re-review = caching confirmed.
 
 ## Remaining Work - Next Steps
 
-1. **Monitor CI pipelines** (top priority, unblocked)
-   - First action: check GitLab job on `feat/REVUE-110-duplicate-comments-fix` for 0 HTTP 400 errors
-   - Check that cache columns are non-zero in next Claude usage CSV
-     (`usage_input_tokens_cache_write_5m`, `usage_input_tokens_cache_read`)
+1. **Monitor CI pipelines** (top priority - first action)
+   - Trigger/check GitLab MR pipeline on feat/REVUE-110-duplicate-comments-fix
+   - Look for DEBUG lines in the revue-review step output confirming cache_creation > 0
    - URL: https://gitlab.com/urukia-group/revue-test-gitlab/-/pipelines
+   - If confirmed: merge Bitbucket PR #36 -> main, push to github/gitlab, close REVUE-110
 
 2. **Merge REVUE-110 to main** (after CI green)
    - First action: merge Bitbucket PR #36 -> main
    - Then: `git push github main && git push gitlab main`
-   - Transition Jira REVUE-110 to Done (after Daniel confirms E2E pass)
+   - Transition REVUE-110, REVUE-115, REVUE-116 to Done in Jira
 
-3. **Winston findings from party-mode review** (8 open items on REVUE-110 PR)
-   - Finding 5 (`fingerprint.py:34`) is O(n*m) - worth fixing before merge or as quick follow-up
-   - Finding 4 and 7 (bare `except Exception`) - tighten before merge
-   - CI caching (finding 1/2) - low priority, delegate to REVUE-111 or separate ticket
-   - First action: read `src/revue/comments/fingerprint.py:34` and `src/revue/cli.py:792`
+3. **Winston open findings on REVUE-110 PR** (pre-merge cleanup)
+   - fingerprint.py:34 (O(n*m) loop) - worth fixing before merge
+   - cli.py:792 (bare except) - tighten before merge
+   - First action: read src/revue/comments/fingerprint.py:34
 
-4. **Next story: [68] Conversion analytics dashboard** (E6 active backlog)
-   - First action: create story file in `docs/stories/REVUE-[next].md` from PRD/kanban
-   - Alternative: [71] Nuitka build pipeline if higher priority
+4. **Remove REVUE_LOG_LEVEL=DEBUG from pipelines** (after caching confirmed)
+   - Once cache_creation/cache_read are confirmed in CI logs, revert to WARNING default
+   - First action: edit bitbucket-pipelines.yml, .gitlab-ci.yml, .github/workflows/revue-review.yml
+
+5. **Next backlog story** (after merge)
+   - REVUE-112: Won't-fix reply tracking (To Do in Jira)
+   - REVUE-113: .revue.yml institutional memory / Nova AI pattern enforcement
+   - REVUE-114: .revue/comments/ cleanup on PR lifecycle end
 
 ## Key Architectural Decisions (Session)
 
-1. **Caching: system prompt + diff block cached, instructions not cached** - The diff block is
-   `ephemeral` (5-min TTL) which covers multi-agent parallel runs on the same diff. Instructions
-   block varies per agent so deliberately not marked cacheable.
+1. **Top-level cache_control beats per-block** - SDK 0.87.0 messages.create() accepts
+   cache_control as a first-class parameter. The SDK auto-selects the cacheable boundary.
+   No callers need to know about caching at all.
 
-2. **`_openai_messages()` strips `cache_control` before OpenAI APIs** - Anthropic-specific key
-   would cause 422 rejection from OpenAI-compatible endpoints. Stripping is transparent to callers.
+2. **1,024-token minimum (not 2,048)** - The official Anthropic prompt caching cookbook
+   specifies 1,024 tokens for Sonnet 4.6. Earlier notes in commit 448a77e cited 2,048 incorrectly.
+   Agent system prompts (~400-600 tokens) are still below even the 1,024 threshold when alone,
+   but the combined prefix (system + diff) exceeds it for typical real-world PRs.
 
-3. **4-tuple return from `pipeline.run()`** - Adding `failed_agents` as 4th element rather than
-   raising an exception preserves partial results (findings still posted even when some agents fail).
+3. **cache_key = SHA256[:16] of diff content** - Stable 16-char hex routing key per diff.
+   All agents reviewing the same diff use the same cache_key, improving OpenAI server routing
+   for re-reviews. Does not help parallel agents on a fresh review (different system prompt
+   prefixes = different cache keys regardless).
 
-4. **GitLab line snapping to nearest hunk** - When a finding line is outside all diff hunks
-   (e.g. a summary comment on line 1 of an unchanged file), we snap to the nearest valid hunk line
-   rather than returning an error. This prevents silent failures on context-only findings.
+4. **REVUE_LOG_LEVEL env var pattern** - cli.py reads it via logging.basicConfig() at startup.
+   Default WARNING keeps production quiet. CI sets DEBUG explicitly. Safe to remove after
+   caching is confirmed working.
 
 ## Session Stats
-- Duration: ~4h
-- Stories: REVUE-110 implementation complete (awaiting CI confirmation)
-- Commits: 5
-- Tests: 673 passing
-- PRs: Bitbucket #36, GitHub mirror PR, GitLab MR #2
-- Party mode agents used: Winston (architect review)
+- Duration: ~3h
+- Stories: REVUE-115, REVUE-116 implemented (In Progress in Jira)
+- Commits: 3 (6df420d, e8d1f04, 02eaee0)
+- Tests: 682 passing (+9 this session)
+- PRs: existing Bitbucket #36, GitHub PR, GitLab MR #2 (no new PRs opened)
+- Party mode agents used: Winston (architect), Amelia (dev), Bob (scrum master)
 
 ## Continuation Prompt (Next Session)
-REVUE-110 (`feat/REVUE-110-duplicate-comments-fix`) is complete and pushed to all 3 remotes (5
-commits this session). Read `docs/HANDOFF.md` first. Awaiting CI green on GitLab to confirm:
-(1) no more HTTP 400 line_code errors, (2) no 429 rate limits. Key unverified item: Anthropic
-Prompt Caching (commit 448a77e) - check next Claude usage CSV for non-zero cache_write_5m /
-cache_read columns; OpenAI automatic prefix caching is opaque. If CI is green: merge Bitbucket
-PR #36 -> main, push main to github/gitlab remotes, transition Jira REVUE-110 to Done. If CI
-shows failures, paste the log. Winston's open findings: fingerprint.py:34 (O(n*m)) + cli.py:792
-(bare except) worth fixing - check before merge.
+Branch feat/REVUE-110-duplicate-comments-fix has 3 new commits this session (REVUE-115
+Anthropic cache fix, REVUE-116 OpenAI caching, CI debug logging). Read docs/HANDOFF.md.
+First action: check GitLab pipeline for DEBUG lines confirming cache_creation > 0 (look in
+revue-review step output). If CI green and caching confirmed: merge Bitbucket PR #36 -> main,
+push to github/gitlab remotes, transition REVUE-110/115/116 to Done in Jira. Then fix
+fingerprint.py:34 (O(n*m)) and cli.py:792 (bare except) before or after merge. Next backlog
+story is REVUE-112 (won't-fix reply tracking) or REVUE-113 (Nova pattern enforcement).
