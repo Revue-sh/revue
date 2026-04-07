@@ -25,9 +25,9 @@ re-review 429 rate limits. All 673 tests pass; branch is pushed to all three rem
 - `3dd35e8` fix(gitlab): implement `compute_gitlab_line_code()` in `vcs_adapter.py` - real
   SHA1-based `{hash}_{old}_{new}` format + diff parsing + out-of-hunk snapping; fixes HTTP 400
   "line_code can't be blank" errors
-- `448a77e` feat(cache): Anthropic Prompt Caching - `cache_control: ephemeral` on system prompt
-  + diff blocks in `agent_loader.py` and `shared_analysis.py`; `_openai_messages()` strips
-  `cache_control` for OpenAI-compatible providers; re-reviews drop from ~32k to ~3.2k effective TPM
+- `448a77e` feat(cache): Anthropic + OpenAI Prompt Caching (attempted) - `cache_control: ephemeral`
+  on system prompt + diff blocks (Anthropic explicit); `_openai_messages()` restructures for OpenAI
+  automatic prefix caching + strips `cache_control` to avoid 422; all 5 clients updated
 
 ## What We Built (Session Highlights)
 
@@ -46,16 +46,27 @@ All pipeline tests updated to unpack 4-tuple.
 hunks, maps new-line -> old-line, computes `sha1(file_path)[0:8]_{old}_{new}`. Snaps lines
 outside hunks to nearest valid position. Fixes all HTTP 400 errors on inline GitLab comments.
 
-### Anthropic Prompt Caching - REVUE-110 performance fix
-`agent_loader.py`: When `isinstance(client, AnthropicClient)`, builds structured call:
+### Anthropic + OpenAI Prompt Caching - REVUE-110 performance fix (attempted)
+Root cause from CSV: `usage_input_tokens_cache_write_5m: 0`, `cache_read: 0` — zero cache
+usage on every call. Every token sent cold. 4 agents x 8k tokens = 32k effective TPM vs 30k limit.
+
+**Anthropic (explicit):** `agent_loader.py` detects `AnthropicClient` and builds structured call:
 - `system` = `[{text: system_prompt, cache_control: ephemeral}]`
-- `user[0]` = `{text: diff_text, cache_control: ephemeral}` (cacheable across agents on same diff)
-- `user[1]` = `{text: shared_context + instructions}` (not cached - varies per call)
+- `user[0]` = `{text: diff_text, cache_control: ephemeral}` (cacheable per PR across agents)
+- `user[1]` = `{text: shared_context + instructions}` (not cached - dynamic)
 
-`shared_analysis.py`: Same split pattern for the orchestrator call.
+`shared_analysis.py`: Same split for the orchestrator call. Target: re-reviews drop from
+~32k to ~3.2k effective TPM (cached tokens count at 10% rate).
 
-`ai_client.py`: `_openai_messages()` strips `cache_control` before OpenAI-compatible APIs.
-All 5 `complete()` signatures accept `system: str | list[dict] | None = None`.
+**OpenAI/Azure/OpenRouter/Custom (structural - relies on automatic prefix caching):**
+`_openai_messages()` helper restructures messages: system prompt prepended as `role: system`
+message first (static, large - triggers OpenAI automatic prefix caching for GPT-4o+ at
+>1024 tokens), then strips `cache_control` fields (OpenAI API rejects them with 422).
+Not explicitly configured - relies on OpenAI's automatic caching activating.
+
+All 5 `complete()` signatures now accept `system: str | list[dict] | None = None`.
+Status: **implemented, not yet confirmed** - next CI run with cache CSV will show
+non-zero `cache_write_5m` / `cache_read` columns for Anthropic; OpenAI caching is opaque.
 
 ## Remaining Work - Next Steps
 
@@ -106,9 +117,10 @@ All 5 `complete()` signatures accept `system: str | list[dict] | None = None`.
 
 ## Continuation Prompt (Next Session)
 REVUE-110 (`feat/REVUE-110-duplicate-comments-fix`) is complete and pushed to all 3 remotes (5
-commits this session). Awaiting CI green on GitLab to confirm: (1) no more HTTP 400 line_code
-errors, (2) no 429 rate limits (Anthropic caching active). Read `docs/HANDOFF.md`. If CI is green:
-merge Bitbucket PR #36 -> main, push main to github/gitlab remotes, transition Jira REVUE-110 to
-Done. If CI shows new failures, paste the log here. Winston's 8 party-mode findings (fingerprint.py
-O(n*m), bare except) may need quick fixes before merge - check `src/revue/comments/fingerprint.py:34`
-and `src/revue/cli.py:792`.
+commits this session). Read `docs/HANDOFF.md` first. Awaiting CI green on GitLab to confirm:
+(1) no more HTTP 400 line_code errors, (2) no 429 rate limits. Key unverified item: Anthropic
+Prompt Caching (commit 448a77e) - check next Claude usage CSV for non-zero cache_write_5m /
+cache_read columns; OpenAI automatic prefix caching is opaque. If CI is green: merge Bitbucket
+PR #36 -> main, push main to github/gitlab remotes, transition Jira REVUE-110 to Done. If CI
+shows failures, paste the log. Winston's open findings: fingerprint.py:34 (O(n*m)) + cli.py:792
+(bare except) worth fixing - check before merge.
