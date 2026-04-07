@@ -316,3 +316,43 @@ def test_revue_yml_contains_four_allowed_patterns() -> None:
     assert "Inline lazy httpx import in pr_description_adapter" in pattern_texts
     assert "test_vcs_adapter.py deletion" in pattern_texts
     assert "Bare except in _inject_pr_context" in pattern_texts
+
+
+# ---------------------------------------------------------------------------
+# max_parallel_agents — load, default, validate
+# ---------------------------------------------------------------------------
+
+def test_load_config_max_parallel_agents_from_yaml(tmp_path: Path) -> None:
+    """max_parallel_agents is read from review section and applied to config."""
+    yml = """\
+version: "1"
+ai:
+  provider: anthropic
+review:
+  max_parallel_agents: 3
+"""
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert config.max_parallel_agents == 3
+
+
+def test_load_config_max_parallel_agents_default() -> None:
+    """max_parallel_agents defaults to 1 (sequential) when not specified."""
+    config = AIConfig.from_env()
+    assert config.max_parallel_agents == 1
+
+
+def test_validate_config_max_parallel_agents_zero() -> None:
+    """max_parallel_agents < 1 produces a validation error."""
+    config = AIConfig.from_env()
+    config.max_parallel_agents = 0
+    errors = validate_config(config)
+    assert any("max_parallel_agents" in e for e in errors)
+
+
+def test_validate_config_max_parallel_agents_too_high() -> None:
+    """max_parallel_agents > 10 produces a validation error."""
+    config = AIConfig.from_env()
+    config.max_parallel_agents = 11
+    errors = validate_config(config)
+    assert any("max_parallel_agents" in e for e in errors)

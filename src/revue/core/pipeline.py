@@ -522,8 +522,16 @@ class ReviewPipeline:
                 f"{', '.join(stripped)})",
                 flush=True,
             )
-        print(f"[revue]   Running {len(reviewer_agents)} reviewer(s) in parallel...", flush=True)
-        parallel_result = run_agents_parallel(reviewer_agents, included, shared)
+        max_parallel = self.config.max_parallel_agents
+        mode = "sequentially" if max_parallel == 1 else f"in parallel (max {max_parallel})"
+        print(f"[revue]   Running {len(reviewer_agents)} reviewer(s) {mode}...", flush=True)
+        parallel_result = run_agents_parallel(
+            reviewer_agents,
+            included,
+            shared,
+            timeout_seconds=self.config.agent_timeout_seconds,
+            max_workers=max_parallel,
+        )
 
         agents_used = [r.agent_name for r in parallel_result.agent_results if r.success]
         failed = [r for r in parallel_result.agent_results if not r.success]

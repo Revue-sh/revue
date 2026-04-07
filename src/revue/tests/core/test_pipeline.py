@@ -611,3 +611,61 @@ def test_partial_failure_does_not_abort_agent_runner():
     assert successes[0].agent_name == "good"
     assert len(successes[0].findings) == 1
     assert failures[0].agent_name == "bad"
+
+
+# ---------------------------------------------------------------------------
+# max_parallel_agents wired from config to run_agents_parallel
+# ---------------------------------------------------------------------------
+
+def test_pipeline_passes_max_parallel_agents_to_runner(capsys):
+    """Pipeline passes config.max_parallel_agents as max_workers to run_agents_parallel."""
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '{"findings": []}'
+    config = _config(max_parallel_agents=2)
+
+    pro_license = _license_info(
+        tier="pro",
+        agents_allowed=["orchestrator", "code-quality-expert", "security-expert",
+                        "performance-expert", "architecture-expert", "consolidator",
+                        "sage", "cleo", "nova"],
+    )
+    pipeline = ReviewPipeline(config, client=mock_client, license_info=pro_license)
+
+    from revue.core.agent_runner import AgentRunResult, ParallelRunResult
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage"), \
+         patch("revue.core.agent_runner.run_agents_parallel") as mock_run:
+        mock_run.return_value = ParallelRunResult(
+            agent_results=[AgentRunResult(agent_name="maya", findings=[], elapsed_seconds=0.0)],
+            total_elapsed=0.0,
+        )
+        pipeline.run("fake.diff")
+
+    # run_agents_parallel must have been called with max_workers=2 and the configured timeout
+    assert mock_run.called, "run_agents_parallel was not called (pipeline may have taken simplified path)"
+    call_kwargs = mock_run.call_args[1]
+    assert call_kwargs.get("max_workers") == 2
+    assert call_kwargs.get("timeout_seconds") == config.agent_timeout_seconds
+
+
+def test_pipeline_sequential_mode_logged(capsys):
+    """When max_parallel_agents=1, pipeline logs 'sequentially' not 'in parallel'."""
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '{"findings": []}'
+    config = _config(max_parallel_agents=1)
+
+    pro_license = _license_info(
+        tier="pro",
+        agents_allowed=["orchestrator", "code-quality-expert", "security-expert",
+                        "performance-expert", "architecture-expert", "consolidator",
+                        "sage", "cleo", "nova"],
+    )
+    pipeline = ReviewPipeline(config, client=mock_client, license_info=pro_license)
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage"):
+        pipeline.run("fake.diff")
+
+    captured = capsys.readouterr()
+    assert "sequentially" in captured.out

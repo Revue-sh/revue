@@ -53,6 +53,7 @@ class AIConfig:
     max_diff_lines: int = 2000
     min_confidence: int = 70
     agent_timeout_seconds: int = 90  # Per-agent wall-clock timeout. PRD: 90s. Raise for slow networks.
+    max_parallel_agents: int = 1  # Max agents running concurrently. 1 = sequential (safe default).
     retry_on_rate_limit: bool = False  # Retry agents with backoff on 429. Off by default (fail-fast).
     ignore_patterns: list[str] = field(default_factory=list)
     disabled_noise_filters: list[str] = field(default_factory=list)  # filter names to disable

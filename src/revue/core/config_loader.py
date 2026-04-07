@@ -63,6 +63,7 @@ review:
   max_diff_lines: 2000
   min_confidence: 70
   agent_timeout_seconds: 90  # raise to 120 for slow VPN/corporate networks
+  max_parallel_agents: 1     # 1 = sequential (safe default). Raise only if your API tier has high TPM limits.
   ignore_patterns:
     - "*.md"
     - "*.lock"
@@ -152,6 +153,8 @@ def load_config(
         config.ai_confidence = config.min_confidence
     if "agent_timeout_seconds" in review:
         config.agent_timeout_seconds = int(review["agent_timeout_seconds"])  # type: ignore[arg-type]
+    if "max_parallel_agents" in review:
+        config.max_parallel_agents = int(review["max_parallel_agents"])  # type: ignore[arg-type]
     if "retry_on_rate_limit" in review:
         config.retry_on_rate_limit = bool(review["retry_on_rate_limit"])  # type: ignore[arg-type]
     if "ignore_patterns" in review:
@@ -238,6 +241,11 @@ def validate_config(config: AIConfig) -> list[str]:
     if config.agent_timeout_seconds <= 0 or config.agent_timeout_seconds > 600:
         errors.append(
             f"agent_timeout_seconds must be between 1 and 600, got {config.agent_timeout_seconds}."
+        )
+
+    if config.max_parallel_agents < 1 or config.max_parallel_agents > 10:
+        errors.append(
+            f"max_parallel_agents must be between 1 and 10, got {config.max_parallel_agents}."
         )
 
     if config.ai_temp < 0.0 or config.ai_temp > 2.0:
