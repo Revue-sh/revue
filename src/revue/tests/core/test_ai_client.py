@@ -195,3 +195,61 @@ def test_timeout_raises() -> None:
 
     with pytest.raises(TimeoutError, match="connection timed out"):
         _with_retry(_timeout)
+
+
+# ---------------------------------------------------------------------------
+# REVUE-115: Anthropic top-level cache_control + observability
+# ---------------------------------------------------------------------------
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_complete_passes_top_level_cache_control(mock_anthropic_cls: MagicMock) -> None:
+    """TC1: messages.create() receives cache_control at the top level, not inside content blocks."""
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="result")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=100,
+        cache_read_input_tokens=0,
+        input_tokens=500,
+        output_tokens=50,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+
+    config = _make_config(provider="anthropic")
+    client = AnthropicClient(config)
+    result = client.complete([{"role": "user", "content": "review this diff"}])
+
+    assert result == "result"
+    call_kwargs = mock_anthropic_cls.return_value.messages.create.call_args[1]
+    # Top-level cache_control must be present
+    assert call_kwargs.get("cache_control") == {"type": "ephemeral"}
+    # No cache_control inside any content block
+    for msg in call_kwargs.get("messages", []):
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                assert "cache_control" not in block, f"Unexpected cache_control in block: {block}"
+
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_complete_logs_cache_usage(mock_anthropic_cls: MagicMock) -> None:
+    """TC4: cache_creation_input_tokens and cache_read_input_tokens are logged without raising."""
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="ok")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=1500,
+        cache_read_input_tokens=0,
+        input_tokens=2000,
+        output_tokens=80,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+
+    config = _make_config(provider="anthropic")
+    client = AnthropicClient(config)
+
+    import logging
+    with patch("revue.core.ai_client._log") as mock_log:
+        client.complete([{"role": "user", "content": "test"}])
+        mock_log.debug.assert_called_once()
+        log_args = mock_log.debug.call_args[0]
+        assert "cache_creation" in log_args[0]
+        assert "cache_read" in log_args[0]

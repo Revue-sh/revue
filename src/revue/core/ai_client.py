@@ -8,8 +8,11 @@ All clients conform to the AIClient protocol for interchangeable use.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Callable, Protocol
+
+_log = logging.getLogger(__name__)
 
 import anthropic
 import httpx
@@ -212,10 +215,25 @@ class AnthropicClient:
                 "messages": messages,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
+                # Top-level cache_control: SDK ≥ 0.87.0 supports this as a native
+                # parameter on messages.create(). The SDK auto-determines the last
+                # cacheable content block — no per-block placement needed.
+                # Minimum prefix: 1,024 tokens (Sonnet 4.6) / 4,096 (Haiku/Opus).
+                # For small diffs where the full request is below that threshold,
+                # Anthropic silently skips the cache write — this is expected.
+                "cache_control": {"type": "ephemeral"},
             }
             if system is not None:
                 kwargs["system"] = system
             resp = self._client.messages.create(**kwargs)
+            usage = resp.usage
+            _log.debug(
+                "[anthropic] cache_creation=%s cache_read=%s input=%s output=%s",
+                getattr(usage, "cache_creation_input_tokens", 0),
+                getattr(usage, "cache_read_input_tokens", 0),
+                usage.input_tokens,
+                usage.output_tokens,
+            )
             return resp.content[0].text  # type: ignore[union-attr]
 
         return _with_retry(_call, max_attempts=self._max_attempts)

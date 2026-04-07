@@ -122,6 +122,39 @@ def test_fallback_result_has_all_agents():
     assert set(r.suggested_agents) == {"zara", "kai", "maya", "leo"}
 
 
+# ---------------------------------------------------------------------------
+# REVUE-115: Unified code path — no provider-specific branching (AC3)
+# ---------------------------------------------------------------------------
+
+def test_shared_analysis_same_call_structure_for_anthropic_and_openai():
+    """TC3: run_shared_analysis() sends identical message structure regardless of provider.
+
+    With the Anthropic branch removed, both clients receive a plain string
+    content message — no cache_control blocks, no isinstance branching.
+    """
+    from revue.core.ai_client import AnthropicClient, OpenAIClient
+
+    anthropic_mock = MagicMock(spec=AnthropicClient)
+    anthropic_mock.complete.return_value = _VALID_JSON
+
+    openai_mock = MagicMock(spec=OpenAIClient)
+    openai_mock.complete.return_value = _VALID_JSON
+
+    run_shared_analysis([_fc("app.py")], anthropic_mock, provider="anthropic")
+    run_shared_analysis([_fc("app.py")], openai_mock, provider="openai")
+
+    anthropic_call = anthropic_mock.complete.call_args[0][0]
+    openai_call = openai_mock.complete.call_args[0][0]
+
+    # Both calls should have a single user message with plain string content
+    assert len(anthropic_call) == 1
+    assert len(openai_call) == 1
+    assert anthropic_call[0]["role"] == "user"
+    assert openai_call[0]["role"] == "user"
+    assert isinstance(anthropic_call[0]["content"], str)
+    assert isinstance(openai_call[0]["content"], str)
+
+
 def test_diff_summary_truncated():
     big_diff = "\n".join(["+line"] * 200)
     fc = FileChange(

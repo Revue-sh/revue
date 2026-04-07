@@ -572,6 +572,30 @@ def test_disallowed_patterns_injected_into_system_prompt():
     assert "TODOs should be tracked as Jira tickets" in prompt
 
 
+# ---------------------------------------------------------------------------
+# REVUE-115: No per-block cache_control in caller (AC2)
+# ---------------------------------------------------------------------------
+
+def test_loaded_agent_analyse_no_cache_control_in_content():
+    """TC2: analyse() passes plain content — no cache_control keys at any level."""
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    client = _mock_client()
+    agent = LoadedAgent(defn, client)
+    agent.analyse([_fc()])
+
+    call_args = client.complete.call_args
+    messages = call_args[0][0]  # positional arg: list of messages
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for block in content:
+                assert "cache_control" not in block, f"cache_control found in block: {block}"
+    # system kwarg should not be passed (no Anthropic-specific split)
+    kwargs = call_args[1] if call_args[1] else {}
+    assert "system" not in kwargs
+
+
 def test_empty_patterns_no_injection():
     """AC2: When both lists are empty, no pattern section headers appear."""
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
