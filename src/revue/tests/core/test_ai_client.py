@@ -290,8 +290,14 @@ def test_anthropic_complete_ignores_cache_key(mock_anthropic_cls: MagicMock) -> 
 # ---------------------------------------------------------------------------
 
 @patch("revue.core.ai_client.anthropic.Anthropic")
-def test_anthropic_complete_passes_top_level_cache_control(mock_anthropic_cls: MagicMock) -> None:
-    """TC1: messages.create() receives cache_control at the top level, not inside content blocks."""
+def test_anthropic_complete_caches_via_content_blocks(mock_anthropic_cls: MagicMock) -> None:
+    """TC1: messages.create() uses per-block cache_control, not an invalid top-level param.
+
+    The correct Anthropic caching mechanism requires cache_control inside content
+    blocks (system blocks and/or message content blocks), NOT as a top-level kwarg
+    to messages.create().  A top-level cache_control is silently ignored by the API
+    and produces zero cache_creation/cache_read tokens (confirmed by usage CSV).
+    """
     mock_msg = MagicMock()
     mock_msg.content = [MagicMock(text="result")]
     mock_msg.usage = MagicMock(
@@ -304,18 +310,24 @@ def test_anthropic_complete_passes_top_level_cache_control(mock_anthropic_cls: M
 
     config = _make_config(provider="anthropic")
     client = AnthropicClient(config)
-    result = client.complete([{"role": "user", "content": "review this diff"}])
+    result = client.complete(
+        [{"role": "user", "content": "review this diff"}],
+        system="You are a security expert.",
+    )
 
     assert result == "result"
     call_kwargs = mock_anthropic_cls.return_value.messages.create.call_args[1]
-    # Top-level cache_control must be present
-    assert call_kwargs.get("cache_control") == {"type": "ephemeral"}
-    # No cache_control inside any content block
-    for msg in call_kwargs.get("messages", []):
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            for block in content:
-                assert "cache_control" not in block, f"Unexpected cache_control in block: {block}"
+    # No invalid top-level cache_control kwarg
+    assert "cache_control" not in call_kwargs
+    # system must be a list with cache_control on the last block
+    system_blocks = call_kwargs.get("system", [])
+    assert isinstance(system_blocks, list) and system_blocks
+    assert system_blocks[-1].get("cache_control") == {"type": "ephemeral"}
+    # Last user message content must also have cache_control
+    messages = call_kwargs.get("messages", [])
+    last_content = messages[-1].get("content", [])
+    assert isinstance(last_content, list) and last_content
+    assert last_content[-1].get("cache_control") == {"type": "ephemeral"}
 
 
 @patch("revue.core.ai_client.anthropic.Anthropic")

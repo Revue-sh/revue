@@ -576,8 +576,13 @@ def test_disallowed_patterns_injected_into_system_prompt():
 # REVUE-115: No per-block cache_control in caller (AC2)
 # ---------------------------------------------------------------------------
 
-def test_loaded_agent_analyse_no_cache_control_in_content():
-    """TC2 (REVUE-115): analyse() passes plain content — no cache_control keys at any level."""
+def test_loaded_agent_analyse_passes_system_separately():
+    """TC2 (REVUE-115): analyse() passes system_prompt as the system kwarg, not embedded in user message.
+
+    Passing system separately lets AnthropicClient add cache_control to the system
+    block (provider-agnostic: OpenAI also accepts a system param).  The user message
+    must NOT contain the system prompt text.
+    """
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     client = _mock_client()
@@ -585,15 +590,17 @@ def test_loaded_agent_analyse_no_cache_control_in_content():
     agent.analyse([_fc()])
 
     call_args = client.complete.call_args
-    messages = call_args[0][0]  # positional arg: list of messages
+    kwargs = call_args[1] if call_args[1] else {}
+    # system kwarg must be passed with the agent's system prompt
+    assert kwargs.get("system") == "Find security issues."
+    # system prompt text must NOT appear inside the user message
+    messages = call_args[0][0]
     for msg in messages:
         content = msg.get("content", "")
-        if isinstance(content, list):
-            for block in content:
-                assert "cache_control" not in block, f"cache_control found in block: {block}"
-    # system kwarg should not be passed (no Anthropic-specific split)
-    kwargs = call_args[1] if call_args[1] else {}
-    assert "system" not in kwargs
+        if isinstance(content, str):
+            assert "Find security issues." not in content, (
+                "system_prompt should not be embedded in user message"
+            )
 
 
 def test_loaded_agent_analyse_passes_diff_hash_as_cache_key():

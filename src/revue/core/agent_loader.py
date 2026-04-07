@@ -106,14 +106,14 @@ class LoadedAgent:
         # same cache server and hit the cached prefix. Anthropic ignores it.
         diff_hash = hashlib.sha256(diff_text.encode()).hexdigest()[:16]
         try:
-            prompt = (
-                f"{self._def.system_prompt}\n\n"
+            user_prompt = (
                 f"{shared_context}"
                 f"Review the following diff:\n\n{diff_text}\n\n"
                 f"{_INSTRUCTIONS}"
             )
             raw = self._client.complete(
-                [{"role": "user", "content": prompt}],
+                [{"role": "user", "content": user_prompt}],
+                system=self._def.system_prompt,
                 cache_key=diff_hash,
             )
             print(

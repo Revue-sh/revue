@@ -211,15 +211,54 @@ class OpenAIClient:
         return _with_retry(_call, max_attempts=self._max_attempts)
 
 
+def _anthropic_messages_with_cache(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return *messages* with cache_control on the last user message content block.
+
+    Anthropic Prompt Caching is prefix-based: the SDK caches all tokens up to
+    and including the block marked with ``cache_control``.  Adding a breakpoint
+    on the last user message ensures the system-prompt + full diff prefix is
+    cached for re-reviews of the same PR (cache_read on subsequent runs).
+
+    Minimum cacheable prefix: 1,024 tokens (Sonnet 4.6).  For tiny diffs the
+    threshold may not be reached; Anthropic silently skips the cache write in
+    that case — this is expected and harmless.
+    """
+    if not messages:
+        return messages
+    result = list(messages)
+    last = result[-1]
+    content = last.get("content")
+    if isinstance(content, str):
+        result[-1] = {
+            **last,
+            "content": [
+                {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+            ],
+        }
+    elif isinstance(content, list) and content:
+        blocks = list(content)
+        if "cache_control" not in blocks[-1]:
+            blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+        result[-1] = {**last, "content": blocks}
+    return result
+
+
 class AnthropicClient:
     """Native Anthropic SDK client.
 
-    Supports Anthropic Prompt Caching via the ``system`` parameter.  Pass a
-    list of content blocks (with ``cache_control: {"type": "ephemeral"}`` on
-    large static blocks) to cache system prompts and diff content between
-    calls.  Cached token reads count at 10% of the normal TPM rate, which
-    dramatically reduces rate-limit pressure when the same diff is reviewed
-    by multiple parallel agents.
+    Supports Anthropic Prompt Caching via per-block ``cache_control`` markers
+    (the correct API mechanism — top-level cache_control is not a valid param).
+
+    Two cache breakpoints are used:
+    1. ``system`` block: caches the static agent system prompt.
+    2. Last user message block: caches the full prefix (system + diff) so
+       re-reviews of the same PR hit the cache on subsequent runs.
+
+    Cached token reads count at 10 % of the normal input TPM rate, reducing
+    rate-limit pressure when the same diff is reviewed by multiple agents.
+    Minimum cacheable prefix: 1,024 tokens (Sonnet 4.6).
     """
 
     def __init__(self, config: AIConfig) -> None:
@@ -242,19 +281,21 @@ class AnthropicClient:
         def _call() -> str:
             kwargs: dict[str, Any] = {
                 "model": self._model,
-                "messages": messages,
+                "messages": _anthropic_messages_with_cache(messages),
                 "max_tokens": max_tokens,
                 "temperature": temperature,
-                # Top-level cache_control: SDK ≥ 0.87.0 supports this as a native
-                # parameter on messages.create(). The SDK auto-determines the last
-                # cacheable content block — no per-block placement needed.
-                # Minimum prefix: 1,024 tokens (Sonnet 4.6) / 4,096 (Haiku/Opus).
-                # For small diffs where the full request is below that threshold,
-                # Anthropic silently skips the cache write — this is expected.
-                "cache_control": {"type": "ephemeral"},
             }
             if system is not None:
-                kwargs["system"] = system
+                if isinstance(system, str):
+                    kwargs["system"] = [
+                        {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+                    ]
+                else:
+                    # Already a list — ensure the last block has cache_control
+                    blocks = list(system)
+                    if blocks and "cache_control" not in blocks[-1]:
+                        blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+                    kwargs["system"] = blocks
             resp = self._client.messages.create(**kwargs)
             usage = resp.usage
             _log.debug(
