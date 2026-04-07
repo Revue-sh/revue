@@ -577,7 +577,7 @@ def test_disallowed_patterns_injected_into_system_prompt():
 # ---------------------------------------------------------------------------
 
 def test_loaded_agent_analyse_no_cache_control_in_content():
-    """TC2: analyse() passes plain content — no cache_control keys at any level."""
+    """TC2 (REVUE-115): analyse() passes plain content — no cache_control keys at any level."""
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     client = _mock_client()
@@ -594,6 +594,21 @@ def test_loaded_agent_analyse_no_cache_control_in_content():
     # system kwarg should not be passed (no Anthropic-specific split)
     kwargs = call_args[1] if call_args[1] else {}
     assert "system" not in kwargs
+
+
+def test_loaded_agent_analyse_passes_diff_hash_as_cache_key():
+    """TC5 (REVUE-116): analyse() passes a 16-char hex cache_key derived from the diff."""
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    client = _mock_client()
+    agent = LoadedAgent(defn, client)
+    agent.analyse([_fc()])
+
+    call_kwargs = client.complete.call_args[1]
+    cache_key = call_kwargs.get("cache_key")
+    assert cache_key is not None, "cache_key should be passed to complete()"
+    assert len(cache_key) == 16
+    assert all(c in "0123456789abcdef" for c in cache_key), f"Not a hex string: {cache_key!r}"
 
 
 def test_empty_patterns_no_injection():

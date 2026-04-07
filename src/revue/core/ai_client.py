@@ -38,6 +38,7 @@ class AIClient(Protocol):
         max_tokens: int = 4096,
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
+        cache_key: "str | None" = None,
     ) -> str: ...
 
 
@@ -119,10 +120,19 @@ def _openai_messages(
     messages: list[dict[str, Any]],
     system: "str | list[dict[str, Any]] | None",
 ) -> list[dict[str, Any]]:
-    """Prepend a system message and strip Anthropic-specific cache_control fields.
+    """Build the messages list for OpenAI-compatible APIs.
 
-    OpenAI-compatible APIs don't accept ``cache_control`` inside content
-    blocks.  We remove the key before sending so the SDK doesn't reject it.
+    Prepends a ``role: system`` message when a system prompt is provided.
+    Placing the static system prompt first is intentional: OpenAI Prompt
+    Caching is prefix-based, so static content at the start of the request
+    maximises cache hit rates (caching activates automatically for prefixes
+    ≥ 1,024 tokens — no ``cache_control`` needed).
+
+    Also strips ``cache_control`` keys from any content blocks defensively.
+    Anthropic-specific ``cache_control`` is handled at the ``AnthropicClient``
+    level (top-level ``cache_control`` kwarg on ``messages.create()``); this
+    stripping ensures any future callers that accidentally include per-block
+    ``cache_control`` don't cause a 422 rejection from OpenAI-compatible APIs.
     """
     out: list[dict[str, Any]] = []
     if system is not None:
@@ -150,6 +160,20 @@ def _openai_messages(
     return out
 
 
+def _log_openai_usage(usage: Any) -> None:
+    """Log OpenAI token usage including cached_tokens for cache observability."""
+    if usage is None:
+        return
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = getattr(details, "cached_tokens", 0) if details else 0
+    _log.debug(
+        "[openai] cached=%s prompt=%s completion=%s",
+        cached,
+        getattr(usage, "prompt_tokens", 0),
+        getattr(usage, "completion_tokens", 0),
+    )
+
+
 class OpenAIClient:
     """OpenAI-compatible client (api.openai.com or custom base_url)."""
 
@@ -169,14 +193,19 @@ class OpenAIClient:
         max_tokens: int = 4096,
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
+        cache_key: "str | None" = None,
     ) -> str:
         def _call() -> str:
-            resp = self._client.chat.completions.create(
-                model=self._model,
-                messages=_openai_messages(messages, system),
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            kwargs: dict[str, Any] = {
+                "model": self._model,
+                "messages": _openai_messages(messages, system),
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            if cache_key is not None:
+                kwargs["prompt_cache_key"] = cache_key
+            resp = self._client.chat.completions.create(**kwargs)
+            _log_openai_usage(resp.usage)
             return resp.choices[0].message.content or ""
 
         return _with_retry(_call, max_attempts=self._max_attempts)
@@ -208,6 +237,7 @@ class AnthropicClient:
         max_tokens: int = 4096,
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
+        cache_key: "str | None" = None,  # accepted but unused — Anthropic uses cache_control
     ) -> str:
         def _call() -> str:
             kwargs: dict[str, Any] = {
@@ -259,14 +289,19 @@ class AzureOpenAIClient:
         max_tokens: int = 4096,
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
+        cache_key: "str | None" = None,
     ) -> str:
         def _call() -> str:
-            resp = self._client.chat.completions.create(
-                model=self._model,
-                messages=_openai_messages(messages, system),
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            kwargs: dict[str, Any] = {
+                "model": self._model,
+                "messages": _openai_messages(messages, system),
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            if cache_key is not None:
+                kwargs["prompt_cache_key"] = cache_key
+            resp = self._client.chat.completions.create(**kwargs)
+            _log_openai_usage(resp.usage)
             return resp.choices[0].message.content or ""
 
         return _with_retry(_call, max_attempts=self._max_attempts)
@@ -295,14 +330,19 @@ class OpenRouterClient:
         max_tokens: int = 4096,
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
+        cache_key: "str | None" = None,
     ) -> str:
         def _call() -> str:
-            resp = self._client.chat.completions.create(
-                model=self._model,
-                messages=_openai_messages(messages, system),
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            kwargs: dict[str, Any] = {
+                "model": self._model,
+                "messages": _openai_messages(messages, system),
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            if cache_key is not None:
+                kwargs["prompt_cache_key"] = cache_key
+            resp = self._client.chat.completions.create(**kwargs)
+            _log_openai_usage(resp.usage)
             return resp.choices[0].message.content or ""
 
         return _with_retry(_call, max_attempts=self._max_attempts)
@@ -327,14 +367,19 @@ class CustomGatewayClient:
         max_tokens: int = 4096,
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
+        cache_key: "str | None" = None,
     ) -> str:
         def _call() -> str:
-            resp = self._client.chat.completions.create(
-                model=self._model,
-                messages=_openai_messages(messages, system),
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            kwargs: dict[str, Any] = {
+                "model": self._model,
+                "messages": _openai_messages(messages, system),
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            if cache_key is not None:
+                kwargs["prompt_cache_key"] = cache_key
+            resp = self._client.chat.completions.create(**kwargs)
+            _log_openai_usage(resp.usage)
             return resp.choices[0].message.content or ""
 
         return _with_retry(_call, max_attempts=self._max_attempts)

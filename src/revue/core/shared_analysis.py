@@ -230,7 +230,10 @@ def run_shared_analysis(
     """
     languages = _detect_languages(changes)
     try:
+        import hashlib
+
         diff_summary = _build_diff_summary(changes, max_diff_summary_lines)
+        diff_hash = hashlib.sha256(diff_summary.encode()).hexdigest()[:16]
 
         # AC5: Provider-specific JSON handling
         resolved_provider = provider or _detect_provider(client)
@@ -238,7 +241,10 @@ def run_shared_analysis(
         prompt = SHARED_ANALYSIS_PROMPT.format(diff_summary=diff_summary)
         if resolved_provider not in _JSON_FORMAT_PROVIDERS:
             prompt += _ANTHROPIC_JSON_SUFFIX
-        raw = client.complete([{"role": "user", "content": prompt}])
+        raw = client.complete(
+            [{"role": "user", "content": prompt}],
+            cache_key=diff_hash,
+        )
         _log.debug("Shared analysis raw response (%d chars): %.300r", len(raw), raw)
         # Strip markdown code fences that LLMs often wrap responses in
         clean = raw.strip()

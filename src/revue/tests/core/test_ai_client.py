@@ -201,6 +201,94 @@ def test_timeout_raises() -> None:
 # REVUE-115: Anthropic top-level cache_control + observability
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# REVUE-116: OpenAI cached_tokens logging + prompt_cache_key forwarding
+# ---------------------------------------------------------------------------
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openai_complete_logs_cached_tokens(mock_openai_cls: MagicMock) -> None:
+    """TC1: OpenAIClient logs cached_tokens from usage.prompt_tokens_details."""
+    mock_details = MagicMock(cached_tokens=512)
+    mock_usage = MagicMock(
+        prompt_tokens=2000,
+        completion_tokens=100,
+        prompt_tokens_details=mock_details,
+    )
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "result"
+    mock_resp.usage = mock_usage
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openai")
+    client = OpenAIClient(config)
+
+    with patch("revue.core.ai_client._log") as mock_log:
+        result = client.complete([{"role": "user", "content": "test"}])
+        assert result == "result"
+        mock_log.debug.assert_called_once()
+        log_args = mock_log.debug.call_args[0]
+        assert "cached" in log_args[0]
+        # 512 should appear in the log args
+        assert 512 in log_args
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openai_complete_forwards_cache_key(mock_openai_cls: MagicMock) -> None:
+    """TC2: OpenAIClient passes cache_key as prompt_cache_key when provided."""
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "ok"
+    mock_resp.usage = None
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openai")
+    client = OpenAIClient(config)
+    client.complete([{"role": "user", "content": "test"}], cache_key="abc123def456789a")
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    assert call_kwargs.get("prompt_cache_key") == "abc123def456789a"
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openai_complete_omits_cache_key_when_none(mock_openai_cls: MagicMock) -> None:
+    """TC3: OpenAIClient does not pass prompt_cache_key when cache_key=None."""
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "ok"
+    mock_resp.usage = None
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openai")
+    client = OpenAIClient(config)
+    client.complete([{"role": "user", "content": "test"}], cache_key=None)
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    assert "prompt_cache_key" not in call_kwargs
+
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_complete_ignores_cache_key(mock_anthropic_cls: MagicMock) -> None:
+    """TC4: AnthropicClient does not forward cache_key as prompt_cache_key."""
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="result")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        input_tokens=500,
+        output_tokens=50,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+
+    config = _make_config(provider="anthropic")
+    client = AnthropicClient(config)
+    client.complete([{"role": "user", "content": "test"}], cache_key="should-be-ignored")
+
+    call_kwargs = mock_anthropic_cls.return_value.messages.create.call_args[1]
+    assert "prompt_cache_key" not in call_kwargs
+
+
+# ---------------------------------------------------------------------------
+# REVUE-115: Anthropic top-level cache_control + observability
+# ---------------------------------------------------------------------------
+
 @patch("revue.core.ai_client.anthropic.Anthropic")
 def test_anthropic_complete_passes_top_level_cache_control(mock_anthropic_cls: MagicMock) -> None:
     """TC1: messages.create() receives cache_control at the top level, not inside content blocks."""
