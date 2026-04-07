@@ -14,7 +14,7 @@ unit-tests:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
   script:
     - pip install openai anthropic httpx pyyaml tomli-w pytest --quiet
-    - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q
+    - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q --log-cli-level=DEBUG
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -34,6 +34,7 @@ revue-review:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
     APP_ENV: staging
     GIT_DEPTH: "0"
+    REVUE_LOG_LEVEL: DEBUG
   allow_failure: true
   script:
     - apt-get update -qq && apt-get install -y -qq git curl

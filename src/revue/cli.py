@@ -8,10 +8,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Callable, Optional
+
+# Configure Python logging from REVUE_LOG_LEVEL env var (default: WARNING).
+# Set REVUE_LOG_LEVEL=DEBUG in CI to see cache hit/miss counts from ai_client.py.
+logging.basicConfig(
+    level=os.environ.get("REVUE_LOG_LEVEL", "WARNING").upper(),
+    format="%(levelname)s %(name)s %(message)s",
+)
 
 from revue.core.config_loader import (
     DEFAULT_REVUE_YML,

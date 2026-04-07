@@ -55,6 +55,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           APP_ENV: staging
+          REVUE_LOG_LEVEL: DEBUG
         run: |
           echo "[revue] Starting AI code review..."
           PYTHONPATH="$(pwd)/src" python3 -u src/revue/cli.py review \
