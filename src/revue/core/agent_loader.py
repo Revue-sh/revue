@@ -79,17 +79,16 @@ class LoadedAgent:
         Returns empty list on any failure (graceful degradation).
         """
         import json
+        from .ai_client import AnthropicClient
 
         diff_text = _build_diff_text(changes)
         shared_context = _build_shared_context(shared) if shared else ""
-        prompt = (
-            f"{self._def.system_prompt}\n\n"
-            f"{shared_context}"
-            f"Review the following diff:\n\n{diff_text}\n\n"
-            f"Respond with a JSON array of findings (no markdown fences, raw JSON only):\n"
-            f'[{{"file_path": "...", "line_number": 1, "severity": "high|medium|low|info", '
-            f'"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}}]'
+        _INSTRUCTIONS = (
+            "Respond with a JSON array of findings (no markdown fences, raw JSON only):\n"
+            '[{"file_path": "...", "line_number": 1, "severity": "high|medium|low|info", '
+            '"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}]'
         )
+
         # Severity vocabulary used by revue agents → cli.py display names
         _SEV_MAP = {
             "critical": "high",
@@ -103,7 +102,42 @@ class LoadedAgent:
             "info": "info",
         }
         try:
-            raw = self._client.complete([{"role": "user", "content": prompt}])
+            if isinstance(self._client, AnthropicClient):
+                # Anthropic Prompt Caching: split into cacheable system prompt +
+                # cacheable diff block + non-cached instructions.
+                # Cache reads count at 10% of TPM — eliminates rate-limit pressure
+                # on re-reviews and reduces it substantially on fresh reviews
+                # once the agent system prompt has been written to cache.
+                system_blocks: list[dict] = [
+                    {
+                        "type": "text",
+                        "text": self._def.system_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+                user_content: list[dict] = [
+                    {
+                        "type": "text",
+                        "text": f"Review the following diff:\n\n{diff_text}",
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {
+                        "type": "text",
+                        "text": f"{shared_context}{_INSTRUCTIONS}",
+                    },
+                ]
+                raw = self._client.complete(
+                    [{"role": "user", "content": user_content}],
+                    system=system_blocks,
+                )
+            else:
+                prompt = (
+                    f"{self._def.system_prompt}\n\n"
+                    f"{shared_context}"
+                    f"Review the following diff:\n\n{diff_text}\n\n"
+                    f"{_INSTRUCTIONS}"
+                )
+                raw = self._client.complete([{"role": "user", "content": prompt}])
             print(
                 f"[revue]     [{self._def.name}] raw response "
                 f"({len(raw)} chars, starts: {raw[:80]!r})",

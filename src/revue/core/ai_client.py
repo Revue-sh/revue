@@ -34,6 +34,7 @@ class AIClient(Protocol):
         *,
         max_tokens: int = 4096,
         temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
     ) -> str: ...
 
 
@@ -111,6 +112,41 @@ def _with_retry(
 # Concrete clients
 # ---------------------------------------------------------------------------
 
+def _openai_messages(
+    messages: list[dict[str, Any]],
+    system: "str | list[dict[str, Any]] | None",
+) -> list[dict[str, Any]]:
+    """Prepend a system message and strip Anthropic-specific cache_control fields.
+
+    OpenAI-compatible APIs don't accept ``cache_control`` inside content
+    blocks.  We remove the key before sending so the SDK doesn't reject it.
+    """
+    out: list[dict[str, Any]] = []
+    if system is not None:
+        text = (
+            " ".join(b.get("text", "") for b in system if isinstance(b, dict))
+            if isinstance(system, list)
+            else system
+        )
+        out.append({"role": "system", "content": text})
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            # Strip cache_control from every content block
+            clean_blocks = [
+                {k: v for k, v in block.items() if k != "cache_control"}
+                for block in content
+            ]
+            # Flatten single-block arrays to a plain string for compatibility
+            if len(clean_blocks) == 1 and clean_blocks[0].get("type") == "text":
+                out.append({**msg, "content": clean_blocks[0]["text"]})
+            else:
+                out.append({**msg, "content": clean_blocks})
+        else:
+            out.append(msg)
+    return out
+
+
 class OpenAIClient:
     """OpenAI-compatible client (api.openai.com or custom base_url)."""
 
@@ -129,11 +165,12 @@ class OpenAIClient:
         *,
         max_tokens: int = 4096,
         temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
     ) -> str:
         def _call() -> str:
             resp = self._client.chat.completions.create(
                 model=self._model,
-                messages=messages,
+                messages=_openai_messages(messages, system),
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -143,7 +180,15 @@ class OpenAIClient:
 
 
 class AnthropicClient:
-    """Native Anthropic SDK client."""
+    """Native Anthropic SDK client.
+
+    Supports Anthropic Prompt Caching via the ``system`` parameter.  Pass a
+    list of content blocks (with ``cache_control: {"type": "ephemeral"}`` on
+    large static blocks) to cache system prompts and diff content between
+    calls.  Cached token reads count at 10% of the normal TPM rate, which
+    dramatically reduces rate-limit pressure when the same diff is reviewed
+    by multiple parallel agents.
+    """
 
     def __init__(self, config: AIConfig) -> None:
         self._model = config.model
@@ -159,14 +204,18 @@ class AnthropicClient:
         *,
         max_tokens: int = 4096,
         temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
     ) -> str:
         def _call() -> str:
-            resp = self._client.messages.create(
-                model=self._model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            kwargs: dict[str, Any] = {
+                "model": self._model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            if system is not None:
+                kwargs["system"] = system
+            resp = self._client.messages.create(**kwargs)
             return resp.content[0].text  # type: ignore[union-attr]
 
         return _with_retry(_call, max_attempts=self._max_attempts)
@@ -191,11 +240,12 @@ class AzureOpenAIClient:
         *,
         max_tokens: int = 4096,
         temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
     ) -> str:
         def _call() -> str:
             resp = self._client.chat.completions.create(
                 model=self._model,
-                messages=messages,
+                messages=_openai_messages(messages, system),
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -226,11 +276,12 @@ class OpenRouterClient:
         *,
         max_tokens: int = 4096,
         temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
     ) -> str:
         def _call() -> str:
             resp = self._client.chat.completions.create(
                 model=self._model,
-                messages=messages,
+                messages=_openai_messages(messages, system),
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -257,11 +308,12 @@ class CustomGatewayClient:
         *,
         max_tokens: int = 4096,
         temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
     ) -> str:
         def _call() -> str:
             resp = self._client.chat.completions.create(
                 model=self._model,
-                messages=messages,
+                messages=_openai_messages(messages, system),
                 max_tokens=max_tokens,
                 temperature=temperature,
             )

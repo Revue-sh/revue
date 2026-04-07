@@ -230,16 +230,40 @@ def run_shared_analysis(
     """
     languages = _detect_languages(changes)
     try:
+        from .ai_client import AnthropicClient
+
         diff_summary = _build_diff_summary(changes, max_diff_summary_lines)
-        prompt = SHARED_ANALYSIS_PROMPT.format(diff_summary=diff_summary)
 
         # AC5: Provider-specific JSON handling
         resolved_provider = provider or _detect_provider(client)
-        if resolved_provider not in _JSON_FORMAT_PROVIDERS:
-            # Anthropic and unknown providers: prompt engineering for JSON
-            prompt += _ANTHROPIC_JSON_SUFFIX
 
-        raw = client.complete([{"role": "user", "content": prompt}])
+        if isinstance(client, AnthropicClient):
+            # Anthropic Prompt Caching: cache the diff summary block so that
+            # re-reviews of the same PR read from cache at 10% TPM rate.
+            _static_intro = (
+                "You are a code review orchestrator. Analyse this diff and respond "
+                "with valid JSON only.\n\nDiff summary:\n"
+            )
+            _schema = SHARED_ANALYSIS_PROMPT.split("{diff_summary}")[1]
+            if resolved_provider not in _JSON_FORMAT_PROVIDERS:
+                _schema += _ANTHROPIC_JSON_SUFFIX
+            user_content = [
+                {
+                    "type": "text",
+                    "text": f"{_static_intro}{diff_summary}",
+                    "cache_control": {"type": "ephemeral"},
+                },
+                {
+                    "type": "text",
+                    "text": _schema.strip(),
+                },
+            ]
+            raw = client.complete([{"role": "user", "content": user_content}])
+        else:
+            prompt = SHARED_ANALYSIS_PROMPT.format(diff_summary=diff_summary)
+            if resolved_provider not in _JSON_FORMAT_PROVIDERS:
+                prompt += _ANTHROPIC_JSON_SUFFIX
+            raw = client.complete([{"role": "user", "content": prompt}])
         _log.debug("Shared analysis raw response (%d chars): %.300r", len(raw), raw)
         # Strip markdown code fences that LLMs often wrap responses in
         clean = raw.strip()
