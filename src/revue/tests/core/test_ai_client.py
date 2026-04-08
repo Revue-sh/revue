@@ -171,14 +171,16 @@ def test_retry_on_429(mock_sleep: MagicMock) -> None:
         nonlocal call_count
         call_count += 1
         if call_count < 3:
+            mock_response = MagicMock(status_code=429)
+            mock_response.headers.get.return_value = None  # force exponential backoff
             raise openai.RateLimitError(
                 message="rate limited",
-                response=MagicMock(status_code=429),
+                response=mock_response,
                 body=None,
             )
         return "success"
 
-    result = _with_retry(_flaky)
+    result = _with_retry(_flaky, max_attempts=3, base_delay=1.0)
     assert result == "success"
     assert call_count == 3
     assert mock_sleep.call_count == 2
@@ -193,3 +195,161 @@ def test_timeout_raises() -> None:
 
     with pytest.raises(TimeoutError, match="connection timed out"):
         _with_retry(_timeout)
+
+
+# ---------------------------------------------------------------------------
+# REVUE-115: Anthropic top-level cache_control + observability
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# REVUE-116: OpenAI cached_tokens logging + prompt_cache_key forwarding
+# ---------------------------------------------------------------------------
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openai_complete_logs_cached_tokens(mock_openai_cls: MagicMock) -> None:
+    """TC1: OpenAIClient logs cached_tokens from usage.prompt_tokens_details."""
+    mock_details = MagicMock(cached_tokens=512)
+    mock_usage = MagicMock(
+        prompt_tokens=2000,
+        completion_tokens=100,
+        prompt_tokens_details=mock_details,
+    )
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "result"
+    mock_resp.usage = mock_usage
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openai")
+    client = OpenAIClient(config)
+
+    with patch("revue.core.ai_client._log") as mock_log:
+        result = client.complete([{"role": "user", "content": "test"}])
+        assert result == "result"
+        mock_log.debug.assert_called_once()
+        log_args = mock_log.debug.call_args[0]
+        assert "cached" in log_args[0]
+        # 512 should appear in the log args
+        assert 512 in log_args
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openai_complete_forwards_cache_key(mock_openai_cls: MagicMock) -> None:
+    """TC2: OpenAIClient passes cache_key as prompt_cache_key when provided."""
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "ok"
+    mock_resp.usage = None
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openai")
+    client = OpenAIClient(config)
+    client.complete([{"role": "user", "content": "test"}], cache_key="abc123def456789a")
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    assert call_kwargs.get("prompt_cache_key") == "abc123def456789a"
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openai_complete_omits_cache_key_when_none(mock_openai_cls: MagicMock) -> None:
+    """TC3: OpenAIClient does not pass prompt_cache_key when cache_key=None."""
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "ok"
+    mock_resp.usage = None
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openai")
+    client = OpenAIClient(config)
+    client.complete([{"role": "user", "content": "test"}], cache_key=None)
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    assert "prompt_cache_key" not in call_kwargs
+
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_complete_ignores_cache_key(mock_anthropic_cls: MagicMock) -> None:
+    """TC4: AnthropicClient does not forward cache_key as prompt_cache_key."""
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="result")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        input_tokens=500,
+        output_tokens=50,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+
+    config = _make_config(provider="anthropic")
+    client = AnthropicClient(config)
+    client.complete([{"role": "user", "content": "test"}], cache_key="should-be-ignored")
+
+    call_kwargs = mock_anthropic_cls.return_value.messages.create.call_args[1]
+    assert "prompt_cache_key" not in call_kwargs
+
+
+# ---------------------------------------------------------------------------
+# REVUE-115: Anthropic top-level cache_control + observability
+# ---------------------------------------------------------------------------
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_complete_caches_via_content_blocks(mock_anthropic_cls: MagicMock) -> None:
+    """TC1: messages.create() uses per-block cache_control, not an invalid top-level param.
+
+    The correct Anthropic caching mechanism requires cache_control inside content
+    blocks (system blocks and/or message content blocks), NOT as a top-level kwarg
+    to messages.create().  A top-level cache_control is silently ignored by the API
+    and produces zero cache_creation/cache_read tokens (confirmed by usage CSV).
+    """
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="result")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=100,
+        cache_read_input_tokens=0,
+        input_tokens=500,
+        output_tokens=50,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+
+    config = _make_config(provider="anthropic")
+    client = AnthropicClient(config)
+    result = client.complete(
+        [{"role": "user", "content": "review this diff"}],
+        system="You are a security expert.",
+    )
+
+    assert result == "result"
+    call_kwargs = mock_anthropic_cls.return_value.messages.create.call_args[1]
+    # No invalid top-level cache_control kwarg
+    assert "cache_control" not in call_kwargs
+    # system must be a list with cache_control on the last block
+    system_blocks = call_kwargs.get("system", [])
+    assert isinstance(system_blocks, list) and system_blocks
+    assert system_blocks[-1].get("cache_control") == {"type": "ephemeral"}
+    # Last user message content must also have cache_control
+    messages = call_kwargs.get("messages", [])
+    last_content = messages[-1].get("content", [])
+    assert isinstance(last_content, list) and last_content
+    assert last_content[-1].get("cache_control") == {"type": "ephemeral"}
+
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_complete_logs_cache_usage(mock_anthropic_cls: MagicMock) -> None:
+    """TC4: cache_creation_input_tokens and cache_read_input_tokens are logged without raising."""
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="ok")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=1500,
+        cache_read_input_tokens=0,
+        input_tokens=2000,
+        output_tokens=80,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+
+    config = _make_config(provider="anthropic")
+    client = AnthropicClient(config)
+
+    import logging
+    with patch("revue.core.ai_client._log") as mock_log:
+        client.complete([{"role": "user", "content": "test"}])
+        mock_log.debug.assert_called_once()
+        log_args = mock_log.debug.call_args[0]
+        assert "cache_creation" in log_args[0]
+        assert "cache_read" in log_args[0]

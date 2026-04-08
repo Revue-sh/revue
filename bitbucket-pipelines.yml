@@ -8,7 +8,7 @@ definitions:
           - pip
         script:
           - pip install openai anthropic httpx pyyaml tomli-w pytest --quiet
-          - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q
+          - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q --log-cli-level=DEBUG
 
     - step: &revue-review
         name: "Revue.io AI Code Review"
@@ -32,6 +32,7 @@ definitions:
           - echo "[revue] Starting AI code review..."
           - export PYTHONPATH="$(pwd)/src"
           - export APP_ENV=staging  # Enable REVUE_TIER_OVERRIDE for CI
+          - export REVUE_LOG_LEVEL=DEBUG  # Show cache hit/miss counts from ai_client.py
           - python3 -u src/revue/cli.py review --diff /tmp/revue_pr.diff --platform bitbucket --pr-id "$BITBUCKET_PR_ID" --workspace "$BITBUCKET_WORKSPACE" --repo-slug "$BITBUCKET_REPO_SLUG" --bb-username "$BITBUCKET_USERNAME" --bb-token "$BITBUCKET_API_TOKEN" --provider "${AI_PROVIDER:-anthropic}" --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" --config .revue.yml --comment-style per-issue --pr-description-file /tmp/revue_pr_description.txt
           - echo "[revue] Review complete"
 

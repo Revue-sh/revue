@@ -9,7 +9,9 @@ ai:
 review:
   max_diff_lines: 10000  # TODO: REVUE-96 - make this dynamic based on model context window
   min_confidence: 70
-  agent_timeout_seconds: 90
+  agent_timeout_seconds: 240
+  max_parallel_agents: 1      # 1 = sequential (safe default). Raise only if your Anthropic plan has high TPM limits.
+  retry_on_rate_limit: true   # Retry with backoff on 429 using the retry-after header (~3 min wait for 30k TPM tier).
   ignore_patterns:
     - "*.lock"
     - "package-lock.json"

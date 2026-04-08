@@ -23,6 +23,7 @@ class CommentState(Enum):
     MANUALLY_RESOLVED_NO_REPLY = "manually_resolved_no_reply"
     DISMISSED_WITH_REASON = "dismissed_with_reason"
     IGNORED = "ignored"
+    WONT_FIX = "wont_fix"  # Developer acknowledged + stated reason (Story B, REVUE-112)
 
 
 @dataclass

@@ -572,6 +572,52 @@ def test_disallowed_patterns_injected_into_system_prompt():
     assert "TODOs should be tracked as Jira tickets" in prompt
 
 
+# ---------------------------------------------------------------------------
+# REVUE-115: No per-block cache_control in caller (AC2)
+# ---------------------------------------------------------------------------
+
+def test_loaded_agent_analyse_passes_system_separately():
+    """TC2 (REVUE-115): analyse() passes system_prompt as the system kwarg, not embedded in user message.
+
+    Passing system separately lets AnthropicClient add cache_control to the system
+    block (provider-agnostic: OpenAI also accepts a system param).  The user message
+    must NOT contain the system prompt text.
+    """
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    client = _mock_client()
+    agent = LoadedAgent(defn, client)
+    agent.analyse([_fc()])
+
+    call_args = client.complete.call_args
+    kwargs = call_args[1] if call_args[1] else {}
+    # system kwarg must be passed with the agent's system prompt
+    assert kwargs.get("system") == "Find security issues."
+    # system prompt text must NOT appear inside the user message
+    messages = call_args[0][0]
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            assert "Find security issues." not in content, (
+                "system_prompt should not be embedded in user message"
+            )
+
+
+def test_loaded_agent_analyse_passes_diff_hash_as_cache_key():
+    """TC5 (REVUE-116): analyse() passes a 16-char hex cache_key derived from the diff."""
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    client = _mock_client()
+    agent = LoadedAgent(defn, client)
+    agent.analyse([_fc()])
+
+    call_kwargs = client.complete.call_args[1]
+    cache_key = call_kwargs.get("cache_key")
+    assert cache_key is not None, "cache_key should be passed to complete()"
+    assert len(cache_key) == 16
+    assert all(c in "0123456789abcdef" for c in cache_key), f"Not a hex string: {cache_key!r}"
+
+
 def test_empty_patterns_no_injection():
     """AC2: When both lists are empty, no pattern section headers appear."""
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",

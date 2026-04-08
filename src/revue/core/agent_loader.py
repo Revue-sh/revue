@@ -78,18 +78,17 @@ class LoadedAgent:
         calls the AI client, parses the JSON response.
         Returns empty list on any failure (graceful degradation).
         """
+        import hashlib
         import json
 
         diff_text = _build_diff_text(changes)
         shared_context = _build_shared_context(shared) if shared else ""
-        prompt = (
-            f"{self._def.system_prompt}\n\n"
-            f"{shared_context}"
-            f"Review the following diff:\n\n{diff_text}\n\n"
-            f"Respond with a JSON array of findings (no markdown fences, raw JSON only):\n"
-            f'[{{"file_path": "...", "line_number": 1, "severity": "high|medium|low|info", '
-            f'"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}}]'
+        _INSTRUCTIONS = (
+            "Respond with a JSON array of findings (no markdown fences, raw JSON only):\n"
+            '[{"file_path": "...", "line_number": 1, "severity": "high|medium|low|info", '
+            '"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}]'
         )
+
         # Severity vocabulary used by revue agents → cli.py display names
         _SEV_MAP = {
             "critical": "high",
@@ -102,8 +101,21 @@ class LoadedAgent:
             "low": "low",
             "info": "info",
         }
+        # Stable 16-char routing key for this diff — passed as prompt_cache_key
+        # to OpenAI-compatible clients so re-reviews of the same PR land on the
+        # same cache server and hit the cached prefix. Anthropic ignores it.
+        diff_hash = hashlib.sha256(diff_text.encode()).hexdigest()[:16]
         try:
-            raw = self._client.complete([{"role": "user", "content": prompt}])
+            user_prompt = (
+                f"{shared_context}"
+                f"Review the following diff:\n\n{diff_text}\n\n"
+                f"{_INSTRUCTIONS}"
+            )
+            raw = self._client.complete(
+                [{"role": "user", "content": user_prompt}],
+                system=self._def.system_prompt,
+                cache_key=diff_hash,
+            )
             print(
                 f"[revue]     [{self._def.name}] raw response "
                 f"({len(raw)} chars, starts: {raw[:80]!r})",

@@ -8,10 +8,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Callable, Optional
+
+# Configure Python logging from REVUE_LOG_LEVEL env var (default: WARNING).
+# Set REVUE_LOG_LEVEL=DEBUG in CI to see cache hit/miss counts from ai_client.py.
+logging.basicConfig(
+    level=os.environ.get("REVUE_LOG_LEVEL", "WARNING").upper(),
+    format="%(levelname)s %(name)s %(message)s",
+)
 
 from revue.core.config_loader import (
     DEFAULT_REVUE_YML,
@@ -258,13 +266,14 @@ def cmd_review(
     from revue.core.pipeline import AllAgentsFailedError
     print(f"[revue] Validating license...")
     try:
-        review_results, excluded, files_reviewed = pipeline.run(str(diff_path), pr_description=pr_description)
-    except AllAgentsFailedError as exc:
-        # All reviewer agents failed (e.g. API credit exhausted, auth failure).
-        # Log the generic message plus the first agent error to stderr for diagnostics.
-        # first_error is kept on stderr only — not propagated further.
-        print(f"[revue] ✗ {exc}", file=sys.stderr)
-        print(f"[revue]   First agent error: {exc.first_error}", file=sys.stderr)
+        review_results, excluded, files_reviewed, failed_agents = pipeline.run(str(diff_path), pr_description=pr_description)
+    except AllAgentsFailedError:
+        print(
+            "\n[revue] ❌ All agents failed — review aborted.\n"
+            "  All findings are missing from this review.\n"
+            "  Check the errors above for details (rate limits, timeouts, credentials).",
+            flush=True,
+        )
         return 1
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -291,6 +300,23 @@ def cmd_review(
     platform = getattr(args, "platform", None)
     if platform == "bitbucket":
         _post_to_bitbucket(args, review_results, config)
+    elif platform == "github":
+        _post_to_github(args, review_results, config)
+    elif platform == "gitlab":
+        _post_to_gitlab(args, review_results, config)
+
+    # Fail the pipeline when any agent failed — review is incomplete.
+    # We post findings from successful agents first (above) so developers
+    # still see partial results, but exit non-zero signals the incomplete state.
+    if failed_agents:
+        print(
+            f"\n[revue] ❌ Review incomplete — {len(failed_agents)} agent(s) failed: "
+            f"{', '.join(failed_agents)}\n"
+            f"  Findings from failed agents are missing from this review.\n"
+            f"  Check the errors above for details (rate limits, timeouts, credentials).",
+            flush=True,
+        )
+        return 1
 
     fmt = config.output_format
     if fmt == "json":
@@ -552,17 +578,320 @@ def _format_file_review(file_path: str, response: str) -> str:
     return "\n".join(lines)
 
 
-def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=None) -> None:
-    """Post review findings to a Bitbucket PR.
+def _run_per_issue_dedup(
+    adapter,
+    pr_num: int,
+    platform_str: str,
+    review_results: list,
+    diff_by_file: dict,
+    dedup_store,
+) -> tuple[int, int, dict[str, int]]:
+    """Core per-issue dedup loop shared across all platform posting functions.
 
-    Supports two comment styles:
-    - 'per-issue' (default): one inline comment per finding, anchored to the file.
-      Allows developers to reply, create tasks, and apply fixes per issue.
-    - 'summary': one comment per file with all findings grouped together.
+    Nova's consolidated list is the authoritative set of findings — every item
+    in it is posted inline (WYSIWYG).  Cross-cycle dedup (AC1/AC2) prevents
+    re-posting a finding that already has an open comment from a prior review.
+
+    Returns ``(posted, skipped, total_findings)`` where ``total_findings`` is
+    the severity breakdown of Nova's full list — the number the summary shows.
     """
+    from revue.comments.fingerprint import fingerprint as gen_fingerprint
+    from revue.comments.models import CommentState
+    from revue.core.vcs_adapter import DiffPosition, compute_gitlab_line_code
 
+    prior_unresolved = dedup_store.get_unresolved_fingerprints(platform_str, pr_num)
+    posted = 0
+    skipped = 0
+    total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
+    # Hunk fps seen this cycle — used by AC5 to detect fixed findings.
+    seen_hunk_fps: set[str] = set()
+
+    for rr in review_results:
+        if rr.error or not rr.response:
+            continue
+        try:
+            findings, _ = _parse_findings(rr.response)
+        except Exception:
+            continue
+
+        diff_content = diff_by_file.get(rr.file_path, "")
+
+        for f in findings:
+            sev, issue, details, rec, cat, line = _extract_finding_fields(f)
+            emoji = SEVERITY_EMOJI.get(sev, "⚪")
+
+            if not issue and not details:
+                continue
+
+            # Count every finding in Nova's list (WYSIWYG — summary reflects this).
+            if sev in total_findings:
+                total_findings[sev] += 1
+
+            fp = gen_fingerprint(rr.file_path, line, diff_content)
+            seen_hunk_fps.add(fp)
+
+            # AC1/AC2: skip if already posted in a previous review cycle.
+            if dedup_store.has_fingerprint(platform_str, pr_num, rr.file_path, fp):
+                skipped += 1
+                continue
+
+            body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
+            if cat:
+                body_parts.append(f"*{cat.replace('-', ' ').title()}*")
+            if details:
+                body_parts.append(f"\n{details}")
+            if rec:
+                body_parts.append(f"\n> 💡 **Recommendation:** {rec}")
+            body = "\n".join(body_parts)
+
+            if platform_str == "gitlab":
+                lc, resolved_line, old_ln = compute_gitlab_line_code(
+                    rr.file_path, diff_content, line
+                )
+                position = DiffPosition(
+                    file_path=rr.file_path,
+                    line_number=resolved_line,
+                    line_code=lc,
+                    new_line=resolved_line,
+                    old_line=old_ln if old_ln > 0 else None,
+                    side="RIGHT",
+                )
+            else:
+                position = DiffPosition(file_path=rr.file_path, line_number=line, side="RIGHT")
+            comment_id = adapter.post_review_comment(pr_id=pr_num, position=position, body=body)
+
+            if comment_id is not None:
+                posted += 1
+                dedup_store.save_finding(
+                    platform=platform_str,
+                    pr_number=pr_num,
+                    file_path=rr.file_path,
+                    fingerprint=fp,
+                    platform_comment_id=comment_id,
+                    line_number=line,
+                    comment_body=body,
+                )
+
+    # AC5: auto-resolve findings absent from new review
+    resolved_fps = set(prior_unresolved.keys()) - seen_hunk_fps
+
+    for fp in resolved_fps:
+        entry = prior_unresolved[fp]
+        old_comment_id = entry.get("platform_comment_id")
+        if old_comment_id:
+            ok = adapter.resolve_inline_comment(
+                pr_id=pr_num,
+                comment_id=old_comment_id,
+                reply_body="✅ Issue appears to be resolved in latest commit.",
+            )
+            if ok:
+                dedup_store.mark_resolved(
+                    platform=platform_str,
+                    pr_number=pr_num,
+                    file_path=entry.get("file_path", ""),
+                    fingerprint=fp,
+                    state=CommentState.AUTO_RESOLVED,
+                    reason="auto-resolved",
+                )
+
+    return posted, skipped, total_findings
+
+
+def _post_to_platform(
+    adapter,
+    pr_id,
+    platform_str: str,
+    platform_enum,
+    repo_owner: str,
+    repo_name: str,
+    review_results: list,
+    diff_by_file: dict,
+    comment_style: str,
+    pr_label: str = "PR",
+) -> None:
+    """Shared posting logic for Bitbucket, GitHub, and GitLab (Winston #2).
+
+    All three platforms share identical dedup, summary tracking, and comment
+    formatting logic.  The three public functions are thin credential wrappers
+    that resolve credentials + build an adapter, then delegate here.
+
+    Args:
+        adapter:       Pre-built platform adapter (BitbucketAdapter etc.).
+        pr_id:         PR/MR number (str or int).
+        platform_str:  Lowercase platform name ("bitbucket", "github", "gitlab").
+        platform_enum: Platform enum value for CommentFileStore.
+        repo_owner:    Repository owner/namespace (for summary tracking).
+        repo_name:     Repository name (for summary tracking).
+        review_results: List of ReviewResult objects from the pipeline.
+        diff_by_file:  Parsed diff keyed by file_path (for fingerprinting).
+        comment_style: "per-issue" or "summary".
+        pr_label:      Display label — "PR" for Bitbucket/GitHub, "MR" for GitLab.
+    """
+    from datetime import datetime, timezone
+
+    from revue.comments.file_store import CommentFileStore
+    from revue.comments.json_store import PerPRCommentStore
+    from revue.comments.models import SummaryComment
+
+    _repo_path = Path(os.getcwd())
+    dedup_store = PerPRCommentStore(_repo_path)
+    pr_num = int(pr_id)
+
+    _summary_store = CommentFileStore(_repo_path)
+    _existing_summary = _summary_store.get_summary_for_pr(
+        platform=platform_enum,
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        pr_number=pr_num,
+    )
+    _revision = (_existing_summary.revision + 1) if _existing_summary else 1
+    _last_updated = "just now"
+
+    _REVUE_SUMMARY_MARKER = "## 🤖 Revue.io — Code Review"
+
+    def _scan_for_existing_summary() -> Optional[str]:
+        """Scan live platform comments for a Revue summary, return its comment ID."""
+        try:
+            comments = adapter.get_existing_comments(pr_id=pr_num)
+            for c in comments:
+                body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
+                if _REVUE_SUMMARY_MARKER in body:
+                    return str(c.get("id", ""))
+        except Exception:
+            pass
+        return None
+
+    def _post_or_update_summary(body: str) -> None:
+        nonlocal _existing_summary, _revision
+        now = datetime.now(timezone.utc)
+
+        # Resolve the comment ID to update: prefer state file, fall back to
+        # scanning live comments so re-reviews never post a duplicate summary
+        # even when the local state file is stale or missing (e.g. ephemeral CI).
+        existing_comment_id = (
+            _existing_summary.platform_comment_id if _existing_summary
+            else _scan_for_existing_summary()
+        )
+
+        if existing_comment_id:
+            ok = adapter.update_comment(
+                pr_id=pr_num,
+                comment_id=existing_comment_id,
+                body=body,
+            )
+            if ok:
+                created_at = _existing_summary.created_at if _existing_summary else now
+                updated = SummaryComment(
+                    id=None,
+                    platform=platform_enum,
+                    platform_comment_id=existing_comment_id,
+                    pr_number=pr_num,
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    total_issues=sum(total_findings.values()),
+                    fixed_count=0,
+                    discussed_count=0,
+                    remaining_count=sum(total_findings.values()),
+                    last_updated_at=now,
+                    created_at=created_at,
+                    revision=_revision,
+                )
+                _summary_store.create_or_update_summary(updated)
+                print(f"[revue] Summary comment updated in-place (Review #{_revision})")
+                return
+            else:
+                print("[revue] Existing summary comment not found — posting fresh comment")
+                _revision = 1
+        comment_id = adapter.post_summary_comment(pr_id=pr_num, body=body)
+        if comment_id:
+            summary = SummaryComment(
+                id=None,
+                platform=platform_enum,
+                platform_comment_id=comment_id,
+                pr_number=pr_num,
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                total_issues=sum(total_findings.values()),
+                fixed_count=0,
+                discussed_count=0,
+                remaining_count=sum(total_findings.values()),
+                last_updated_at=now,
+                created_at=now,
+                revision=_revision,
+            )
+            _summary_store.create_or_update_summary(summary)
+        else:
+            print(f"Warning: Failed to post review summary to {pr_label}", file=sys.stderr)
+
+    if comment_style == "per-issue":
+        # Pre-count from Nova's consolidated list so summary is always accurate
+        # whether it's posted before or after inline comments.
+        total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
+        for rr in review_results:
+            if rr.error or not rr.response:
+                continue
+            try:
+                findings, _ = _parse_findings(rr.response)
+                for f in findings:
+                    sev = f.get("severity", "low").lower()
+                    if sev in total_findings:
+                        total_findings[sev] += 1
+            except Exception as exc:
+                print(f"[revue] Warning: failed to count findings for {rr.file_path}: {exc}", file=sys.stderr)
+
+        summary_body = _build_enhanced_summary(
+            review_results, total_findings, _revision, _last_updated
+        )
+
+        # GitLab shows comments newest-first: post inline first, summary last
+        # (summary lands at the top).  Bitbucket/GitHub show oldest-first: post
+        # summary first so it stays pinned at the top of the thread.
+        gitlab_order = (platform_str == "gitlab")
+        if not gitlab_order:
+            _post_or_update_summary(summary_body)
+
+        posted, skipped, _ = _run_per_issue_dedup(
+            adapter, pr_num, platform_str, review_results, diff_by_file, dedup_store
+        )
+
+        if gitlab_order:
+            _post_or_update_summary(summary_body)
+
+        if skipped > 0:
+            print(f"[revue] Review posted to {pr_label} #{pr_id} — {posted} new, {skipped} preserved inline comment(s)")
+        else:
+            print(f"[revue] Review posted to {pr_label} #{pr_id} — {posted} inline comment(s)")
+    else:
+        posted = 0
+        total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
+        file_sections = []
+        for rr in review_results:
+            if rr.error or not rr.response:
+                continue
+            try:
+                findings, _ = _parse_findings(rr.response)
+                for f in findings:
+                    sev = f.get("severity", "low").lower()
+                    if sev in total_findings:
+                        total_findings[sev] += 1
+            except Exception:
+                pass
+            file_sections.append(_format_file_review(rr.file_path, rr.response))
+            posted += 1
+        summary_body = _build_enhanced_summary(
+            review_results, total_findings, _revision, _last_updated
+        )
+        if file_sections:
+            summary_body += "\n\n---\n\n" + "\n\n".join(file_sections)
+        _post_or_update_summary(summary_body)
+        print(f"[revue] Review posted to {pr_label} #{pr_id} — {posted} file(s) in summary comment")
+
+
+def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=None) -> None:
+    """Resolve Bitbucket credentials and delegate to _post_to_platform."""
     from revue.core.bitbucket_adapter import BitbucketAdapter
-    from revue.core.vcs_adapter import DiffPosition
+    from revue.core.diff_parser import parse_diff_file
+    from revue.comments.models import Platform
 
     pr_id = getattr(args, "pr_id", None)
     workspace = getattr(args, "workspace", None)
@@ -581,246 +910,107 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=No
         return
 
     adapter = BitbucketAdapter(
-        api_token=bb_token,
-        username=bb_username,
-        workspace=workspace,
-        repo_slug=repo_slug,
+        api_token=bb_token, username=bb_username,
+        workspace=workspace, repo_slug=repo_slug,
+    )
+    diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
+    _post_to_platform(
+        adapter=adapter, pr_id=pr_id,
+        platform_str="bitbucket", platform_enum=Platform.BITBUCKET,
+        repo_owner=workspace, repo_name=repo_slug,
+        review_results=review_results, diff_by_file=diff_by_file,
+        comment_style=comment_style, pr_label="PR",
     )
 
-    # Aggregate totals for the summary header
-    total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
-    for rr in review_results:
-        if rr.error or not rr.response:
-            continue
-        try:
-            findings, _ = _parse_findings(rr.response)
-            for f in findings:
-                sev = f.get("severity", "low").lower()
-                if sev in total_findings:
-                    total_findings[sev] += 1
-        except Exception:
-            pass
 
-    # AC6/AC7: resolve existing summary comment + revision from TOML store
-    from revue.comments.file_store import CommentFileStore
-    from revue.comments.models import Platform, SummaryComment
-    from datetime import datetime, timezone
+def _post_to_github(args: argparse.Namespace, review_results: list, config=None) -> None:
+    """Resolve GitHub credentials and delegate to _post_to_platform."""
+    from revue.core.github_adapter import GitHubAdapter
+    from revue.core.diff_parser import parse_diff_file
+    from revue.comments.models import Platform
 
-    _repo_path = Path(os.getcwd())
-    _store = CommentFileStore(_repo_path)
-    _platform = Platform.BITBUCKET
-    _existing_summary = _store.get_summary_for_pr(
-        platform=_platform,
-        repo_owner=workspace,
-        repo_name=repo_slug,
-        pr_number=int(pr_id),
+    pr_id = getattr(args, "pr_id", None)
+    comment_style = getattr(args, "comment_style", "per-issue")
+
+    if not pr_id:
+        print("Warning: GitHub posting skipped — missing --pr-id", file=sys.stderr)
+        return
+
+    token = os.getenv("GITHUB_TOKEN", "")
+    if not token:
+        print("Warning: GitHub posting skipped — GITHUB_TOKEN not set", file=sys.stderr)
+        return
+
+    repo = os.getenv("GITHUB_REPOSITORY", "")
+    if not repo:
+        workspace = getattr(args, "workspace", None) or ""
+        repo_slug = getattr(args, "repo_slug", None) or ""
+        if workspace and repo_slug:
+            repo = f"{workspace}/{repo_slug}"
+    if not repo:
+        print("Warning: GitHub posting skipped — cannot determine repo (set GITHUB_REPOSITORY or --workspace/--repo-slug)", file=sys.stderr)
+        return
+
+    repo_owner, repo_name = (repo.split("/", 1) + [""])[:2]
+    adapter = GitHubAdapter(token=token, repo=repo)
+    diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
+    _post_to_platform(
+        adapter=adapter, pr_id=pr_id,
+        platform_str="github", platform_enum=Platform.GITHUB,
+        repo_owner=repo_owner, repo_name=repo_name,
+        review_results=review_results, diff_by_file=diff_by_file,
+        comment_style=comment_style, pr_label="GitHub PR",
     )
-    _revision = (_existing_summary.revision + 1) if _existing_summary else 1
-    _last_updated = "just now"
 
-    def _post_or_update_summary(body: str) -> None:
-        """Post a new summary comment or update the existing one in-place (AC6)."""
-        nonlocal _existing_summary, _revision
-        now = datetime.now(timezone.utc)
 
-        if _existing_summary:
-            # Try to update in-place
-            ok = adapter.update_comment(
-                pr_id=int(pr_id),
-                comment_id=_existing_summary.platform_comment_id,
-                body=body,
-            )
-            if ok:
-                # Persist updated revision in TOML
-                updated = SummaryComment(
-                    id=None,
-                    platform=_platform,
-                    platform_comment_id=_existing_summary.platform_comment_id,
-                    pr_number=int(pr_id),
-                    repo_owner=workspace,
-                    repo_name=repo_slug,
-                    total_issues=sum(total_findings.values()),
-                    fixed_count=0,
-                    discussed_count=0,
-                    remaining_count=sum(total_findings.values()),
-                    last_updated_at=now,
-                    created_at=_existing_summary.created_at,
-                    revision=_revision,
-                )
-                _store.create_or_update_summary(updated)
-                print(f"[revue] Summary comment updated in-place (Review #{_revision})")
-                return
-            else:
-                # Comment was deleted — fall through to post a new one (AC6 TC4)
-                print("[revue] Existing summary comment not found — posting fresh comment")
-                _revision = 1
+def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None) -> None:
+    """Resolve GitLab credentials and delegate to _post_to_platform."""
+    from revue.core.gitlab_adapter import GitLabAdapter
+    from revue.core.diff_parser import parse_diff_file
+    from revue.comments.models import Platform
 
-        # Post new comment and store ID
-        comment_id = adapter.post_summary_comment(pr_id=int(pr_id), body=body)
-        if comment_id:
-            summary = SummaryComment(
-                id=None,
-                platform=_platform,
-                platform_comment_id=comment_id,
-                pr_number=int(pr_id),
-                repo_owner=workspace,
-                repo_name=repo_slug,
-                total_issues=sum(total_findings.values()),
-                fixed_count=0,
-                discussed_count=0,
-                remaining_count=sum(total_findings.values()),
-                last_updated_at=now,
-                created_at=now,
-                revision=_revision,
-            )
-            _store.create_or_update_summary(summary)
-        else:
-            print("Warning: Failed to post review summary to Bitbucket", file=sys.stderr)
+    pr_id = getattr(args, "pr_id", None)
+    comment_style = getattr(args, "comment_style", "per-issue")
 
-    if comment_style == "per-issue":
-        # Post one inline comment per finding, anchored to line 1 of the file
-        # (line numbers from AI findings would improve this in a future story)
-        
-        # REVUE-104: Comment thread preservation (feature-flagged)
-        preserve_threads = config.preserve_comment_threads if config and hasattr(config, 'preserve_comment_threads') else False
-        
-        if preserve_threads:
-            from revue.comments.state_store import CommentStateStore
-            from revue.comments.fingerprint import fingerprint as gen_fingerprint
-            from revue.comments.models import CommentState
-            
-            # Load existing comments from JSON state
-            state_store = CommentStateStore(_repo_path)
-            repo_full_name = f"{workspace}/{repo_slug}"  # e.g. "cbscd/revue"
-            existing_comments = state_store.get_comments_for_pr(
-                platform=_platform.value,
-                repo_full_name=repo_full_name,
-                pr_number=int(pr_id)
-            )
-            
-            # Build lookup: fingerprint → platform_comment_id
-            fingerprint_to_id = {
-                comment.finding_fingerprint: comment.platform_comment_id
-                for comment in existing_comments
-                if comment.finding_fingerprint and comment.platform_comment_id
-            }
-            
-            # Track new fingerprints to detect fixed findings
-            new_fingerprints = set()
-        
-        posted = 0
-        skipped = 0  # Count preserved threads
-        
-        for rr in review_results:
-            if rr.error or not rr.response:
-                continue
-            try:
-                findings, file_summary = _parse_findings(rr.response)
-            except Exception:
-                continue
+    if not pr_id:
+        print("Warning: GitLab posting skipped — missing --pr-id", file=sys.stderr)
+        return
 
-            for f in findings:
-                sev, issue, details, rec, cat, line = _extract_finding_fields(f)
-                emoji = SEVERITY_EMOJI.get(sev, "⚪")
+    token = os.getenv("GITLAB_TOKEN", "")
+    if not token:
+        print("Warning: GitLab posting skipped — GITLAB_TOKEN not set", file=sys.stderr)
+        return
 
-                # Skip findings with no meaningful content
-                if not issue and not details:
-                    continue
+    project_id: str = os.getenv("CI_PROJECT_PATH", "")
+    if not project_id:
+        workspace = getattr(args, "workspace", None) or ""
+        repo_slug = getattr(args, "repo_slug", None) or ""
+        if workspace and repo_slug:
+            project_id = f"{workspace}/{repo_slug}"
+    if not project_id:
+        print("Warning: GitLab posting skipped — cannot determine project (set CI_PROJECT_PATH or --workspace/--repo-slug)", file=sys.stderr)
+        return
 
-                body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
-                if cat:
-                    body_parts.append(f"*{cat.replace('-', ' ').title()}*")
-                if details:
-                    body_parts.append(f"\n{details}")
-                if rec:
-                    body_parts.append(f"\n> 💡 **Recommendation:** {rec}")
-                body = "\n".join(body_parts)
+    repo_owner, repo_name = (project_id.split("/", 1) + [""])[:2]
+    adapter = GitLabAdapter(token=token, project_id=project_id)
+    diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
+    _post_to_platform(
+        adapter=adapter, pr_id=pr_id,
+        platform_str="gitlab", platform_enum=Platform.GITLAB,
+        repo_owner=repo_owner, repo_name=repo_name,
+        review_results=review_results, diff_by_file=diff_by_file,
+        comment_style=comment_style, pr_label="GitLab MR",
+    )
 
-                # REVUE-104: Check if we should preserve existing comment
-                if preserve_threads:
-                    fp = gen_fingerprint(rr.file_path, line, issue)
-                    new_fingerprints.add(fp)
-                    
-                    if fp in fingerprint_to_id:
-                        # AC1: Preserve existing thread — skip re-post
-                        skipped += 1
-                        continue
-                
-                # Post new comment (AC2 or non-preserve mode)
-                position = DiffPosition(
-                    file_path=rr.file_path,
-                    line_number=line,
-                    side="RIGHT",
-                )
-                comment_id = adapter.post_review_comment(pr_id=int(pr_id), position=position, body=body)
 
-                if comment_id is not None:
-                    posted += 1
-
-                    # REVUE-104 AC2: Store new comment in JSON state for future re-reviews
-                    if preserve_threads:
-                        state_store.save_comment(
-                            platform=_platform.value,
-                            repo_full_name=repo_full_name,
-                            pr_number=int(pr_id),
-                            fingerprint=fp,
-                            platform_comment_id=comment_id,
-                            file_path=rr.file_path,
-                            line_number=line,
-                            comment_body=body
-                        )
-        
-        # REVUE-104 AC3: Auto-resolve fixed findings
-        if preserve_threads and fingerprint_to_id:
-            resolved_fingerprints = set(fingerprint_to_id.keys()) - new_fingerprints
-            for fp in resolved_fingerprints:
-                comment_id = fingerprint_to_id[fp]
-                if comment_id:  # Only resolve if we have a valid ID
-                    ok = adapter.resolve_inline_comment(
-                        pr_id=int(pr_id),
-                        comment_id=comment_id,
-                        reply_body="✅ Issue appears to be resolved in latest commit."
-                    )
-                    if ok:
-                        state_store.transition_state(
-                            platform=_platform.value,
-                            repo_full_name=repo_full_name,
-                            pr_number=int(pr_id),
-                            fingerprint=fp,
-                            to_state=CommentState.RESOLVED,
-                            reason="auto-resolved"
-                        )
-
-        # AC1–AC7: post or update the rich summary comment
-        summary_body = _build_enhanced_summary(
-            review_results, total_findings, _revision, _last_updated
-        )
-        _post_or_update_summary(summary_body)
-        
-        if preserve_threads and skipped > 0:
-            print(f"[revue] Review posted to PR #{pr_id} — {posted} new, {skipped} preserved inline comment(s)")
-        else:
-            print(f"[revue] Review posted to PR #{pr_id} — {posted} inline comment(s)")
-
-    else:
-        # summary mode: rich header + one formatted section per file
-        posted = 0
-        file_sections = []
-        for rr in review_results:
-            if rr.error or not rr.response:
-                continue
-            file_sections.append(_format_file_review(rr.file_path, rr.response))
-            posted += 1
-
-        # AC1–AC7: rich summary header
-        summary_body = _build_enhanced_summary(
-            review_results, total_findings, _revision, _last_updated
-        )
-        if file_sections:
-            summary_body += "\n\n---\n\n" + "\n\n".join(file_sections)
-
-        _post_or_update_summary(summary_body)
-        print(f"[revue] Review posted to PR #{pr_id} — {posted} file(s) in summary comment")
+def _parse_diff_by_file(diff_path, parse_diff_file_fn) -> dict[str, str]:
+    """Parse diff file into {file_path: diff_content} lookup. Fail-safe."""
+    if not diff_path:
+        return {}
+    try:
+        return {fc.file_path: fc.diff for fc in parse_diff_file_fn(str(diff_path))}
+    except Exception:
+        return {}  # fingerprint falls back to line_number
 
 
 def _resolve_pr_id_from_env() -> Optional[int]:

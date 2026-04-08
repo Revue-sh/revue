@@ -1,0 +1,75 @@
+stages:
+  - test
+  - review
+
+# ── Unit tests ────────────────────────────────────────────────────────────────
+unit-tests:
+  stage: test
+  image: python:3.12-slim
+  cache:
+    key: pip-$CI_COMMIT_REF_SLUG
+    paths:
+      - .pip-cache/
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  script:
+    - pip install openai anthropic httpx pyyaml tomli-w pytest --quiet
+    - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q --log-cli-level=DEBUG
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ── Revue.io AI Code Review ───────────────────────────────────────────────────
+revue-review:
+  stage: review
+  image: python:3.12-slim
+  cache:
+    - key: pip-$CI_COMMIT_REF_SLUG
+      paths:
+        - .pip-cache/
+    - key: revue-state-$CI_MERGE_REQUEST_IID
+      paths:
+        - .revue/
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+    APP_ENV: staging
+    GIT_DEPTH: "0"
+    REVUE_LOG_LEVEL: DEBUG
+  allow_failure: true
+  script:
+    - apt-get update -qq && apt-get install -y -qq git curl
+    - pip install openai anthropic httpx pyyaml tomli-w --quiet
+
+    # Generate diff using GitLab's computed MR diff base (correct regardless of mirror state)
+    - git diff $CI_MERGE_REQUEST_DIFF_BASE_SHA HEAD > /tmp/revue_pr.diff
+    - echo "[revue] Diff size $(wc -l < /tmp/revue_pr.diff) lines"
+
+    # Fetch MR description for context filtering
+    - |
+      curl -sf \
+        --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/merge_requests/${CI_MERGE_REQUEST_IID}" \
+        | python3 -c "import json,sys; print(json.load(sys.stdin).get('description',''))" \
+        > /tmp/revue_mr_description.txt \
+      && echo "[revue] MR description fetched ($(wc -c < /tmp/revue_mr_description.txt) bytes)" \
+      || echo "[revue] MR description fetch failed — continuing without context"
+
+    # Validate config
+    - PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
+
+    # Run AI code review
+    - echo "[revue] Starting AI code review..."
+    - |
+      PYTHONPATH="$(pwd)/src" python3 -u src/revue/cli.py review \
+        --diff /tmp/revue_pr.diff \
+        --platform gitlab \
+        --pr-id "$CI_MERGE_REQUEST_IID" \
+        --provider "${AI_PROVIDER:-anthropic}" \
+        --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" \
+        --config .revue.yml \
+        --comment-style per-issue \
+        --pr-description-file /tmp/revue_mr_description.txt
+    - echo "[revue] Review complete"
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'

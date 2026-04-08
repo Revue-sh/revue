@@ -57,6 +57,29 @@ _LICENCE_NAME_TO_AGENT: dict[str, str] = {
 _VIRTUAL_AGENTS = frozenset({"orchestrator", "sage"})
 
 
+def _short_error(error: str) -> str:
+    """Return a brief, human-readable summary of an agent error string.
+
+    Rate-limit JSON blobs and other verbose SDK errors are condensed to a
+    single line so the '⚠ Agent X failed:' log stays readable. The full
+    reason has already been printed by _with_retry's ❌ RATE LIMIT ERROR block.
+    """
+    if not error:
+        return "unknown error"
+    low = error.lower()
+    if "rate_limit" in low or "rate limit" in low or "429" in low:
+        return "rate limit exceeded (see ❌ RATE LIMIT ERROR above)"
+    if "timeout" in low or "timed out" in low:
+        return "timed out"
+    if "401" in low or "403" in low or "authentication" in low or "unauthorized" in low:
+        return "authentication error"
+    if "500" in low or "502" in low or "503" in low:
+        return "server error"
+    # Fallback: first line only, capped at 120 chars
+    first_line = error.split("\n")[0]
+    return first_line[:120] + ("…" if len(first_line) > 120 else "")
+
+
 class AllAgentsFailedError(RuntimeError):
     """Raised when all reviewer agents failed due to a fatal infrastructure error.
 
@@ -255,7 +278,7 @@ class ReviewPipeline:
         limit_result = check_diff_limit(changes, self.config.max_diff_lines)
         if limit_result.exceeded:
             print(f"[revue]   ⚠ Diff too large — {limit_result.suggestion}", flush=True)
-            return [ReviewResult(file_path="[diff-limit]", response=limit_result.suggestion)], [], 0
+            return [ReviewResult(file_path="[diff-limit]", response=limit_result.suggestion)], [], 0, []
 
         included, excluded = filter_changes(
             changes, self.config.ignore_patterns, self.config.max_diff_lines
@@ -265,17 +288,17 @@ class ReviewPipeline:
 
         if not included:
             print("[revue]   No files to review after filtering.", flush=True)
-            return [], excluded, 0
+            return [], excluded, 0, []
 
         # ── Step 2: AI review ────────────────────────────────────────────────
         start_ms = int(time.time() * 1000)
 
         if _is_premium_tier(agents_allowed):
-            results, agents_used = self._run_orchestration(
+            results, agents_used, failed_agents = self._run_orchestration(
                 included, agents_allowed, pr_description=pr_description
             )
         else:
-            results, agents_used = self._run_simplified(included, agents_allowed)
+            results, agents_used, failed_agents = self._run_simplified(included, agents_allowed)
 
         # ── Step 3: Consolidation ─────────────────────────────────────────────
         total_findings = sum(
@@ -313,7 +336,7 @@ class ReviewPipeline:
                 duration_ms=duration_ms,
             )
 
-        return results, excluded, len(included)
+        return results, excluded, len(included), failed_agents
 
     # ------------------------------------------------------------------
     # Review paths
@@ -323,7 +346,7 @@ class ReviewPipeline:
         self,
         included: list[FileChange],
         agents_allowed: list[str],
-    ) -> tuple[list[ReviewResult], list[str]]:
+    ) -> tuple[list[ReviewResult], list[str], list[str]]:
         """Free-tier single-pass review loop.
 
         One client.complete() call per file. No agent routing or consolidation.
@@ -354,14 +377,14 @@ class ReviewPipeline:
                 print(f"[revue]   ✗ {fc.file_path}: {exc}", flush=True)
                 results.append(ReviewResult(file_path=fc.file_path, response="", error=str(exc)))
 
-        return results, agents_used
+        return results, agents_used, []
 
     def _run_orchestration(
         self,
         included: list[FileChange],
         agents_allowed: list[str],
         pr_description: Optional[PRDescription] = None,
-    ) -> tuple[list[ReviewResult], list[str]]:
+    ) -> tuple[list[ReviewResult], list[str], list[str]]:
         """Paid-tier full orchestration: shared analysis → Cleo routing →
         parallel agents → Nova consolidation.
 
@@ -499,14 +522,22 @@ class ReviewPipeline:
                 f"{', '.join(stripped)})",
                 flush=True,
             )
-        print(f"[revue]   Running {len(reviewer_agents)} reviewer(s) in parallel...", flush=True)
-        parallel_result = run_agents_parallel(reviewer_agents, included, shared)
+        max_parallel = self.config.max_parallel_agents
+        mode = "sequentially" if max_parallel == 1 else f"in parallel (max {max_parallel})"
+        print(f"[revue]   Running {len(reviewer_agents)} reviewer(s) {mode}...", flush=True)
+        parallel_result = run_agents_parallel(
+            reviewer_agents,
+            included,
+            shared,
+            timeout_seconds=self.config.agent_timeout_seconds,
+            max_workers=max_parallel,
+        )
 
         agents_used = [r.agent_name for r in parallel_result.agent_results if r.success]
         failed = [r for r in parallel_result.agent_results if not r.success]
         if failed:
             for f in failed:
-                reason = "timed out" if f.timed_out else f.error
+                reason = "timed out" if f.timed_out else _short_error(f.error)
                 print(f"[revue]   ⚠ Agent {f.agent_name} failed: {reason}", flush=True)
 
         # Per-agent finding count — makes 0-finding runs diagnosable
@@ -528,11 +559,6 @@ class ReviewPipeline:
         # This keeps process control out of the pipeline (SRP/OCP).
         if reviewer_agents and not agents_used:
             first_error = failed[0].error if failed else "unknown"
-            print(
-                f"[revue] ✗ All agents failed — review aborted.\n"
-                f"[revue]   Check API credentials, credit balance, and network connectivity.",
-                flush=True,
-            )
             raise AllAgentsFailedError(first_error)
 
         # 5. Nova consolidation — deduplicate across agents
@@ -564,4 +590,5 @@ class ReviewPipeline:
         if "orchestrator" not in agents_used:
             agents_used.insert(0, "orchestrator")
 
-        return results, agents_used
+        failed_agent_names = [f.agent_name for f in failed]
+        return results, agents_used, failed_agent_names

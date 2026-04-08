@@ -22,6 +22,7 @@ _LOG = logging.getLogger(__name__)
 from revue.core.models import FileChange, CodeFix
 from revue.core.vcs_adapter import (
     DiffPosition,
+    extract_gitlab_version_shas,
     translate_gitlab_line_code,
 )
 
@@ -85,6 +86,14 @@ class GitLabAdapter:
                 raise RuntimeError(
                     f"GitLab resource not found: {url}"
                 ) from exc
+            if exc.code == 400:
+                try:
+                    body = exc.read().decode("utf-8", errors="replace")
+                except Exception:
+                    body = "(unreadable)"
+                raise RuntimeError(
+                    f"GitLab 400 Bad Request — {url}\n  Response: {body}"
+                ) from exc
             if exc.code >= 500:
                 raise RuntimeError(
                     f"GitLab server error {exc.code}: {exc.reason}"
@@ -133,6 +142,16 @@ class GitLabAdapter:
             )
         return changes
 
+    def _get_mr_version_shas(self, pr_id: int) -> tuple[str, str, str]:
+        """Return (base_commit_sha, start_commit_sha, head_commit_sha) from the latest MR version.
+
+        Delegates extraction logic to the shared utility in vcs_adapter so both
+        GitLabAdapter implementations stay in sync.  Raises ValueError / RuntimeError
+        on failure — callers decide whether the failure is fatal.
+        """
+        versions = self._request("GET", f"/merge_requests/{pr_id}/versions")
+        return extract_gitlab_version_shas(versions)
+
     def post_review_comment(
         self, pr_id: int, position: DiffPosition, body: str
     ) -> str | None:
@@ -144,9 +163,16 @@ class GitLabAdapter:
             The GitLab discussion ID as a string on success (used for thread
             resolution in resolve_inline_comment), None on failure.
         """
+        try:
+            base_sha, start_sha, head_sha = self._get_mr_version_shas(pr_id)
+        except (ValueError, RuntimeError) as exc:
+            _LOG.warning("post_review_comment: failed to get MR version SHAs for MR %s: %s", pr_id, exc)
+            return None
+
         pos_obj: dict[str, Any] = {
-            "base_sha": position.commit_id,
-            "head_sha": position.commit_id,
+            "base_sha": base_sha,
+            "start_sha": start_sha,
+            "head_sha": head_sha,
             "position_type": "text",
             "old_path": position.file_path,
             "new_path": position.file_path,
@@ -154,6 +180,8 @@ class GitLabAdapter:
         }
         if position.line_code:
             pos_obj["line_code"] = position.line_code
+        if position.old_line is not None and position.old_line > 0:
+            pos_obj["old_line"] = position.old_line
         try:
             resp = self._request(
                 "POST",
@@ -164,7 +192,14 @@ class GitLabAdapter:
             discussion_id = resp.get("id")
             return str(discussion_id) if discussion_id is not None else None
         except Exception as exc:
-            _LOG.warning("post_review_comment failed for MR %s: %s", pr_id, exc)
+            _LOG.warning(
+                "post_review_comment failed for MR %s file=%s line=%s — %s\n  position=%s",
+                pr_id,
+                position.file_path,
+                position.new_line or position.line_number,
+                exc,
+                pos_obj,
+            )
             return None
 
     # Backward-compat alias — remove in v2.0

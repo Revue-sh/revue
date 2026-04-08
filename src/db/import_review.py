@@ -255,7 +255,7 @@ def _post_findings_as_comments(
             file_path, line_number, body, commit_sha,
         )
 
-        fp = fingerprint(file_path, line_number, issue)
+        fp = fingerprint(file_path, line_number)  # diff not available here; falls back to line_number
 
         comment = PRCommentModel(
             id=None,
