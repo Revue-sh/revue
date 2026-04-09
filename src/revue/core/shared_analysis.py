@@ -54,7 +54,7 @@ TEMPLATE:
     {{"emoji": "<relevant emoji>", "description": "<area detected in the diff>"}}
   ],
   "selected_agents": [
-    {{"emoji": "<agent emoji>", "name": "<Agent Name>", "reason": "<high-level reason e.g. for auth review>"}}
+    {{"emoji": "<agent emoji>", "name": "<Agent Name>", "reason": "<high-level reason e.g. for auth review>", "files": ["<file path 1>", "<file path 2>"]}}
   ],
   "languages": ["<detected programming languages>"],
   "risk_areas": ["<risk labels e.g. authentication, database, api-boundary, concurrency>"],
@@ -69,9 +69,9 @@ EXAMPLE:
     {{"emoji": "⚡", "description": "API endpoints (new rate limiting logic)"}}
   ],
   "selected_agents": [
-    {{"emoji": "🛡️", "name": "Security Agent", "reason": "for auth review"}},
-    {{"emoji": "🗄️", "name": "Data Agent", "reason": "for schema validation"}},
-    {{"emoji": "⚡", "name": "Performance Agent", "reason": "for API optimization"}}
+    {{"emoji": "🛡️", "name": "Security Agent", "reason": "for auth review", "files": ["app/auth.py", "app/middleware.py"]}},
+    {{"emoji": "🗄️", "name": "Data Agent", "reason": "for schema validation", "files": ["migrations/001_users.sql"]}},
+    {{"emoji": "⚡", "name": "Performance Agent", "reason": "for API optimization", "files": ["app/api.py", "app/routes.py"]}}
   ],
   "languages": ["python"],
   "risk_areas": ["authentication", "database", "api-boundary"],
@@ -96,6 +96,7 @@ class SelectedAgent:
     emoji: str
     name: str
     reason: str
+    files: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -131,6 +132,7 @@ def _parse_orchestrator_response(raw: str) -> OrchestratorResponse:
             emoji=str(a.get("emoji", "")),
             name=str(a.get("name", "")),
             reason=str(a.get("reason", "")),
+            files=[f for f in a.get("files", []) if isinstance(f, str)],
         )
         for a in data["selected_agents"]
         if isinstance(a, dict)

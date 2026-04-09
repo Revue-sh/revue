@@ -541,3 +541,49 @@ class TestSizeHeuristicAC:
         """QUICK_THRESHOLD_LINES=50 and FULL_REVIEW_THRESHOLD_LINES=500 per AC."""
         assert QUICK_THRESHOLD_LINES == 50
         assert FULL_REVIEW_THRESHOLD_LINES == 500
+
+
+# ---------------------------------------------------------------------------
+# REVUE-117: assign_files_to_agents — round-robin file distribution
+# ---------------------------------------------------------------------------
+
+from revue.core.cleo_router import assign_files_to_agents
+
+
+def test_assign_files_round_robin():
+    """Files are distributed evenly across agents in round-robin order."""
+    agents = ["zara", "maya", "kai"]
+    files = [_fc(f"file_{i}.py") for i in range(6)]
+    result = assign_files_to_agents(agents, files)
+
+    assert result["zara"] == ["file_0.py", "file_3.py"]
+    assert result["maya"] == ["file_1.py", "file_4.py"]
+    assert result["kai"] == ["file_2.py", "file_5.py"]
+
+
+def test_assign_files_single_agent_gets_all():
+    """With one agent, all files are assigned to it."""
+    files = [_fc("a.py"), _fc("b.py"), _fc("c.py")]
+    result = assign_files_to_agents(["zara"], files)
+    assert result["zara"] == ["a.py", "b.py", "c.py"]
+
+
+def test_assign_files_more_agents_than_files():
+    """When agents > files, some agents get no files (empty list in result)."""
+    files = [_fc("only.py")]
+    result = assign_files_to_agents(["zara", "maya", "kai"], files)
+    assert result["zara"] == ["only.py"]
+    assert result["maya"] == []
+    assert result["kai"] == []
+
+
+def test_assign_files_empty_files():
+    """Empty file list → all agents get empty lists."""
+    result = assign_files_to_agents(["zara", "maya"], [])
+    assert result == {"zara": [], "maya": []}
+
+
+def test_assign_files_empty_agents():
+    """No agents → returns empty dict."""
+    result = assign_files_to_agents([], [_fc("app.py")])
+    assert result == {}

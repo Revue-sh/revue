@@ -265,8 +265,10 @@ def cmd_review(
     # 9. Run pipeline
     from revue.core.pipeline import AllAgentsFailedError
     print(f"[revue] Validating license...")
+    fallback_mode = "normal"
     try:
         review_results, excluded, files_reviewed, failed_agents = pipeline.run(str(diff_path), pr_description=pr_description)
+        fallback_mode = getattr(pipeline, "last_fallback_mode", "normal")
     except AllAgentsFailedError:
         print(
             "\n[revue] ❌ All agents failed — review aborted.\n"
@@ -299,11 +301,11 @@ def cmd_review(
         args.comment_style = config_style if config_style in ("per-issue", "summary") else "per-issue"
     platform = getattr(args, "platform", None)
     if platform == "bitbucket":
-        _post_to_bitbucket(args, review_results, config)
+        _post_to_bitbucket(args, review_results, config, fallback_mode=fallback_mode)
     elif platform == "github":
-        _post_to_github(args, review_results, config)
+        _post_to_github(args, review_results, config, fallback_mode=fallback_mode)
     elif platform == "gitlab":
-        _post_to_gitlab(args, review_results, config)
+        _post_to_gitlab(args, review_results, config, fallback_mode=fallback_mode)
 
     # Fail the pipeline when any agent failed — review is incomplete.
     # We post findings from successful agents first (above) so developers
@@ -371,6 +373,7 @@ def _build_enhanced_summary(
     total_findings: dict[str, int],
     revision: int,
     last_updated_at: str,
+    fallback_mode: str = "normal",
 ) -> str:
     """Build the rich REVUE-97 summary comment body (AC1–AC7).
 
@@ -379,6 +382,8 @@ def _build_enhanced_summary(
         total_findings:  Dict of {severity: count} aggregated across all files.
         revision:        Current review revision number (1 = first post).
         last_updated_at: Human-readable relative timestamp string.
+        fallback_mode:   Active fallback mode from pipeline (REVUE-117).
+                         Non-normal values add a degradation notice.
     """
     total = sum(total_findings.values())
     high = total_findings.get("high", 0)
@@ -404,6 +409,17 @@ def _build_enhanced_summary(
         f"**Last updated:** {last_updated_at}",
         "",
     ]
+
+    # REVUE-117: degradation notice when rate-limit fallback was active
+    if fallback_mode and fallback_mode != "normal":
+        mode_display = fallback_mode.replace("_", "-")
+        lines += [
+            f"> ⚠️ **Reduced context mode active ({mode_display}):** This review used a "
+            f"smaller diff context to avoid API rate limits. Some findings may be missing. "
+            f"To restore full-context reviews, upgrade your API tier, keep PRs smaller, "
+            f"or set `retry_on_rate_limit: true` in `.revue.yml`.",
+            "",
+        ]
 
     # AC2: category breakdown — always show all 4
     category_counts: dict[str, list] = {label: [] for label in _CATEGORY_MAP.values()}
@@ -708,6 +724,7 @@ def _post_to_platform(
     diff_by_file: dict,
     comment_style: str,
     pr_label: str = "PR",
+    fallback_mode: str = "normal",
 ) -> None:
     """Shared posting logic for Bitbucket, GitHub, and GitLab (Winston #2).
 
@@ -840,13 +857,14 @@ def _post_to_platform(
                 print(f"[revue] Warning: failed to count findings for {rr.file_path}: {exc}", file=sys.stderr)
 
         summary_body = _build_enhanced_summary(
-            review_results, total_findings, _revision, _last_updated
+            review_results, total_findings, _revision, _last_updated,
+            fallback_mode=fallback_mode,
         )
 
-        # GitLab shows comments newest-first: post inline first, summary last
-        # (summary lands at the top).  Bitbucket/GitHub show oldest-first: post
-        # summary first so it stays pinned at the top of the thread.
-        gitlab_order = (platform_str == "gitlab")
+        # GitLab and Bitbucket show comments newest-first: post inline first,
+        # summary last so it lands at the top of the thread.
+        # GitHub shows oldest-first: post summary first so it stays pinned.
+        gitlab_order = platform_str in ("gitlab", "bitbucket")
         if not gitlab_order:
             _post_or_update_summary(summary_body)
 
@@ -879,7 +897,8 @@ def _post_to_platform(
             file_sections.append(_format_file_review(rr.file_path, rr.response))
             posted += 1
         summary_body = _build_enhanced_summary(
-            review_results, total_findings, _revision, _last_updated
+            review_results, total_findings, _revision, _last_updated,
+            fallback_mode=fallback_mode,
         )
         if file_sections:
             summary_body += "\n\n---\n\n" + "\n\n".join(file_sections)
@@ -887,7 +906,7 @@ def _post_to_platform(
         print(f"[revue] Review posted to {pr_label} #{pr_id} — {posted} file(s) in summary comment")
 
 
-def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=None) -> None:
+def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> None:
     """Resolve Bitbucket credentials and delegate to _post_to_platform."""
     from revue.core.bitbucket_adapter import BitbucketAdapter
     from revue.core.diff_parser import parse_diff_file
@@ -920,10 +939,11 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=No
         repo_owner=workspace, repo_name=repo_slug,
         review_results=review_results, diff_by_file=diff_by_file,
         comment_style=comment_style, pr_label="PR",
+        fallback_mode=fallback_mode,
     )
 
 
-def _post_to_github(args: argparse.Namespace, review_results: list, config=None) -> None:
+def _post_to_github(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> None:
     """Resolve GitHub credentials and delegate to _post_to_platform."""
     from revue.core.github_adapter import GitHubAdapter
     from revue.core.diff_parser import parse_diff_file
@@ -960,10 +980,11 @@ def _post_to_github(args: argparse.Namespace, review_results: list, config=None)
         repo_owner=repo_owner, repo_name=repo_name,
         review_results=review_results, diff_by_file=diff_by_file,
         comment_style=comment_style, pr_label="GitHub PR",
+        fallback_mode=fallback_mode,
     )
 
 
-def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None) -> None:
+def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> None:
     """Resolve GitLab credentials and delegate to _post_to_platform."""
     from revue.core.gitlab_adapter import GitLabAdapter
     from revue.core.diff_parser import parse_diff_file
@@ -1000,6 +1021,7 @@ def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None)
         repo_owner=repo_owner, repo_name=repo_name,
         review_results=review_results, diff_by_file=diff_by_file,
         comment_style=comment_style, pr_label="GitLab MR",
+        fallback_mode=fallback_mode,
     )
 
 

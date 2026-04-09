@@ -461,6 +461,123 @@ def test_gitlab_fixed_finding_triggers_auto_resolve(tmp_path) -> None:
 
 
 # =====================================================================
+# Comment posting order: summary last (newest-first platforms)
+# Bitbucket and GitLab display activity newest-first — summary must be
+# posted LAST so it lands at the top of the thread (most visible).
+# GitHub displays oldest-first — summary must be posted FIRST.
+# =====================================================================
+
+def test_bitbucket_summary_posted_after_inline_comments(tmp_path) -> None:
+    """Bitbucket is newest-first: summary comment must be posted AFTER inline comments."""
+    import json as _json
+    finding = {"severity": "high", "issue": "SQL injection", "line": 10,
+               "file_path": "app.py", "details": "x", "recommendation": "y"}
+    rr = _FakeReviewResult(
+        file_path="app.py",
+        response=_json.dumps({"findings": [finding]}),
+    )
+    mock_adapter = MagicMock()
+    mock_adapter.post_review_comment.return_value = "inline-id"
+    mock_adapter.post_summary_comment.return_value = "summary-id"
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.update_comment.return_value = False
+    mock_summary_store = MagicMock()
+    mock_summary_store.get_summary_for_pr.return_value = None
+
+    call_order = []
+    mock_adapter.post_review_comment.side_effect = lambda **kw: (call_order.append("inline"), "inline-id")[1]
+    mock_adapter.post_summary_comment.side_effect = lambda **kw: (call_order.append("summary"), "summary-id")[1]
+
+    with (
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch("revue.core.bitbucket_adapter.BitbucketAdapter", return_value=mock_adapter),
+        patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
+        patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+    ):
+        from revue.cli import _post_to_bitbucket
+        _post_to_bitbucket(_make_args(), [rr])
+
+    assert "inline" in call_order and "summary" in call_order
+    assert call_order.index("summary") > call_order.index("inline"), (
+        "Bitbucket: summary must be posted AFTER inline comments (newest-first display)"
+    )
+
+
+def test_gitlab_summary_posted_after_inline_comments(tmp_path) -> None:
+    """GitLab is newest-first: summary comment must be posted AFTER inline comments."""
+    import json as _json
+    finding = {"severity": "high", "issue": "SQL injection", "line": 10,
+               "file_path": "app.py", "details": "x", "recommendation": "y"}
+    rr = _FakeReviewResult(
+        file_path="app.py",
+        response=_json.dumps({"findings": [finding]}),
+    )
+    mock_adapter = MagicMock()
+    mock_adapter.post_review_comment.return_value = "inline-id"
+    mock_adapter.post_summary_comment.return_value = "summary-id"
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.update_comment.return_value = False
+    mock_summary_store = MagicMock()
+    mock_summary_store.get_summary_for_pr.return_value = None
+
+    call_order = []
+    mock_adapter.post_review_comment.side_effect = lambda **kw: (call_order.append("inline"), "inline-id")[1]
+    mock_adapter.post_summary_comment.side_effect = lambda **kw: (call_order.append("summary"), "summary-id")[1]
+
+    with (
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch.dict(os.environ, {"GITLAB_TOKEN": "tok", "CI_PROJECT_PATH": "ws/repo"}, clear=False),
+        patch("revue.core.gitlab_adapter.GitLabAdapter", return_value=mock_adapter),
+        patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
+        patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+    ):
+        from revue.cli import _post_to_gitlab
+        _post_to_gitlab(_make_args(), [rr])
+
+    assert "inline" in call_order and "summary" in call_order
+    assert call_order.index("summary") > call_order.index("inline"), (
+        "GitLab: summary must be posted AFTER inline comments (newest-first display)"
+    )
+
+
+def test_github_summary_posted_before_inline_comments(tmp_path) -> None:
+    """GitHub is oldest-first: summary comment must be posted BEFORE inline comments."""
+    import json as _json
+    finding = {"severity": "high", "issue": "SQL injection", "line": 10,
+               "file_path": "app.py", "details": "x", "recommendation": "y"}
+    rr = _FakeReviewResult(
+        file_path="app.py",
+        response=_json.dumps({"findings": [finding]}),
+    )
+    mock_adapter = MagicMock()
+    mock_adapter.post_review_comment.return_value = "inline-id"
+    mock_adapter.post_summary_comment.return_value = "summary-id"
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.update_comment.return_value = False
+    mock_summary_store = MagicMock()
+    mock_summary_store.get_summary_for_pr.return_value = None
+
+    call_order = []
+    mock_adapter.post_review_comment.side_effect = lambda **kw: (call_order.append("inline"), "inline-id")[1]
+    mock_adapter.post_summary_comment.side_effect = lambda **kw: (call_order.append("summary"), "summary-id")[1]
+
+    with (
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch.dict(os.environ, {"GITHUB_TOKEN": "tok", "GITHUB_REPOSITORY": "ws/repo"}, clear=False),
+        patch("revue.core.github_adapter.GitHubAdapter", return_value=mock_adapter),
+        patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
+        patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+    ):
+        from revue.cli import _post_to_github
+        _post_to_github(_make_args(bb_username=None, bb_token=None, workspace=None, repo_slug=None), [rr])
+
+    assert "inline" in call_order and "summary" in call_order
+    assert call_order.index("summary") < call_order.index("inline"), (
+        "GitHub: summary must be posted BEFORE inline comments (oldest-first display)"
+    )
+
+
+# =====================================================================
 # Missing credentials → warning printed, nothing posted (Quinn #6)
 # =====================================================================
 

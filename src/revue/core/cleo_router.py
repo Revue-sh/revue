@@ -261,6 +261,28 @@ def evaluate_triggers(
     return False
 
 
+def assign_files_to_agents(
+    agent_names: list[str],
+    file_changes: list[FileChange],
+) -> dict[str, list[str]]:
+    """Distribute file paths evenly across agents using round-robin.
+
+    Returns a dict mapping agent_name -> list of file paths.
+    Used by the pipeline fallback cascade (REVUE-117) to build per-agent contexts
+    when rate limits prevent sending the full diff to every agent.
+
+    If *agent_names* is empty, returns an empty dict.
+    If *file_changes* is empty, all agents map to an empty list.
+    """
+    if not agent_names:
+        return {}
+    assignment: dict[str, list[str]] = {name: [] for name in agent_names}
+    for i, fc in enumerate(file_changes):
+        agent = agent_names[i % len(agent_names)]
+        assignment[agent].append(fc.file_path)
+    return assignment
+
+
 def route(
     file_changes: list[FileChange],
     available_agents: list[AgentProtocol],

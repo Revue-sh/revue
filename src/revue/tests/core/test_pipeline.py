@@ -669,3 +669,461 @@ def test_pipeline_sequential_mode_logged(capsys):
 
     captured = capsys.readouterr()
     assert "sequentially" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# REVUE-117: rate-limit fallback cascade — helper function unit tests
+# ---------------------------------------------------------------------------
+
+def test_is_rate_limit_error_detects_common_variants():
+    """_is_rate_limit_error returns True for 429/rate_limit/rate limit patterns."""
+    from revue.core.pipeline import _is_rate_limit_error
+    assert _is_rate_limit_error("Error 429 Too Many Requests")
+    assert _is_rate_limit_error("rate_limit_exceeded: quota depleted")
+    assert _is_rate_limit_error("rate limit exceeded for model")
+    assert not _is_rate_limit_error("Error 500 Internal Server Error")
+    assert not _is_rate_limit_error("connection timeout")
+    assert not _is_rate_limit_error("")
+
+
+def test_build_agent_changes_normal_returns_all_files():
+    """Normal mode returns all files unchanged regardless of assignments."""
+    from revue.core.pipeline import _build_agent_changes
+    changes = [_fc("a.py"), _fc("b.py")]
+    result = _build_agent_changes("maya", "normal", changes, {"maya": ["a.py"]})
+    assert result == changes
+
+
+def test_build_agent_changes_empty_assignments_returns_all():
+    """Empty file_assignments dict returns all files (safe default)."""
+    from revue.core.pipeline import _build_agent_changes
+    changes = [_fc("a.py"), _fc("b.py")]
+    result = _build_agent_changes("maya", "file_assigned", changes, {})
+    assert result == changes
+
+
+def test_build_agent_changes_file_assigned_filters_to_assigned():
+    """file_assigned mode returns only the agent's assigned files."""
+    from revue.core.pipeline import _build_agent_changes
+    changes = [_fc("a.py"), _fc("b.py"), _fc("c.py")]
+    result = _build_agent_changes("maya", "file_assigned", changes, {"maya": ["a.py", "c.py"]})
+    assert len(result) == 2
+    assert {fc.file_path for fc in result} == {"a.py", "c.py"}
+
+
+def test_build_agent_changes_agent_missing_from_map_returns_all():
+    """Agent not in file_assignments map receives all files (AC2 safe default)."""
+    from revue.core.pipeline import _build_agent_changes
+    changes = [_fc("a.py"), _fc("b.py")]
+    result = _build_agent_changes("maya", "file_assigned", changes, {"zara": ["b.py"]})
+    assert result == changes
+
+
+def test_build_agent_changes_context_lite_assigned_full_others_summarized():
+    """context_lite mode: assigned files get full diff, non-assigned get a one-liner."""
+    from revue.core.pipeline import _build_agent_changes
+    changes = [_fc("a.py"), _fc("b.py"), _fc("c.py")]
+    result = _build_agent_changes("maya", "context_lite", changes, {"maya": ["a.py"]})
+    by_path = {fc.file_path: fc for fc in result}
+    assert len(result) == 3
+    assert "[context-lite]" not in by_path["a.py"].diff  # assigned: full diff
+    assert "[context-lite]" in by_path["b.py"].diff       # non-assigned: summary
+    assert "[context-lite]" in by_path["c.py"].diff       # non-assigned: summary
+
+
+# ---------------------------------------------------------------------------
+# REVUE-117: TC3-TC13 — fallback cascade integration tests
+#
+# These tests call pipeline._run_orchestration() directly and inject all
+# orchestration dependencies via patch("revue.core.pipeline._import_orchestration").
+# The real assign_files_to_agents round-robin is used (deterministic pure fn).
+# ---------------------------------------------------------------------------
+
+# Agents allowed list used by cascade tests — includes all 4 reviewer agents.
+_CASCADE_AGENTS_ALLOWED = [
+    "orchestrator", "code-quality-expert", "security-expert",
+    "performance-expert", "architecture-expert",
+    "consolidator", "sage", "cleo", "nova",
+]
+
+
+def _cascade_mock_agent(name: str) -> MagicMock:
+    """Minimal mock LoadedAgent for cascade tests."""
+    agent = MagicMock()
+    agent.name = name
+    agent._def = MagicMock()
+    agent._def.role = "reviewer"
+    agent._def.display_name = name
+    return agent
+
+
+def _ok_run(agent_name: str):
+    """Return a successful ParallelRunResult for agent_name."""
+    from revue.core.agent_runner import AgentRunResult, ParallelRunResult
+    return ParallelRunResult(
+        agent_results=[AgentRunResult(agent_name=agent_name, findings=[], elapsed_seconds=0.0)],
+        total_elapsed=0.0,
+    )
+
+
+def _rl_run(agent_name: str):
+    """Return a 429 rate-limit failure ParallelRunResult for agent_name."""
+    from revue.core.agent_runner import AgentRunResult, ParallelRunResult
+    return ParallelRunResult(
+        agent_results=[AgentRunResult(
+            agent_name=agent_name, findings=[], elapsed_seconds=0.0,
+            error="Error 429 rate_limit_exceeded",
+        )],
+        total_elapsed=0.0,
+    )
+
+
+def _cascade_orch(agents: list, run_side_effect=None):
+    """Build the _import_orchestration return value for cascade integration tests.
+
+    Returns (OrchestrationModules, mock_run) so callers can inspect/modify mock_run.
+    """
+    from revue.core.agent_runner import ParallelRunResult
+    from revue.core.nova_consolidator import ConsolidationResult
+    from revue.core.shared_analysis import SharedAnalysisResult
+    from revue.core.pipeline import OrchestrationModules
+
+    shared = SharedAnalysisResult.fallback(languages=["py"])
+    mock_run = MagicMock()
+    if run_side_effect is not None:
+        mock_run.side_effect = run_side_effect
+    else:
+        mock_run.side_effect = lambda ag, ch, sh, **kw: _ok_run(ag[0].name)
+
+    orch = OrchestrationModules(
+        load_all_agents=MagicMock(return_value=agents),
+        run_agents_parallel=mock_run,
+        consolidate=MagicMock(return_value=ConsolidationResult(
+            findings=[], duplicates_removed=0, original_count=0
+        )),
+        run_shared_analysis=MagicMock(return_value=shared),
+        route=MagicMock(return_value=(MagicMock(), agents)),
+        format_selection_message=MagicMock(return_value=""),
+        assign_files_to_agents=MagicMock(return_value={}),
+        ParallelRunResult=ParallelRunResult,
+    )
+    return orch, mock_run
+
+
+def _cascade_pipeline_obj(max_parallel: int = 1) -> ReviewPipeline:
+    """Return a pro-tier ReviewPipeline configured for cascade integration tests."""
+    config = _config(max_parallel_agents=max_parallel)
+    return ReviewPipeline(
+        config, client=MagicMock(),
+        license_info=_license_info(
+            tier="pro",
+            agents_allowed=_CASCADE_AGENTS_ALLOWED,
+        ),
+    )
+
+
+# TC3 -----------------------------------------------------------------------
+
+def test_normal_mode_full_diff_sent():
+    """TC3: In sequential mode with no rate limits, all agents receive the complete diff."""
+    from revue.core.pipeline import _FB_NORMAL
+
+    changes = [_fc("a.py"), _fc("b.py")]
+    agents = [_cascade_mock_agent("maya"), _cascade_mock_agent("zara")]
+    received = []
+
+    def run_side(ag, ch, sh, **kw):
+        received.append((ag[0].name, list(ch)))
+        return _ok_run(ag[0].name)
+
+    orch, _ = _cascade_orch(agents, run_side)
+    pl = _cascade_pipeline_obj(max_parallel=1)
+
+    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
+
+    for name, chgs in received:
+        assert len(chgs) == len(changes), (
+            f"{name} received {len(chgs)} file(s), expected {len(changes)} in normal mode"
+        )
+    assert pl.last_fallback_mode == _FB_NORMAL
+
+
+# TC4 -----------------------------------------------------------------------
+
+def test_fallback1_triggered_on_rate_limit():
+    """TC4: A 429 error on any agent escalates fallback_mode from normal to file_assigned."""
+    from revue.core.pipeline import _FB_FILE_ASSIGNED
+
+    changes = [_fc("a.py"), _fc("b.py")]
+    agents = [_cascade_mock_agent("maya"), _cascade_mock_agent("zara")]
+    call_n = [0]
+
+    def run_side(ag, ch, sh, **kw):
+        call_n[0] += 1
+        return _rl_run(ag[0].name) if call_n[0] == 1 else _ok_run(ag[0].name)
+
+    orch, _ = _cascade_orch(agents, run_side)
+    pl = _cascade_pipeline_obj(max_parallel=1)
+
+    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
+
+    assert pl.last_fallback_mode == _FB_FILE_ASSIGNED
+
+
+# TC5 -----------------------------------------------------------------------
+
+def test_fallback1_failed_agent_retried_with_smaller_diff():
+    """TC5: After a rate limit, the failed agent is retried with only its assigned files."""
+    changes = [_fc("a.py"), _fc("b.py")]
+    agents = [_cascade_mock_agent("maya"), _cascade_mock_agent("zara")]
+    maya_calls = []
+
+    def run_side(ag, ch, sh, **kw):
+        if ag[0].name == "maya":
+            maya_calls.append(list(ch))
+            return _rl_run("maya") if len(maya_calls) == 1 else _ok_run("maya")
+        return _ok_run(ag[0].name)
+
+    orch, _ = _cascade_orch(agents, run_side)
+    pl = _cascade_pipeline_obj(max_parallel=1)
+
+    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
+
+    # maya called twice: initial (full diff) + retry (assigned file only)
+    assert len(maya_calls) == 2
+    assert len(maya_calls[0]) == len(changes)       # first call: full diff
+    assert len(maya_calls[1]) == 1                   # retry: assigned file only
+    assert maya_calls[1][0].file_path == "a.py"      # round-robin: maya → a.py
+
+
+# TC6 -----------------------------------------------------------------------
+
+def test_fallback1_succeeded_agents_not_rerun():
+    """TC6: Agents that succeeded before a fallback escalation are not re-run."""
+    changes = [_fc("a.py"), _fc("b.py")]
+    agents = [_cascade_mock_agent("maya"), _cascade_mock_agent("zara")]
+    counts = {"maya": 0, "zara": 0}
+
+    def run_side(ag, ch, sh, **kw):
+        name = ag[0].name
+        counts[name] += 1
+        if name == "zara" and counts["zara"] == 1:
+            return _rl_run("zara")  # zara's first attempt rate-limits
+        return _ok_run(name)
+
+    orch, _ = _cascade_orch(agents, run_side)
+    pl = _cascade_pipeline_obj(max_parallel=1)
+
+    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
+
+    assert counts["maya"] == 1, "maya ran once and must not be re-run after zara's rate limit"
+    assert counts["zara"] == 2, "zara retried after rate-limiting"
+
+
+# TC7 -----------------------------------------------------------------------
+
+def test_fallback2_context_lite_triggered():
+    """TC7: If file_assigned also rate-limits, the cascade escalates to context_lite.
+
+    Scenario: maya rate-limits once (normal → file_assigned), zara rate-limits once
+    (starts in sticky file_assigned → escalates to context_lite).
+    """
+    from revue.core.pipeline import _FB_CONTEXT_LITE
+
+    changes = [_fc("a.py"), _fc("b.py")]
+    agents = [_cascade_mock_agent("maya"), _cascade_mock_agent("zara")]
+    maya_calls = [0]
+    zara_calls = [0]
+
+    def run_side(ag, ch, sh, **kw):
+        name = ag[0].name
+        if name == "maya":
+            maya_calls[0] += 1
+            return _rl_run("maya") if maya_calls[0] == 1 else _ok_run("maya")
+        elif name == "zara":
+            zara_calls[0] += 1
+            return _rl_run("zara") if zara_calls[0] == 1 else _ok_run("zara")
+        return _ok_run(name)
+
+    orch, _ = _cascade_orch(agents, run_side)
+    pl = _cascade_pipeline_obj(max_parallel=1)
+
+    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
+
+    assert pl.last_fallback_mode == _FB_CONTEXT_LITE
+
+
+# TC8 -----------------------------------------------------------------------
+
+def test_fallback2_nonassigned_files_one_liner():
+    """TC8: In context_lite mode, non-assigned files receive a one-line summary diff."""
+    changes = [_fc("a.py"), _fc("b.py")]
+    agents = [_cascade_mock_agent("maya"), _cascade_mock_agent("zara")]
+    maya_calls = [0]
+    zara_attempts = [0]
+    zara_calls_ch = []
+
+    def run_side(ag, ch, sh, **kw):
+        name = ag[0].name
+        if name == "maya":
+            maya_calls[0] += 1
+            return _rl_run("maya") if maya_calls[0] == 1 else _ok_run("maya")
+        elif name == "zara":
+            zara_attempts[0] += 1
+            zara_calls_ch.append(list(ch))
+            return _rl_run("zara") if zara_attempts[0] == 1 else _ok_run("zara")
+        return _ok_run(name)
+
+    orch, _ = _cascade_orch(agents, run_side)
+    pl = _cascade_pipeline_obj(max_parallel=1)
+
+    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
+
+    # zara called twice: file_assigned (rate-limited) + context_lite (success)
+    assert len(zara_calls_ch) == 2
+    # Second call is context_lite: zara's assigned file (b.py) full, a.py summarized
+    ctx_chgs = zara_calls_ch[1]
+    by_path = {fc.file_path: fc for fc in ctx_chgs}
+    assert len(ctx_chgs) == 2
+    assert "[context-lite]" not in by_path["b.py"].diff  # assigned: full diff
+    assert "[context-lite]" in by_path["a.py"].diff       # non-assigned: one-liner
+
+
+# TC9 -----------------------------------------------------------------------
+
+def test_context_lite_failure_surfaces_error():
+    """TC9: If the context_lite retry also rate-limits, the failure is kept (not retried further)."""
+    from revue.core.pipeline import _FB_CONTEXT_LITE
+
+    changes = [_fc("a.py"), _fc("b.py")]
+    agents = [_cascade_mock_agent("maya"), _cascade_mock_agent("zara")]
+    maya_calls = [0]
+
+    def run_side(ag, ch, sh, **kw):
+        name = ag[0].name
+        if name == "maya":
+            maya_calls[0] += 1
+            return _rl_run("maya") if maya_calls[0] == 1 else _ok_run("maya")
+        # zara always rate-limits — both file_assigned attempt and context_lite retry
+        return _rl_run("zara")
+
+    orch, _ = _cascade_orch(agents, run_side)
+    pl = _cascade_pipeline_obj(max_parallel=1)
+
+    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        _, _, failed_agents = pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
+
+    assert pl.last_fallback_mode == _FB_CONTEXT_LITE
+    assert "zara" in failed_agents  # failure surfaced, not swallowed
+
+
+# TC10 ----------------------------------------------------------------------
+
+def test_fallback_sticky():
+    """TC10: Once fallback escalates to file_assigned, subsequent agents start there too."""
+    changes = [_fc("a.py"), _fc("b.py"), _fc("c.py")]
+    agents = [
+        _cascade_mock_agent("maya"),
+        _cascade_mock_agent("zara"),
+        _cascade_mock_agent("leo"),
+    ]
+    first_call_sizes: dict[str, int] = {}
+    maya_calls = [0]
+
+    def run_side(ag, ch, sh, **kw):
+        name = ag[0].name
+        if name not in first_call_sizes:
+            first_call_sizes[name] = len(list(ch))
+        if name == "maya":
+            maya_calls[0] += 1
+            return _rl_run("maya") if maya_calls[0] == 1 else _ok_run("maya")
+        return _ok_run(name)
+
+    orch, _ = _cascade_orch(agents, run_side)
+    pl = _cascade_pipeline_obj(max_parallel=1)
+
+    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
+
+    # maya's first call was in normal mode — received the full diff
+    assert first_call_sizes["maya"] == len(changes)
+    # zara and leo started in sticky file_assigned mode — received one file each
+    assert first_call_sizes["zara"] < len(changes), "zara must start in file_assigned (sticky)"
+    assert first_call_sizes["leo"] < len(changes), "leo must start in file_assigned (sticky)"
+
+
+# TC11 ----------------------------------------------------------------------
+
+def test_fallback_log_warning_emitted(capsys):
+    """TC11: A warning is printed to stdout when the rate-limit cascade escalates."""
+    changes = [_fc("a.py"), _fc("b.py")]
+    agents = [_cascade_mock_agent("maya"), _cascade_mock_agent("zara")]
+    call_n = [0]
+
+    def run_side(ag, ch, sh, **kw):
+        call_n[0] += 1
+        return _rl_run(ag[0].name) if call_n[0] == 1 else _ok_run(ag[0].name)
+
+    orch, _ = _cascade_orch(agents, run_side)
+    pl = _cascade_pipeline_obj(max_parallel=1)
+
+    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
+
+    captured = capsys.readouterr()
+    assert "⚠" in captured.out
+    assert "file-assigned" in captured.out
+
+
+# TC12 ----------------------------------------------------------------------
+
+def test_summary_comment_includes_fallback_notice():
+    """TC12: _build_enhanced_summary includes a degradation notice when fallback is active."""
+    from revue.cli import _build_enhanced_summary
+
+    body = _build_enhanced_summary(
+        review_results=[],
+        total_findings={},
+        revision=1,
+        last_updated_at="just now",
+        fallback_mode="file_assigned",
+    )
+
+    assert "Reduced context mode active" in body
+    assert "file-assigned" in body
+
+
+# TC13 ----------------------------------------------------------------------
+
+def test_parallel_mode_bypasses_cascade():
+    """TC13: With max_parallel > 1, run_agents_parallel is called once for all agents."""
+    from revue.core.agent_runner import AgentRunResult, ParallelRunResult
+
+    changes = [_fc("a.py"), _fc("b.py")]
+    agents = [_cascade_mock_agent("maya"), _cascade_mock_agent("zara")]
+
+    orch, mock_run = _cascade_orch(agents)
+    mock_run.side_effect = None
+    mock_run.return_value = ParallelRunResult(
+        agent_results=[
+            AgentRunResult(agent_name="maya", findings=[], elapsed_seconds=0.0),
+            AgentRunResult(agent_name="zara", findings=[], elapsed_seconds=0.0),
+        ],
+        total_elapsed=0.0,
+    )
+
+    pl = _cascade_pipeline_obj(max_parallel=2)
+
+    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
+
+    assert mock_run.call_count == 1, "Parallel mode should call run_agents_parallel once"
+    call_agents = mock_run.call_args[0][0]
+    assert len(call_agents) == len(agents), "All agents passed in a single parallel call"
+    assert mock_run.call_args[1].get("max_workers") == 2

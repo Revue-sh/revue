@@ -567,3 +567,73 @@ def test_valid_mandatory_schema_returns_orchestrator_response():
     assert result.orchestrator_response.detected_areas[0].emoji == "🔧"
     msg = format_selection_message(result.orchestrator_response)
     assert "🔍 Analyzing" in msg
+
+
+# ---------------------------------------------------------------------------
+# REVUE-117: SelectedAgent.files field — TC1 & TC2
+# ---------------------------------------------------------------------------
+
+def test_cleo_response_includes_files_per_agent():
+    """TC1 — files list per agent is extracted from the parsed orchestrator response."""
+    import json
+    raw = json.dumps({
+        "detected_areas": [{"emoji": "🔐", "description": "Auth changes"}],
+        "selected_agents": [
+            {
+                "emoji": "🛡️",
+                "name": "Security Agent",
+                "reason": "for auth review",
+                "files": ["app/auth.py", "app/middleware.py"],
+            },
+            {
+                "emoji": "⚡",
+                "name": "Performance Agent",
+                "reason": "for API review",
+                "files": ["app/api.py"],
+            },
+        ],
+        "languages": ["python"],
+        "risk_areas": ["authentication"],
+        "summary": "Auth changes.",
+    })
+
+    class _Client:
+        def complete(self, *a, **kw):
+            return raw
+
+    result = run_shared_analysis([_fc("app/auth.py")], _Client())
+    assert result.orchestrator_response is not None
+    agents = result.orchestrator_response.selected_agents
+    assert len(agents) == 2
+
+    security = agents[0]
+    assert security.name == "Security Agent"
+    assert security.files == ["app/auth.py", "app/middleware.py"]
+
+    perf = agents[1]
+    assert perf.name == "Performance Agent"
+    assert perf.files == ["app/api.py"]
+
+
+def test_cleo_missing_files_field_graceful():
+    """TC2 — when Cleo omits the files field, SelectedAgent.files defaults to []."""
+    import json
+
+    raw = json.dumps({
+        "detected_areas": [],
+        "selected_agents": [
+            {"emoji": "🛡️", "name": "Security Agent", "reason": "for review"},
+        ],
+        "languages": ["python"],
+        "risk_areas": [],
+        "summary": "Minor changes.",
+    })
+
+    class _Client:
+        def complete(self, *a, **kw):
+            return raw
+
+    result = run_shared_analysis([_fc("app.py")], _Client())
+    assert result.orchestrator_response is not None
+    agent = result.orchestrator_response.selected_agents[0]
+    assert agent.files == []

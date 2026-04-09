@@ -52,10 +52,10 @@ jobs:
           AI_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AI_PROVIDER: anthropic
           AI_MODEL: claude-sonnet-4-5-20250929
+          REVUE_TIER_OVERRIDE: ${{ vars.REVUE_TIER_OVERRIDE }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           APP_ENV: staging
-          REVUE_LOG_LEVEL: DEBUG
         run: |
           echo "[revue] Starting AI code review..."
           PYTHONPATH="$(pwd)/src" python3 -u src/revue/cli.py review \

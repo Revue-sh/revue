@@ -95,7 +95,11 @@ The goal is quality delivery, not just checking boxes.]]
 
    - [ ] All required unit tests as per the story and `Operational Guidelines` Testing Strategy are implemented.
    - [ ] All required integration tests (if applicable) as per the story and `Operational Guidelines` Testing Strategy are implemented.
-   - [ ] **E2E tests pass** — run `pytest tests/e2e/ -v` from `src/web/`. All Playwright tests must be green before story is marked Done. If the story touches auth, dashboard, onboarding, runs, analytics, or billing flows — add or update the relevant E2E test in `tests/e2e/`.
+   - [ ] **Web E2E tests pass** — run `pytest tests/e2e/ -v` from `src/web/`. All Playwright tests must be green before story is marked Done. If the story touches auth, dashboard, onboarding, runs, analytics, or billing flows — add or update the relevant E2E test in `tests/e2e/`.
+   - [ ] **Pipeline / cross-platform E2E** *(required when the story modifies pipeline execution, fallback logic, error handling, or platform-specific behaviour — e.g. rate-limit cascade, comment ordering, deduplication, reply tracking)*:
+     - [ ] Live CI run verified on **all active platforms** (Bitbucket, GitHub, GitLab) — actual log output checked, not just green/red status.
+     - [ ] If the story introduces a new error path or fallback mechanism: the error condition has been **exercised in at least one live or local-simulation run** (e.g. `pytest -s` with real production code), and the expected log output (warnings, mode transitions, degradation notices) is captured as evidence.
+     - [ ] Evidence committed to `docs/` or included in the PR description before merge. Unit test assertions alone are not sufficient — the condition must be *triggered* and the output *shown*.
    - [ ] All tests (unit, integration, E2E) pass successfully.
    - [ ] Test coverage meets project standards (if defined).
 

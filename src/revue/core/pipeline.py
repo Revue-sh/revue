@@ -13,7 +13,7 @@ import json
 import sys
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from .ai_config import AIConfig
 from .ai_client import AIClient, create_ai_client
@@ -80,6 +80,118 @@ def _short_error(error: str) -> str:
     return first_line[:120] + ("…" if len(first_line) > 120 else "")
 
 
+# ---------------------------------------------------------------------------
+# Rate-limit fallback cascade constants and helpers (REVUE-117)
+# ---------------------------------------------------------------------------
+
+_FB_NORMAL = "normal"
+_FB_FILE_ASSIGNED = "file_assigned"
+_FB_CONTEXT_LITE = "context_lite"
+
+_FALLBACK_SEQUENCE = [_FB_NORMAL, _FB_FILE_ASSIGNED, _FB_CONTEXT_LITE]
+
+
+def _is_rate_limit_error(error: str) -> bool:
+    """Return True if the error string indicates a rate-limit failure (HTTP 429)."""
+    low = error.lower()
+    return "rate_limit" in low or "rate limit" in low or "429" in low
+
+
+def _next_fallback(mode: str) -> str | None:
+    """Return the next fallback mode in the cascade, or None if already at the deepest level."""
+    try:
+        idx = _FALLBACK_SEQUENCE.index(mode)
+        if idx + 1 < len(_FALLBACK_SEQUENCE):
+            return _FALLBACK_SEQUENCE[idx + 1]
+    except ValueError:
+        pass
+    return None
+
+
+def _build_agent_changes(
+    agent_name: str,
+    mode: str,
+    all_changes: list[FileChange],
+    file_assignments: dict[str, list[str]],
+) -> list[FileChange]:
+    """Build the FileChange list for an agent based on the current fallback mode.
+
+    - normal: all files with full diffs (no change)
+    - file_assigned: only the agent's assigned files with full diffs
+    - context_lite: assigned files in full + one-line summary for all other files
+    """
+    if mode == _FB_NORMAL or not file_assignments:
+        return all_changes
+
+    assigned_paths = set(file_assignments.get(agent_name, []))
+    if not assigned_paths:
+        return all_changes  # agent not in map — send everything (safe default)
+
+    assigned = [fc for fc in all_changes if fc.file_path in assigned_paths]
+
+    if mode == _FB_FILE_ASSIGNED:
+        return assigned
+
+    # context_lite: assigned files in full + one-line summary for unassigned files
+    summarized = [
+        FileChange(
+            file_path=fc.file_path,
+            change_type=fc.change_type,
+            additions=fc.additions,
+            deletions=fc.deletions,
+            diff=f"[context-lite] {fc.additions} additions, {fc.deletions} deletions",
+            language=fc.language,
+        )
+        for fc in all_changes
+        if fc.file_path not in assigned_paths
+    ]
+    return assigned + summarized
+
+
+def _extract_cleo_file_assignments(
+    orchestrator_response,
+    reviewer_agents: list,
+    all_changes: list[FileChange],
+) -> dict[str, list[str]]:
+    """Build per-agent file assignments for the fallback cascade (REVUE-117).
+
+    Priority order:
+    1. Cleo AI file assignments from orchestrator_response.selected_agents[n].files
+       — matched to reviewer agents by name substring (case-insensitive).
+    2. Round-robin distribution if Cleo provided no file assignments at all.
+
+    Agents not matched by Cleo get no entry in the returned dict; callers treat
+    a missing entry as "all files" (AC2 safe default).
+    """
+    from .cleo_router import assign_files_to_agents
+
+    if orchestrator_response is not None:
+        cleo_assignments: dict[str, list[str]] = {}
+        any_files_provided = False
+
+        for entry in orchestrator_response.selected_agents:
+            if not entry.files:
+                continue
+            any_files_provided = True
+            entry_name_lower = entry.name.lower()
+            for agent in reviewer_agents:
+                if (agent.name.lower() == entry_name_lower
+                        or agent.name.lower() in entry_name_lower
+                        or entry_name_lower in agent.name.lower()):
+                    cleo_assignments[agent.name] = entry.files
+                    break
+
+        if any_files_provided:
+            # Return Cleo assignments; missing agents fall back to all files
+            return cleo_assignments
+
+    # Cleo provided no file assignments — use round-robin so fallback provides
+    # real token reduction even without Cleo guidance
+    return assign_files_to_agents(
+        [a.name for a in reviewer_agents], all_changes
+    )
+
+
 class AllAgentsFailedError(RuntimeError):
     """Raised when all reviewer agents failed due to a fatal infrastructure error.
 
@@ -107,7 +219,24 @@ _INFRASTRUCTURE_AGENTS = frozenset({"cleo", "nova"})
 # Lazy imports for orchestration (only loaded on paid tiers)
 # ---------------------------------------------------------------------------
 
-def _import_orchestration():
+class OrchestrationModules(NamedTuple):
+    """Named container for lazily-imported orchestration dependencies.
+
+    Using a NamedTuple instead of a positional tuple means call sites access
+    members by name, so adding a new dependency never silently shifts existing
+    positional assignments.
+    """
+    load_all_agents: object
+    run_agents_parallel: object
+    consolidate: object
+    run_shared_analysis: object
+    route: object
+    format_selection_message: object
+    assign_files_to_agents: object
+    ParallelRunResult: object
+
+
+def _import_orchestration() -> "OrchestrationModules":
     """Lazy-import revue orchestration modules.
 
     Kept lazy so free-tier pipeline starts faster and import errors
@@ -115,12 +244,21 @@ def _import_orchestration():
     """
     try:
         from revue.core.agent_loader import load_all_agents
-        from revue.core.agent_runner import run_agents_parallel
+        from revue.core.agent_runner import run_agents_parallel, ParallelRunResult
         from revue.core.nova_consolidator import consolidate
         from revue.core.shared_analysis import run_shared_analysis
         from revue.core.formatting import format_selection_message
-        from revue.core.cleo_router import route
-        return load_all_agents, run_agents_parallel, consolidate, run_shared_analysis, route, format_selection_message
+        from revue.core.cleo_router import route, assign_files_to_agents
+        return OrchestrationModules(
+            load_all_agents=load_all_agents,
+            run_agents_parallel=run_agents_parallel,
+            consolidate=consolidate,
+            run_shared_analysis=run_shared_analysis,
+            route=route,
+            format_selection_message=format_selection_message,
+            assign_files_to_agents=assign_files_to_agents,
+            ParallelRunResult=ParallelRunResult,
+        )
     except ImportError as exc:
         raise RuntimeError(
             f"Orchestration engine unavailable: {exc}. "
@@ -228,6 +366,8 @@ class ReviewPipeline:
         self.config = config
         self._client: AIClient = client if client is not None else create_ai_client(config)
         self._license_info: LicenseInfo | None = license_info
+        # REVUE-117: set by _run_orchestration(); readable by CLI after run()
+        self.last_fallback_mode: str = _FB_NORMAL
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -397,9 +537,15 @@ class ReviewPipeline:
             flush=True,
         )
 
-        load_all_agents, run_agents_parallel, consolidate, run_shared_analysis, route, format_selection_message = (
-            _import_orchestration()
-        )
+        mods = _import_orchestration()
+        load_all_agents = mods.load_all_agents
+        run_agents_parallel = mods.run_agents_parallel
+        consolidate = mods.consolidate
+        run_shared_analysis = mods.run_shared_analysis
+        route = mods.route
+        format_selection_message = mods.format_selection_message
+        assign_files_to_agents = mods.assign_files_to_agents
+        ParallelRunResult = mods.ParallelRunResult
 
         # 1. Shared analysis — one AI call to classify the diff for all agents
         print("[revue]   Running shared diff analysis...", flush=True)
@@ -523,15 +669,67 @@ class ReviewPipeline:
                 flush=True,
             )
         max_parallel = self.config.max_parallel_agents
-        mode = "sequentially" if max_parallel == 1 else f"in parallel (max {max_parallel})"
-        print(f"[revue]   Running {len(reviewer_agents)} reviewer(s) {mode}...", flush=True)
-        parallel_result = run_agents_parallel(
-            reviewer_agents,
-            included,
-            shared,
-            timeout_seconds=self.config.agent_timeout_seconds,
-            max_workers=max_parallel,
-        )
+        mode_label = "sequentially" if max_parallel == 1 else f"in parallel (max {max_parallel})"
+        print(f"[revue]   Running {len(reviewer_agents)} reviewer(s) {mode_label}...", flush=True)
+
+        if max_parallel > 1:
+            # Parallel mode: no fallback cascade (AC10 — cascade undefined for parallel)
+            parallel_result = run_agents_parallel(
+                reviewer_agents, included, shared,
+                timeout_seconds=self.config.agent_timeout_seconds,
+                max_workers=max_parallel,
+            )
+        else:
+            # Sequential mode: per-agent execution with rate-limit fallback cascade (REVUE-117)
+            fallback_mode = _FB_NORMAL
+            file_assignments = _extract_cleo_file_assignments(
+                shared.orchestrator_response if shared else None,
+                reviewer_agents,
+                included,
+            )
+            seq_results = []
+            seq_start = time.monotonic()
+
+            for agent in reviewer_agents:
+                agent_changes = _build_agent_changes(
+                    agent.name, fallback_mode, included, file_assignments
+                )
+                run_result = run_agents_parallel(
+                    [agent], agent_changes, shared,
+                    timeout_seconds=self.config.agent_timeout_seconds,
+                    max_workers=1,
+                )
+                agent_result = run_result.agent_results[0] if run_result.agent_results else None
+
+                if agent_result is not None and _is_rate_limit_error(agent_result.error):
+                    next_mode = _next_fallback(fallback_mode)
+                    if next_mode is not None:
+                        fallback_mode = next_mode
+                        print(
+                            f"[revue]   \u26a0 Rate limit hit on {agent.name} — "
+                            f"switching to {fallback_mode.replace('_', '-')} mode "
+                            f"(reduced context)",
+                            flush=True,
+                        )
+                        agent_changes = _build_agent_changes(
+                            agent.name, fallback_mode, included, file_assignments
+                        )
+                        run_result = run_agents_parallel(
+                            [agent], agent_changes, shared,
+                            timeout_seconds=self.config.agent_timeout_seconds,
+                            max_workers=1,
+                        )
+                        agent_result = run_result.agent_results[0] if run_result.agent_results else None
+                    # If still failing at context_lite or next_mode is None: keep the failure
+
+                if agent_result is not None:
+                    seq_results.append(agent_result)
+
+            self.last_fallback_mode = fallback_mode
+            parallel_result = ParallelRunResult(
+                agent_results=seq_results,
+                total_elapsed=time.monotonic() - seq_start,
+            )
 
         agents_used = [r.agent_name for r in parallel_result.agent_results if r.success]
         failed = [r for r in parallel_result.agent_results if not r.success]
