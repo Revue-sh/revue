@@ -29,6 +29,7 @@ from revue.core.config_loader import (
 from revue.core.diff_parser import filter_changes, parse_diff_file
 from revue.core.ai_client import create_ai_client
 from revue.core.pipeline import ReviewPipeline
+from revue.core.models import PRContext
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +212,9 @@ def cmd_review(
     auto_detect = getattr(args, "auto_detect_pr", False)
     explicit_pr_id = getattr(args, "pr_id", None)
     explicit_platform = getattr(args, "platform", None)
+    # Resolve PR ID unconditionally — must not be gated inside elif below,
+    # since --pr-description-file and --pr-id can be passed together (CI does this).
+    resolved_pr_id: Optional[str] = explicit_pr_id or _resolve_pr_id_from_env()
 
     if pr_description_file:
         # Platform-agnostic path (REVUE-86): CI fetches description, writes file, passes path.
@@ -240,7 +244,6 @@ def cmd_review(
             get_bitbucket_pr_description,
         )
 
-        resolved_pr_id = explicit_pr_id or _resolve_pr_id_from_env()
         if resolved_pr_id:
             try:
                 if auto_detect and not explicit_platform:
@@ -267,7 +270,26 @@ def cmd_review(
     print(f"[revue] Validating license...")
     fallback_mode = "normal"
     try:
-        review_results, excluded, files_reviewed, failed_agents = pipeline.run(str(diff_path), pr_description=pr_description)
+        _platform = getattr(args, "platform", None)
+        _pr_id = int(resolved_pr_id) if resolved_pr_id is not None else None
+        _repo_owner = getattr(args, "workspace", None) or os.getenv("BITBUCKET_WORKSPACE")
+        _repo_name = getattr(args, "repo_slug", None) or os.getenv("BITBUCKET_REPO_SLUG")
+        _pr_context = (
+            PRContext(
+                platform=_platform,
+                pr_number=_pr_id,
+                repo_owner=_repo_owner or "",
+                repo_name=_repo_name or "",
+                repo_path=os.getcwd(),
+            )
+            if _platform and _pr_id
+            else None
+        )
+        review_results, excluded, files_reviewed, failed_agents = pipeline.run(
+            str(diff_path),
+            pr_description=pr_description,
+            pr_context=_pr_context,
+        )
         fallback_mode = getattr(pipeline, "last_fallback_mode", "normal")
     except AllAgentsFailedError:
         print(
@@ -334,6 +356,7 @@ def cmd_review(
             print(f"## {r['file']}")
             print(r["review"])
 
+    print("[revue] ✅ Review cycle complete.", flush=True)
     return 0
 
 
@@ -594,6 +617,42 @@ def _format_file_review(file_path: str, response: str) -> str:
     return "\n".join(lines)
 
 
+def _build_api_fingerprint_map(adapter, pr_num: int) -> dict[str, dict]:
+    """Derive already-posted finding fingerprints from live PR comment metadata.
+
+    For each existing Revue inline finding comment, computes a location-based
+    fingerprint using only ``file_path`` and ``line`` (no diff dependency and
+    no body modification needed — no invisible marker required).
+
+    Returns ``{fingerprint: {"platform_comment_id": str, "file_path": str}}``
+    so the result merges cleanly with ``PerPRCommentStore.get_unresolved_fingerprints``.
+    """
+    import re as _re
+    from revue.comments.fingerprint import fingerprint as gen_fingerprint
+    _FINDING_RE = _re.compile(r'^\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]')
+    result: dict[str, dict] = {}
+    try:
+        comments = adapter.get_existing_comments(pr_id=pr_num)
+        for c in comments:
+            inline = c.get("inline") or {}
+            if not inline:
+                continue
+            body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
+            if not _FINDING_RE.match(body):
+                continue
+            file_path = inline.get("path", "")
+            line = inline.get("to") or 0
+            if file_path and line:
+                fp = gen_fingerprint(file_path, int(line), "")
+                result[fp] = {
+                    "platform_comment_id": str(c.get("id", "")),
+                    "file_path": file_path,
+                }
+    except Exception:
+        pass
+    return result
+
+
 def _run_per_issue_dedup(
     adapter,
     pr_num: int,
@@ -608,6 +667,11 @@ def _run_per_issue_dedup(
     in it is posted inline (WYSIWYG).  Cross-cycle dedup (AC1/AC2) prevents
     re-posting a finding that already has an open comment from a prior review.
 
+    On fresh CI (empty local store), dedup falls back to scanning live API
+    comments via ``_build_api_fingerprint_map`` — location-based fingerprints
+    derived from inline comment metadata prevent re-posting without any stored
+    state or body modification.
+
     Returns ``(posted, skipped, total_findings)`` where ``total_findings`` is
     the severity breakdown of Nova's full list — the number the summary shows.
     """
@@ -616,6 +680,10 @@ def _run_per_issue_dedup(
     from revue.core.vcs_adapter import DiffPosition, compute_gitlab_line_code
 
     prior_unresolved = dedup_store.get_unresolved_fingerprints(platform_str, pr_num)
+    # Seed from live API — fills the gap when local store is empty (fresh CI).
+    # Local store entries take precedence (richer metadata); API covers the rest.
+    api_fps = _build_api_fingerprint_map(adapter, pr_num)
+    merged_prior = {**api_fps, **prior_unresolved}
     posted = 0
     skipped = 0
     total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
@@ -644,10 +712,15 @@ def _run_per_issue_dedup(
                 total_findings[sev] += 1
 
             fp = gen_fingerprint(rr.file_path, line, diff_content)
+            # Location-based fp (no diff) — matches API-derived fingerprints in
+            # _build_api_fingerprint_map which use inline.to without diff context.
+            fp_location = gen_fingerprint(rr.file_path, line, "")
             seen_hunk_fps.add(fp)
 
             # AC1/AC2: skip if already posted in a previous review cycle.
-            if dedup_store.has_fingerprint(platform_str, pr_num, rr.file_path, fp):
+            # merged_prior covers both local store (diff-based) and live API
+            # (location-based) fingerprints — check both to handle either source.
+            if fp in merged_prior or fp_location in merged_prior:
                 skipped += 1
                 continue
 
@@ -688,11 +761,12 @@ def _run_per_issue_dedup(
                     comment_body=body,
                 )
 
-    # AC5: auto-resolve findings absent from new review
-    resolved_fps = set(prior_unresolved.keys()) - seen_hunk_fps
+    # AC5: auto-resolve findings absent from new review.
+    # Use merged_prior so API-seeded entries (fresh CI) are also considered.
+    resolved_fps = set(merged_prior.keys()) - seen_hunk_fps
 
     for fp in resolved_fps:
-        entry = prior_unresolved[fp]
+        entry = merged_prior[fp]
         old_comment_id = entry.get("platform_comment_id")
         if old_comment_id:
             ok = adapter.resolve_inline_comment(

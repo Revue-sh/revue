@@ -1127,3 +1127,166 @@ def test_parallel_mode_bypasses_cascade():
     call_agents = mock_run.call_args[0][0]
     assert len(call_agents) == len(agents), "All agents passed in a single parallel call"
     assert mock_run.call_args[1].get("max_workers") == 2
+
+
+# ---------------------------------------------------------------------------
+# REVUE-112 Phase 2: classify/respond pipeline ordering (TC23–TC26)
+# ---------------------------------------------------------------------------
+
+def _bitbucket_pr_context():
+    """Minimal PRContext fixture for Bitbucket reply-tracking tests."""
+    from revue.core.models import PRContext
+    return PRContext(
+        platform="bitbucket",
+        pr_number=42,
+        repo_owner="ws",
+        repo_name="repo",
+        repo_path="/tmp",
+    )
+
+
+def _empty_classification():
+    """Empty ClassificationResult — no patterns, no state updates."""
+    from revue.core.models import ClassificationResult
+    return ClassificationResult([], [], [], [])
+
+
+def test_pipeline_classify_runs_before_agents(tmp_path):
+    """TC23: classify() is called before _run_orchestration / _run_simplified."""
+    import os
+    from revue.core.models import ClassificationResult
+
+    call_order: list[str] = []
+
+    mock_svc = MagicMock()
+    mock_svc.classify.return_value = _empty_classification()
+    mock_svc.respond.return_value = None
+    mock_svc.classify.side_effect = lambda n: (call_order.append("classify"), _empty_classification())[1]
+
+    pipeline = _pipeline()
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("a.py")]), \
+         patch("revue.core.pipeline.track_usage"), \
+         patch("revue.core.pipeline.ReviewPipeline._build_wont_fix_svc", return_value=mock_svc), \
+         patch.object(pipeline, "_run_simplified",
+                      side_effect=lambda *a, **kw: (call_order.append("agents"), ([], [], []))[1]) as mock_agents, \
+         patch.dict(os.environ, {"BITBUCKET_USERNAME": "u", "BITBUCKET_API_TOKEN": "p"}):
+        pipeline.run("fake.diff", pr_context=_bitbucket_pr_context())
+
+    assert "classify" in call_order
+    assert "agents" in call_order
+    assert call_order.index("classify") < call_order.index("agents"), (
+        "classify must be called before agents"
+    )
+
+
+def test_pipeline_config_patched_after_classify(tmp_path):
+    """TC24: pipeline.config.allowed_patterns includes classify() output before agents run."""
+    import os
+    from revue.core.models import ClassificationResult
+
+    captured_config_state: list[list] = []
+
+    new_pattern = {"pattern": "legacy bypass", "rationale": "intentional"}
+    classification = ClassificationResult(
+        patterns_to_allow=[new_pattern],
+        patterns_to_disallow=[],
+        state_updates=[],
+        decisions=[],
+    )
+
+    mock_svc = MagicMock()
+    mock_svc.classify.return_value = classification
+    mock_svc.respond.return_value = None
+
+    pipeline = _pipeline()
+
+    def capture_and_run(*args, **kwargs):
+        # Capture config.allowed_patterns at the moment agents run
+        captured_config_state.append(
+            list(getattr(pipeline.config, "allowed_patterns", None) or [])
+        )
+        return [], [], []
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("a.py")]), \
+         patch("revue.core.pipeline.track_usage"), \
+         patch("revue.core.pipeline.ReviewPipeline._build_wont_fix_svc", return_value=mock_svc), \
+         patch.object(pipeline, "_run_simplified", side_effect=capture_and_run), \
+         patch.dict(os.environ, {"BITBUCKET_USERNAME": "u", "BITBUCKET_API_TOKEN": "p"}):
+        pipeline.run("fake.diff", pr_context=_bitbucket_pr_context())
+
+    assert len(captured_config_state) == 1
+    assert new_pattern in captured_config_state[0], (
+        "allowed_patterns must include classify() output before agents run"
+    )
+
+
+def test_pipeline_state_updates_applied_before_diff_parse(tmp_path):
+    """TC25: apply_state_updates called before parse_diff_file for state_updates."""
+    import os
+    from revue.core.models import ClassificationResult
+
+    call_order: list[str] = []
+
+    classification = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[{"fingerprint": "fp001", "file_path": "a.py", "decision": "allowed_pattern"}],
+        decisions=[],
+    )
+
+    mock_svc = MagicMock()
+    mock_svc.classify.return_value = classification
+    mock_svc.respond.return_value = None
+    mock_svc.apply_state_updates.side_effect = lambda *a, **kw: call_order.append("mark_resolved")
+
+    pipeline = _pipeline()
+
+    with patch("revue.core.pipeline.parse_diff_file",
+               side_effect=lambda *a, **kw: (call_order.append("parse_diff"), [_fc("a.py")])[1]), \
+         patch("revue.core.pipeline.track_usage"), \
+         patch("revue.core.pipeline.ReviewPipeline._build_wont_fix_svc", return_value=mock_svc), \
+         patch.dict(os.environ, {"BITBUCKET_USERNAME": "u", "BITBUCKET_API_TOKEN": "p"}):
+        pipeline.run("fake.diff", pr_context=_bitbucket_pr_context())
+
+    assert "mark_resolved" in call_order, "mark_resolved must be called for state_updates"
+    assert "parse_diff" in call_order
+    assert call_order.index("mark_resolved") < call_order.index("parse_diff"), (
+        "state_updates must be applied before diff parsing"
+    )
+
+
+def test_pipeline_respond_runs_after_agents(tmp_path):
+    """TC26: respond() is called after agents run when threads with replies exist."""
+    import os
+    from revue.core.models import ClassificationResult
+
+    call_order: list[str] = []
+
+    # Non-empty classification so the respond branch is taken
+    classification_with_threads = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[],
+        decisions=[{"fingerprint": "fp1", "decision": "reason_missing", "reply_draft": "Why?"}],
+    )
+
+    mock_svc = MagicMock()
+    mock_svc.classify.return_value = classification_with_threads
+    mock_svc.respond.side_effect = lambda *a, **kw: call_order.append("respond")
+
+    pipeline = _pipeline()
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("a.py")]), \
+         patch("revue.core.pipeline.track_usage"), \
+         patch("revue.core.pipeline.ReviewPipeline._build_wont_fix_svc", return_value=mock_svc), \
+         patch.object(pipeline, "_run_simplified",
+                      side_effect=lambda *a, **kw: (call_order.append("agents"), ([], [], []))[1]), \
+         patch.dict(os.environ, {"BITBUCKET_USERNAME": "u", "BITBUCKET_API_TOKEN": "p"}):
+        pipeline.run("fake.diff", pr_context=_bitbucket_pr_context())
+
+    assert "respond" in call_order, "respond() must be called"
+    assert "agents" in call_order
+    assert call_order.index("agents") < call_order.index("respond"), (
+        "respond must run after agents"
+    )

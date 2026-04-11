@@ -1,5 +1,6 @@
 ---
 name: pr-comments
+model: haiku
 description: Read and display PR/MR comments and reply threads from Bitbucket, GitHub, or GitLab. Use when the user asks to see PR comments, check review feedback, read reply threads, or analyse comment dispositions (won't fix, false positive, fixed). Invoked as /pr-comments [platform] [pr-id] or /pr-comments bitbucket 42.
 allowed-tools: Bash
 ---

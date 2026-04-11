@@ -89,7 +89,52 @@ python3 -u src/revue/cli.py review \
   --pr-description-file /tmp/revue_pr_description.txt
 ```
 
-> **Note:** `post_review_comment` will fail with 401 locally — the Bitbucket API token uses Bearer auth but the review poster uses basic auth. This is expected and non-blocking. The review output still prints to stdout.
+---
+
+### Option B: Run with a local Ollama model (zero API cost)
+
+Useful for diagnosing pipeline logic (routing, won't-fix tracking, comment posting) without spending Anthropic budget.
+
+**Prerequisites:**
+1. Install [Ollama](https://ollama.com) and pull a model:
+   ```bash
+   ollama pull gemma4       # check exact tag with: ollama list
+   ```
+2. Check the model tag (tag varies by download):
+   ```bash
+   curl -s http://localhost:11434/api/tags | python3 -c "import json,sys; [print(m['name']) for m in json.load(sys.stdin)['models']]"
+   # e.g. → gemma4:e4b
+   ```
+
+**Run command:**
+```bash
+source ~/.zshenv
+cd Projects/revue.io
+export APP_ENV=staging
+export PYTHONPATH="$(pwd)/src"
+export REVUE_BASE_URL="http://localhost:11434/v1"   # Ollama OpenAI-compat endpoint
+export AI_API_KEY="ollama"                           # dummy value — Ollama ignores it
+export REVUE_TIER_OVERRIDE="pro"
+
+python3 -u src/revue/cli.py review \
+  --diff /tmp/revue_pr.diff \
+  --platform bitbucket \
+  --pr-id "${PR_ID}" \
+  --workspace "cbscd" \
+  --repo-slug "revue" \
+  --bb-username "${BITBUCKET_USERNAME}" \
+  --bb-token "${BITBUCKET_API_TOKEN}" \
+  --provider openai \
+  --model "gemma4:e4b" \
+  --config .revue.yml \
+  --comment-style per-issue \
+  --pr-description-file /tmp/revue_pr_description.txt
+```
+
+**Notes:**
+- `REVUE_BASE_URL` overrides the OpenAI SDK base URL — the `openai` provider + `REVUE_BASE_URL` is how Ollama compatibility works.
+- Local models may produce truncated or malformed JSON for large payloads (e.g. 40+ won't-fix threads). The pipeline degrades gracefully — won't-fix classify returns empty, and the review continues.
+- Won't-fix tracking (classify/respond) requires `BITBUCKET_USERNAME` + `BITBUCKET_API_TOKEN` to be set. Both Bearer tokens (`ATCTT3…`) and App Passwords work.
 
 ---
 

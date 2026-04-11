@@ -59,10 +59,11 @@ _FINDING_B = {"severity": "medium", "issue": "Unused import", "line": 20,
               "details": "Remove it", "recommendation": "Delete line"}
 
 
-def _run(args, review_results, *, tmp_path, adapter=None, pre_seed=None):
+def _run(args, review_results, *, tmp_path, adapter=None, pre_seed=None, existing_comments=None):
     """Call _post_to_bitbucket with real PerPRCommentStore (rooted at tmp_path).
 
-    pre_seed: optional callable(PerPRCommentStore) to add entries before the call.
+    pre_seed:           optional callable(PerPRCommentStore) to add entries before the call.
+    existing_comments:  list of raw comment dicts returned by get_existing_comments (default []).
     """
     from revue.cli import _post_to_bitbucket
 
@@ -71,6 +72,7 @@ def _run(args, review_results, *, tmp_path, adapter=None, pre_seed=None):
     mock_adapter.post_summary_comment.return_value = "summary-id"
     mock_adapter.update_comment.return_value = False
     mock_adapter.resolve_inline_comment.return_value = True
+    mock_adapter.get_existing_comments.return_value = existing_comments or []
 
     mock_summary_store = MagicMock()
     mock_summary_store.get_summary_for_pr.return_value = None
@@ -103,6 +105,7 @@ def _run_github(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id=
     mock_adapter.post_summary_comment.return_value = "gh-summary-id"
     mock_adapter.update_comment.return_value = False
     mock_adapter.resolve_inline_comment.return_value = True
+    mock_adapter.get_existing_comments.return_value = []
 
     mock_summary_store = MagicMock()
     mock_summary_store.get_summary_for_pr.return_value = None
@@ -136,6 +139,7 @@ def _run_gitlab(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id=
     mock_adapter.post_summary_comment.return_value = "gl-summary-id"
     mock_adapter.update_comment.return_value = False
     mock_adapter.resolve_inline_comment.return_value = True
+    mock_adapter.get_existing_comments.return_value = []
 
     mock_summary_store = MagicMock()
     mock_summary_store.get_summary_for_pr.return_value = None
@@ -231,6 +235,38 @@ def test_new_finding_posted_and_saved_to_store(tmp_path) -> None:
     from revue.comments.fingerprint import fingerprint as fp_func
     fp = fp_func("src/app.py", 10, "")
     assert store.has_fingerprint("bitbucket", 42, "src/app.py", fp)
+
+
+# =====================================================================
+# TC_FRESH_CI: Empty local store + API sentinel → finding skipped (no re-post)
+# =====================================================================
+
+def test_api_sentinel_deduplicates_on_fresh_ci(tmp_path) -> None:
+    """Fresh CI: local store is empty but the finding was already posted (detected
+    via inline comment metadata).  post_review_comment must NOT be called again."""
+    from revue.comments.fingerprint import fingerprint as fp_func
+
+    fp = fp_func("src/app.py", 10, "")
+
+    # API already has this finding from a prior run — detected via inline metadata
+    existing = [
+        {
+            "id": 999,
+            "inline": {"path": "src/app.py", "to": 10},
+            "content": {"raw": "**🔴 [HIGH] SQL injection"},
+        }
+    ]
+
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([_FINDING_A]),
+        )
+    ]
+    adapter = _run(_make_args(), review_results, tmp_path=tmp_path, existing_comments=existing)
+
+    # Already posted in a previous run — must be skipped even with empty local store
+    adapter.post_review_comment.assert_not_called()
 
 
 # =====================================================================

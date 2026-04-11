@@ -73,3 +73,32 @@ class CodeFix:
     end_line: int              # Last line number (inclusive)
     confidence: float          # 0-100
     explanation: str           # Why this fix works
+
+
+@dataclass
+class PRContext:
+    """VCS context for a pull/merge request.
+
+    Passed as a single optional parameter to ReviewPipeline.run() instead of
+    individual platform/pr_number/repo_* kwargs (OCP — adding new PR metadata
+    fields does not require changing the pipeline signature).
+    """
+    platform: str           # "bitbucket" | "github" | "gitlab"
+    pr_number: int
+    repo_owner: str
+    repo_name: str
+    repo_path: str          # local repo root for .revue.yml and comment store
+
+
+@dataclass
+class ClassificationResult:
+    """Result of the zero-side-effect classify phase (REVUE-112 Phase 2, AC15).
+
+    Produced by WontFixReplyService.classify() without any file writes, API
+    POSTs, or store mutations (AC21).  Pass to WontFixReplyService.respond()
+    for all I/O: lessons PR creation, thread replies, store state updates.
+    """
+    patterns_to_allow: list[dict]       # entries for noise_filters.allowed_patterns
+    patterns_to_disallow: list[dict]    # entries for noise_filters.disallowed_patterns
+    state_updates: list[dict]           # {fingerprint, file_path, decision} — resolved threads
+    decisions: list[dict]               # raw AI output, carried through to respond()

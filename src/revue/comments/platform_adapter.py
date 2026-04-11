@@ -1,6 +1,7 @@
 """Platform-specific API adapters for comment resolution."""
 from __future__ import annotations
 
+import logging
 import os
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -8,6 +9,8 @@ from typing import Optional
 import httpx
 
 from .models import Platform
+
+_log = logging.getLogger(__name__)
 
 
 class PlatformAdapter(ABC):
@@ -37,49 +40,67 @@ class PlatformAdapter(ABC):
         self,
         repo_owner: str,
         repo_name: str,
-        comment_id: str,
+        pr_number: int = 0,
+        comment_id: str = "",
         thread_id: Optional[str] = None
     ) -> bool:
         """
         Resolve a comment via API.
-        
+
         Returns:
             True if successful, False if API doesn't support resolution
         """
         pass
-    
+
     @abstractmethod
     def post_reply(
         self,
         repo_owner: str,
         repo_name: str,
-        comment_id: str,
-        thread_id: Optional[str],
-        body: str
+        pr_number: int = 0,
+        comment_id: str = "",
+        thread_id: Optional[str] = None,
+        body: str = ""
     ) -> str:
         """
         Post a reply to an existing comment.
-        
+
         Returns:
             reply_id: Platform-specific reply ID
         """
         pass
-    
+
     @abstractmethod
     def get_comment_replies(
         self,
         repo_owner: str,
         repo_name: str,
-        comment_id: str
+        pr_number: int = 0,
+        comment_id: str = ""
     ) -> list[dict]:
         """
         Fetch all replies to a comment.
-        
+
         Returns:
             List of reply dicts with 'body', 'author', 'created_at'
         """
         pass
     
+    @abstractmethod
+    def get_all_pr_comments(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+    ) -> list[dict]:
+        """Fetch every comment on a PR in a single call (paginated).
+
+        Returns a flat list of comment dicts in the platform's native shape.
+        Used by won't-fix reply tracking to discover Revue findings and replies
+        without relying on the local store (works on fresh CI checkouts).
+        """
+        pass
+
     @abstractmethod
     def is_comment_resolved(
         self,
@@ -93,11 +114,23 @@ class PlatformAdapter(ABC):
 
 class BitbucketAdapter(PlatformAdapter):
     """Bitbucket Cloud API adapter."""
-    
+
+    # Bitbucket Repository/Workspace Access Tokens (OAuth) start with this prefix.
+    # App Passwords do not — they use HTTP Basic Auth instead.
+    _BEARER_PREFIX = "ATCTT3"
+
     def __init__(self, username: str, app_password: str):
         self.username = username
         self.app_password = app_password
         self.base_url = "https://api.bitbucket.org/2.0"
+        # Repository/Workspace Access Tokens must be sent as Bearer, not Basic Auth.
+        self._is_bearer = app_password.startswith(self._BEARER_PREFIX)
+
+    def _auth_kwargs(self) -> dict:
+        """Return the httpx auth keyword args for this token type."""
+        if self._is_bearer:
+            return {"headers": {"Authorization": f"Bearer {self.app_password}"}}
+        return {"auth": (self.username, self.app_password)}
     
     def post_comment(
         self,
@@ -120,13 +153,9 @@ class BitbucketAdapter(PlatformAdapter):
             }
         }
         
-        response = httpx.post(
-            url,
-            json=payload,
-            auth=(self.username, self.app_password)
-        )
+        response = httpx.post(url, json=payload, **self._auth_kwargs())
         response.raise_for_status()
-        
+
         data = response.json()
         return (str(data['id']), None)  # Bitbucket doesn't have thread IDs
     
@@ -134,56 +163,84 @@ class BitbucketAdapter(PlatformAdapter):
         self,
         repo_owner: str,
         repo_name: str,
+        pr_number: int,
         comment_id: str,
         thread_id: Optional[str] = None
     ) -> bool:
         """Resolve comment via Bitbucket API."""
-        url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/pullrequests/comments/{comment_id}"
-        
-        response = httpx.put(
-            url,
-            json={"resolved": True},
-            auth=(self.username, self.app_password)
-        )
-        
+        url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/pullrequests/{pr_number}/comments/{comment_id}/resolve"
+        try:
+            response = httpx.post(url, timeout=10.0, **self._auth_kwargs())
+        except httpx.HTTPError as exc:
+            _log.warning("Failed to resolve comment %s: %s", comment_id, exc)
+            return False
+        if response.status_code == 400:
+            _log.warning(
+                "Cannot resolve comment %s — Bitbucket only resolves inline comments",
+                comment_id,
+            )
+            return False
         return response.status_code == 200
-    
+
     def post_reply(
         self,
         repo_owner: str,
         repo_name: str,
+        pr_number: int,
         comment_id: str,
         thread_id: Optional[str],
         body: str
     ) -> str:
         """Post reply to Bitbucket comment."""
-        url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/pullrequests/comments/{comment_id}"
-        
+        url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/pullrequests/{pr_number}/comments"
         response = httpx.post(
             url,
-            json={"content": {"raw": body}},
-            auth=(self.username, self.app_password)
+            json={"content": {"raw": body}, "parent": {"id": int(comment_id)}},
+            timeout=10.0,
+            **self._auth_kwargs(),
         )
         response.raise_for_status()
-        
-        return str(response.json()['id'])
-    
+        return str(response.json()["id"])
+
     def get_comment_replies(
         self,
         repo_owner: str,
         repo_name: str,
+        pr_number: int,
         comment_id: str
     ) -> list[dict]:
-        """Fetch replies to Bitbucket comment."""
-        url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/pullrequests/comments/{comment_id}"
-        
-        response = httpx.get(url, auth=(self.username, self.app_password))
+        """Fetch replies to Bitbucket comment, filtered by parent.id."""
+        url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/pullrequests/{pr_number}/comments"
+        response = httpx.get(url, **self._auth_kwargs())
         response.raise_for_status()
-        
-        # Bitbucket nests replies differently - adjust based on actual API
-        # For now, return empty list (implement based on actual response structure)
-        return []
+        all_comments = response.json().get("values", [])
+        try:
+            parent_id = int(comment_id)
+        except ValueError:
+            _log.warning("get_comment_replies: non-integer comment_id %r — returning []", comment_id)
+            return []
+        return [c for c in all_comments if c.get("parent", {}).get("id") == parent_id]
     
+    def get_all_pr_comments(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+    ) -> list[dict]:
+        """Fetch all Bitbucket PR comments, following pagination."""
+        url: Optional[str] = (
+            f"{self.base_url}/repositories/{repo_owner}/{repo_name}"
+            f"/pullrequests/{pr_number}/comments?pagelen=100"
+        )
+        all_comments: list[dict] = []
+        while url:
+            response = httpx.get(url, timeout=10.0, **self._auth_kwargs())
+            response.raise_for_status()
+            data = response.json()
+            all_comments.extend(data.get("values", []))
+            url = data.get("next")
+        return all_comments
+
     def is_comment_resolved(
         self,
         repo_owner: str,
@@ -193,9 +250,9 @@ class BitbucketAdapter(PlatformAdapter):
         """Check if Bitbucket comment is resolved."""
         url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/pullrequests/comments/{comment_id}"
         
-        response = httpx.get(url, auth=(self.username, self.app_password))
+        response = httpx.get(url, **self._auth_kwargs())
         response.raise_for_status()
-        
+
         return response.json().get('resolved', False)
 
 
@@ -242,46 +299,58 @@ class GitHubAdapter(PlatformAdapter):
         self,
         repo_owner: str,
         repo_name: str,
+        pr_number: int,
         comment_id: str,
         thread_id: Optional[str] = None
     ) -> bool:
         """
         GitHub doesn't support resolution via PAT.
-        
+
         Returns False to trigger fallback to comment acknowledgment.
         """
         return False
-    
+
     def post_reply(
         self,
         repo_owner: str,
         repo_name: str,
+        pr_number: int,
         comment_id: str,
         thread_id: Optional[str],
         body: str
     ) -> str:
         """Post reply to GitHub PR comment."""
         url = f"{self.base_url}/repos/{repo_owner}/{repo_name}/pulls/comments/{comment_id}/replies"
-        
+
         response = httpx.post(
             url,
             json={"body": body},
             headers=self.headers
         )
         response.raise_for_status()
-        
+
         return str(response.json()['id'])
-    
+
+    def get_all_pr_comments(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+    ) -> list[dict]:
+        """Fetch all GitHub PR review comments (TODO: implement)."""
+        return []
+
     def get_comment_replies(
         self,
         repo_owner: str,
         repo_name: str,
+        pr_number: int,
         comment_id: str
     ) -> list[dict]:
         """Fetch replies to GitHub comment (placeholder)."""
         # GitHub API structure for replies needs investigation
         return []
-    
+
     def is_comment_resolved(
         self,
         repo_owner: str,
@@ -350,19 +419,15 @@ class GitLabAdapter(PlatformAdapter):
         self,
         repo_owner: str,
         repo_name: str,
+        pr_number: int,
         comment_id: str,
         thread_id: Optional[str] = None
     ) -> bool:
         """Resolve GitLab discussion thread."""
         if not thread_id:
             return False
-        
-        project_id = f"{repo_owner}%2F{repo_name}"
-        
-        # Extract MR number from context (this is a design limitation - need to pass it)
-        # For now, return False and handle in service layer
-        # TODO: Refactor to pass pr_number to resolve_comment
-        return False
+
+        return self.resolve_discussion(repo_owner, repo_name, pr_number, thread_id)
     
     def resolve_discussion(
         self,
@@ -382,6 +447,7 @@ class GitLabAdapter(PlatformAdapter):
         self,
         repo_owner: str,
         repo_name: str,
+        pr_number: int,
         comment_id: str,
         thread_id: Optional[str],
         body: str
@@ -389,16 +455,26 @@ class GitLabAdapter(PlatformAdapter):
         """Post reply to GitLab discussion (placeholder)."""
         # Implement based on actual API needs
         return ""
-    
+
+    def get_all_pr_comments(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+    ) -> list[dict]:
+        """Fetch all GitLab MR discussion notes (TODO: implement)."""
+        return []
+
     def get_comment_replies(
         self,
         repo_owner: str,
         repo_name: str,
+        pr_number: int,
         comment_id: str
     ) -> list[dict]:
         """Fetch GitLab discussion replies (placeholder)."""
         return []
-    
+
     def is_comment_resolved(
         self,
         repo_owner: str,

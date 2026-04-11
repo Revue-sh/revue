@@ -86,6 +86,7 @@ The goal is quality delivery, not just checking boxes.]]
    - [ ] Adherence to `Tech Stack` for technologies/versions used (if story introduces or modifies tech usage).
    - [ ] Adherence to `Api Reference` and `Data Models` (if story involves API or data model changes).
    - [ ] Basic security best practices (e.g., input validation, proper error handling, no hardcoded secrets) applied for new/modified code.
+   - [ ] **SOLID principles enforced** — SRP, OCP, LSP, ISP, DIP must be satisfied by all new/modified code. SOLID violations are not deferrable as post-MVP tech debt. If a violation genuinely cannot fit in the current story (> 1 day of extra work), a new Jira ticket must be created in the **immediate next sprint** before the story is marked Done.
    - [ ] No new linter errors or warnings introduced.
    - [ ] Code is well-commented where necessary (clarifying complex logic, not obvious statements).
 

@@ -14,8 +14,12 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-TRACK_URL = "https://api.revue.io/usage/track"
-UPGRADE_URL = "https://revue.io/upgrade"
+# Using fly.dev host until revue.io domain is purchased and wired (pre-MVP).
+# When the domain is live, swap the active lines with the commented ones below.
+TRACK_URL = "https://revue-io.fly.dev/usage/track"
+UPGRADE_URL = "https://revue-io.fly.dev/upgrade"
+# TRACK_URL = "https://api.revue.io/usage/track"
+# UPGRADE_URL = "https://revue.io/upgrade"
 
 
 # ---------------------------------------------------------------------------

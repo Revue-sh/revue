@@ -431,3 +431,49 @@ def test_cli_pr_description_file_missing_graceful(tmp_path, capsys):
     mock_pipeline.run.assert_called_once()
     # pr_description must be None — graceful degradation
     assert mock_pipeline.run.call_args.kwargs.get("pr_description") is None
+
+
+def test_cli_pr_context_built_when_description_file_and_pr_id_both_passed(tmp_path):
+    """PRContext is not None when --pr-description-file and --pr-id are both given.
+
+    Regression test for the bug where the if-pr_description_file branch was taken
+    and resolved_pr_id was never set, causing pr_context=None and reply tracking
+    to silently skip. This is the exact CI invocation pattern (REVUE-112).
+    """
+    from unittest.mock import MagicMock, patch
+    from revue.cli import cmd_review, build_parser
+    from revue.core.models import PRContext
+
+    desc_file = tmp_path / "pr.txt"
+    desc_file.write_text("## Summary\nAdds reply tracking.\n")
+    diff_file = tmp_path / "pr.diff"
+    diff_file.write_text("diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n")
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "review", "--diff", str(diff_file),
+        "--platform", "bitbucket",
+        "--pr-id", "43",
+        "--workspace", "cbscd",
+        "--repo-slug", "revue",
+        "--pr-description-file", str(desc_file),
+    ])
+
+    mock_pipeline = MagicMock()
+    mock_cfg = _make_mock_pipeline_ctx(mock_pipeline)
+
+    with patch("revue.cli.load_config", return_value=mock_cfg), \
+         patch("revue.cli.validate_config", return_value=[]), \
+         patch("revue.cli.ReviewPipeline", return_value=mock_pipeline):
+        cmd_review(args)
+
+    call_kwargs = mock_pipeline.run.call_args.kwargs
+    pr_context = call_kwargs.get("pr_context")
+    assert pr_context is not None, (
+        "pr_context must not be None when --pr-id and --pr-description-file are both passed"
+    )
+    assert isinstance(pr_context, PRContext)
+    assert pr_context.platform == "bitbucket"
+    assert pr_context.pr_number == 43
+    assert pr_context.repo_owner == "cbscd"
+    assert pr_context.repo_name == "revue"

@@ -20,7 +20,7 @@ from .ai_client import AIClient, create_ai_client
 from .diff_parser import parse_diff_file, filter_changes
 from .diff_limit import check_diff_limit, DiffLimitResult
 from .license_validator import LicenseInfo, validate as validate_license
-from .models import FileChange
+from .models import FileChange, PRContext
 from .pr_description_adapter import PRDescription
 from .pr_context import PRContextExtractor
 from .pattern_injection import inject_patterns
@@ -377,6 +377,7 @@ class ReviewPipeline:
         self,
         diff_path: str,
         pr_description: Optional[PRDescription] = None,
+        pr_context: Optional[PRContext] = None,
     ) -> tuple[list[ReviewResult], list[FileChange], int]:
         """Returns (results, excluded_files, files_reviewed_count).
 
@@ -394,6 +395,11 @@ class ReviewPipeline:
                 paid tiers, each agent receives a filtered context snippet
                 containing only the sections relevant to its domain
                 (REVUE-84 — ~40-60% token savings vs. naive full-description).
+            pr_context: Optional VCS context (platform, pr_number, repo_owner,
+                repo_name, repo_path). When provided for Bitbucket, won't-fix
+                reply tracking is invoked after the findings phase (REVUE-112).
+                Use PRContext to extend with new metadata without changing this
+                signature (OCP).
         """
         # --- License validation ---
         print("[revue] Validating license key...", flush=True)
@@ -409,6 +415,42 @@ class ReviewPipeline:
             flush=True,
         )
         print(f"[revue] Active agents: {', '.join(agents_allowed)}", flush=True)
+
+        # ── Won't-fix classify phase (REVUE-112 Phase 2, AC16) ───────────────
+        # classify() is zero side-effects and must run BEFORE diff parsing so
+        # that new allowed/disallowed patterns are in memory when agents execute.
+        wont_fix_svc = None
+        classification = None
+        if pr_context is not None and pr_context.platform == "bitbucket":
+            wont_fix_svc = self._build_wont_fix_svc(pr_context)
+            if wont_fix_svc is not None:
+                print(
+                    f"[revue]   💬 Won't-fix classify: PR #{pr_context.pr_number} "
+                    f"({pr_context.repo_owner}/{pr_context.repo_name})",
+                    flush=True,
+                )
+                classification = wont_fix_svc.classify(pr_context.pr_number)
+                print(
+                    f"[revue]   💬 Won't-fix classify result: "
+                    f"{len(classification.decisions)} decision(s), "
+                    f"{len(classification.state_updates)} state update(s), "
+                    f"{len(classification.patterns_to_allow)} pattern(s) to allow.",
+                    flush=True,
+                )
+                # Patch config in-memory — no file write (AC17)
+                if classification.patterns_to_allow:
+                    self.config.allowed_patterns = list(
+                        getattr(self.config, "allowed_patterns", None) or []
+                    ) + classification.patterns_to_allow
+                if classification.patterns_to_disallow:
+                    self.config.disallowed_patterns = list(
+                        getattr(self.config, "disallowed_patterns", None) or []
+                    ) + classification.patterns_to_disallow
+                # Apply state updates before diff parse (AC18).
+                # Delegates to wont_fix_svc — pipeline.py must not import
+                # CommentState (comments layer belongs to comments, not core).
+                if classification.state_updates:
+                    wont_fix_svc.apply_state_updates(classification, pr_context.pr_number)
 
         # ── Step 1: Diff parsing ──────────────────────────────────────────────
         print("[revue] ── Step 1/4: Parsing diff", flush=True)
@@ -476,7 +518,75 @@ class ReviewPipeline:
                 duration_ms=duration_ms,
             )
 
+        # ── Won't-fix respond phase (REVUE-112 Phase 2, AC16) ────────────────
+        # respond() contains all I/O: lessons PR, thread replies, store updates.
+        # Runs after verdict — never before agents (RFC step 6, AC11).
+        if wont_fix_svc is not None and classification is not None:
+            total_threads = len(classification.decisions)
+            if total_threads == 0:
+                print("[revue]   💬 Won't-fix reply tracking: no developer replies found.", flush=True)
+            else:
+                print(
+                    f"[revue]   💬 Won't-fix reply tracking: {total_threads} thread(s) with replies — responding...",
+                    flush=True,
+                )
+                try:
+                    wont_fix_svc.respond(classification, pr_context.pr_number)
+                except Exception as exc:
+                    print(
+                        f"[revue]   ⚠ Won't-fix reply tracking failed: {exc}",
+                        flush=True,
+                    )
+                    _log.exception(
+                        "[REVUE-112] respond() failed for PR #%d",
+                        pr_context.pr_number,
+                    )
+                    # Degrade gracefully — won't-fix posting failed but review is complete.
+                resolved = len(classification.state_updates)
+                reason_missing = sum(
+                    1 for d in classification.decisions if d.get("decision") == "reason_missing"
+                )
+                not_acked = sum(
+                    1 for d in classification.decisions if d.get("decision") == "not_acknowledged"
+                )
+                parts = []
+                if resolved:
+                    parts.append(f"{resolved} resolved (won't-fix)")
+                if reason_missing:
+                    parts.append(f"{reason_missing} awaiting reason")
+                if not_acked:
+                    parts.append(f"{not_acked} reaffirmed")
+                summary = ", ".join(parts) if parts else "no state changes"
+                print(f"[revue]   💬 Won't-fix reply tracking complete — {summary}.", flush=True)
+
         return results, excluded, len(included), failed_agents
+
+    def _build_wont_fix_svc(self, pr_context: "PRContext") -> Optional["WontFixReplyService"]:
+        """Construct WontFixReplyService from env vars and pr_context.
+
+        Returns None (with a warning) if credentials are not set, so callers
+        can skip both classify and respond phases cleanly (AC20).
+        """
+        import os
+        from revue.comments.service import WontFixReplyService
+
+        bb_user = os.environ.get("BITBUCKET_USERNAME", "")
+        bb_password = os.environ.get("BITBUCKET_API_TOKEN", "")
+        if not bb_user or not bb_password:
+            print(
+                "[revue]   ⚠ Won't-fix reply tracking skipped — "
+                "BITBUCKET_USERNAME / BITBUCKET_API_TOKEN not set.",
+                flush=True,
+            )
+            return None
+        return WontFixReplyService(
+            repo_path=pr_context.repo_path,
+            ai_client=self._client,
+            bitbucket_username=bb_user,
+            bitbucket_app_password=bb_password,
+            repo_owner=pr_context.repo_owner,
+            repo_name=pr_context.repo_name,
+        )
 
     # ------------------------------------------------------------------
     # Review paths

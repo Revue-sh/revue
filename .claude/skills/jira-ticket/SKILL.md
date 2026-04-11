@@ -1,5 +1,6 @@
 ---
 name: jira-ticket
+model: haiku
 description: Fetch, list, search, and transition Jira tickets for the REVUE project. Use when the user asks to read a Jira ticket, search issues, check status, or transition a ticket. Invoked as /jira-ticket [KEY|search query|transition KEY status].
 allowed-tools: Bash
 ---
