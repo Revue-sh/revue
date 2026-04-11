@@ -16,6 +16,12 @@ cd src && PYTHONPATH=$(pwd) pytest revue/tests/core/test_pipeline.py -v
 cd src && PYTHONPATH=$(pwd) pytest revue/tests/core/test_pipeline.py::test_name -v
 ```
 
+### Pull requests
+
+Every PR **must** use `.bitbucket/pull_request_template.md` — fill in every section, no placeholders left blank. See `docs/PR_TEMPLATE_GUIDE.md` for guidance.
+
+Commit and PR title format: `type(scope)[REVUE-XX]: description`
+
 ### CI reproduction (from bitbucket-pipelines.yml)
 ```bash
 pip install openai anthropic httpx pyyaml tomli-w pytest --quiet

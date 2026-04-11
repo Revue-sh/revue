@@ -985,6 +985,60 @@ def test_respond_skips_already_handled_decision(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# TC25: respond() posts reply and resolves thread for acknowledged_fixed
+# ---------------------------------------------------------------------------
+
+def test_respond_acknowledged_fixed_posts_reply_and_resolves(tmp_path) -> None:
+    """TC25: when Nova classifies a reply as acknowledged_fixed, respond() must
+    post a reply and resolve the thread — the developer indicated they fixed it."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    store = PerPRCommentStore(tmp_path)
+    store.save_finding("bitbucket", 42, "a.py", "fp0001", "101", 5, "Finding A")
+
+    result = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[{"fingerprint": "fp0001", "file_path": "a.py", "decision": "acknowledged_fixed"}],
+        decisions=[{
+            "fingerprint": "fp0001",
+            "decision": "acknowledged_fixed",
+            "reply_draft": "Thanks — fix confirmed. Resolving this thread.",
+        }],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            {
+                "id": 101,
+                "inline": {"path": "a.py", "to": 5},
+                "content": {"raw": "**🟡 [MEDIUM] Finding A\n*Code Quality*"},
+            },
+            {
+                "id": 201,
+                "parent": {"id": 101},
+                "content": {"raw": "Fixed in d4668d3"},
+            },
+        ]
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path),
+            ai_client=MagicMock(),
+            bitbucket_username="u",
+            bitbucket_app_password="p",
+            repo_owner="ws",
+            repo_name="repo",
+        )
+        svc.respond(result, 42)
+
+    instance.post_reply.assert_called_once()
+    instance.resolve_comment.assert_called_once_with("ws", "repo", 42, "101")
+    unresolved = store.get_unresolved_fingerprints("bitbucket", 42)
+    assert "fp0001" not in unresolved
+
+
+# ---------------------------------------------------------------------------
 # TC24: classify() skips already-resolved Bitbucket threads
 # ---------------------------------------------------------------------------
 

@@ -1,7 +1,7 @@
 ---
 name: jira-ticket
 model: haiku
-description: Fetch, list, search, and transition Jira tickets for the REVUE project. Use when the user asks to read a Jira ticket, search issues, check status, or transition a ticket. Invoked as /jira-ticket [KEY|search query|transition KEY status].
+description: Fetch, list, search, create, and transition Jira tickets for the REVUE project. Use when the user asks to read, create, search, or transition a Jira ticket. Invoked as /jira-ticket [KEY|search query|transition KEY status|create ...].
 allowed-tools: Bash
 ---
 
@@ -15,6 +15,7 @@ Access Jira tickets for the revue.io project via the Atlassian REST API.
 - Search endpoint: `POST /rest/api/3/search/jql`
 - Issue endpoint: `GET /rest/api/3/issue/{key}`
 - Transition endpoint: `POST /rest/api/3/issue/{key}/transitions`
+- **Create endpoint: `POST /rest/api/2/issue`** ← v2 only; v3 returns 404 on POST
 
 Always `source ~/.zshenv` before any curl call.
 
@@ -112,6 +113,39 @@ source ~/.zshenv && curl -s -o /dev/null -w "%{http_code}" \
 
 A `204` response means success. Confirm to the user.
 
-### 4. No argument
+### 4. Create a ticket (e.g. `/jira-ticket create story: "summary" — description`)
+
+**Use v2 — v3 returns 404 on POST.** Valid issue type IDs for REVUE: `10112` (Task), `10113` (Epic).
+
+```bash
+source ~/.zshenv && curl -s -X POST \
+  -u "dsanchezcisneros@gmail.com:${JIRA_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fields": {
+      "project": {"key": "REVUE"},
+      "issuetype": {"id": "10112"},
+      "summary": "Your summary here",
+      "description": "Plain text description",
+      "labels": ["tech-debt"]
+    }
+  }' \
+  "https://urukia.atlassian.net/rest/api/2/issue" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+if 'key' in d:
+    print(f'Created: {d[\"key\"]}')
+    print(f'URL: https://urukia.atlassian.net/browse/{d[\"key\"]}')
+else:
+    print('ERROR:', d)
+"
+```
+
+Notes:
+- `description` is plain text in v2 (not Atlassian Document Format)
+- `labels` is optional — use `["tech-debt"]` for debt items
+- Omit `labels` if not needed
+
+### 5. No argument
 
 List all open REVUE tickets (To Do + In Progress), grouped by status, most recently updated first.

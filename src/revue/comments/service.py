@@ -651,6 +651,45 @@ class WontFixReplyService:
                         comment_id, dec, pr_number,
                     )
 
+            elif dec == "acknowledged_fixed":
+                # Developer fixed the code — post acknowledgment and resolve the thread
+                self._store.mark_resolved(
+                    "bitbucket",
+                    pr_number,
+                    file_path,
+                    fingerprint_val,
+                    CommentState.RESOLVED,
+                    reason="acknowledged_fixed",
+                )
+                try:
+                    self._adapter.post_reply(
+                        self._repo_owner,
+                        self._repo_name,
+                        pr_number,
+                        comment_id,
+                        None,
+                        reply_draft,
+                    )
+                    print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
+                except Exception:
+                    _log.exception(
+                        "[REVUE-112] post_reply failed for comment %s (decision=%s) on PR #%d",
+                        comment_id, dec, pr_number,
+                    )
+                try:
+                    self._adapter.resolve_comment(
+                        self._repo_owner,
+                        self._repo_name,
+                        pr_number,
+                        comment_id,
+                    )
+                    print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
+                except Exception:
+                    _log.exception(
+                        "[REVUE-112] resolve_comment failed for comment %s (decision=%s) on PR #%d",
+                        comment_id, dec, pr_number,
+                    )
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

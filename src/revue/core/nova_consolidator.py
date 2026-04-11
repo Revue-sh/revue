@@ -41,6 +41,10 @@ For each thread, determine ONE of these decisions:
 - **not_acknowledged**: The developer has not addressed the finding at all,
   or the reply is unrelated to the finding.
 
+- **acknowledged_fixed**: The developer has replied stating they fixed the
+  code (e.g. "Fixed in commit X", "Done", "Addressed"). The finding is
+  resolved by a code change rather than a policy decision.
+
 - **already_handled**: The thread already contains a bot acknowledgment reply
   from a previous review cycle. Indicators: a reply mentions "Lessons PR",
   "reaffirming this finding", "could you explain", or otherwise reads as an
@@ -56,15 +60,17 @@ Tone guidance for reply_draft:
 - For allowed_pattern or disallowed_pattern: note that a lessons PR will be
   opened so the team can learn from this decision (use placeholder
   "[LESSONS_PR_URL]" — the actual URL will be filled in by the service layer)
+- For acknowledged_fixed: brief acknowledgment that the fix is confirmed
 
 Output ONLY a JSON array. Each element must have these fields:
   fingerprint    (string — copy from input)
-  decision       (one of the five values above)
+  decision       (one of the six values above)
   reply_draft    (string — the reply to post; empty string "" for already_handled)
   pattern        (string — present only for allowed_pattern or disallowed_pattern)
   rationale      (string — present only for allowed_pattern or disallowed_pattern)
 
-Do not include pattern or rationale for reason_missing, not_acknowledged, or already_handled.
+Do not include pattern or rationale for reason_missing, not_acknowledged,
+acknowledged_fixed, or already_handled.
 """
 
 
