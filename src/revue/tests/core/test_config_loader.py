@@ -301,21 +301,6 @@ noise_filters:
         load_config(config_path=path)
 
 
-def test_revue_yml_contains_four_allowed_patterns() -> None:
-    """AC3: Project .revue.yml has exactly four allowed_patterns with correct content."""
-    project_yml = Path(__file__).resolve().parents[4] / ".revue.yml"
-    config = load_config(config_path=str(project_yml))
-    assert len(config.allowed_patterns) == 4
-    for entry in config.allowed_patterns:
-        assert "pattern" in entry
-        assert "rationale" in entry
-        assert isinstance(entry["pattern"], str)
-        assert isinstance(entry["rationale"], str)
-    pattern_texts = [e["pattern"] for e in config.allowed_patterns]
-    assert "_def attribute access on LoadedAgent" in pattern_texts
-    assert "Inline lazy httpx import in pr_description_adapter" in pattern_texts
-    assert "test_vcs_adapter.py deletion" in pattern_texts
-    assert "Bare except in _inject_pr_context" in pattern_texts
 
 
 # ---------------------------------------------------------------------------

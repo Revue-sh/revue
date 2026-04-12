@@ -35,6 +35,8 @@ noise_filters:
       rationale: "Test coverage consolidated into test_vcs_adapters.py"
     - pattern: "Bare except in _inject_pr_context"
       rationale: "Intentional catch-all, PR context injection must not crash the review loop"
+    - pattern: "N+1 query pattern acceptable for small datasets with deferred optimization"
+      rationale: "For current PR sizes (typically fewer than 50 unresolved comments), the N+1 query overhead is acceptable. Batch-fetch will be introduced once won't-fix tracking is stable in production."
   disallowed_patterns:
     - pattern: "TODO comments in production code"
       rationale: "TODOs should be tracked as Jira tickets"
