@@ -4,6 +4,32 @@ Revue.io is configured via a `.revue.yml` file in the project root. All keys are
 
 For the full schema reference, see [revue-yml-reference.md](revue-yml-reference.md).
 
+## Star-Rating Formula (`rating`)
+
+The `rating` section controls how findings translate into the 1–5 star score shown in every PR summary comment.
+
+Each finding severity has a configurable weight. The score starts at 5.0 and each finding subtracts its penalty:
+
+```
+score = 5.0 − (high × w_high + medium × w_medium + low × w_low + info × w_info)
+```
+
+The result is clamped to `[floor, 5.0]`.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `weights.high` | `1.5` | Penalty per HIGH finding |
+| `weights.medium` | `0.3` | Penalty per MEDIUM finding |
+| `weights.low` | `0.05` | Penalty per LOW finding |
+| `weights.info` | `0.0` | Penalty per INFO finding |
+| `floor` | `1.0` | Minimum possible score |
+
+`revue init` pre-fills this section with the defaults above. Adjust weights to match your team's standards — a strict team might raise `medium` to `1.0`, a lenient team might lower `high` to `0.5`.
+
+For the full reference and team-specific examples, see [revue-yml-reference.md — rating](revue-yml-reference.md#rating).
+
+---
+
 ## Pattern Configuration (`noise_filters`)
 
 The `noise_filters` section controls false-positive suppression. Two pattern lists let you teach the reviewer about intentional design decisions:

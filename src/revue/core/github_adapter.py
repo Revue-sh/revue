@@ -222,6 +222,41 @@ class GitHubAdapter:
             logger.error("get_existing_comments failed for PR %d: %s", pr_id, exc)
             return []
 
+    def get_issue_comments(self, pr_id: int) -> list[dict]:
+        """Return issue-level PR comments (e.g. the Revue summary comment).
+
+        These live at /issues/{pr_id}/comments, separate from inline review
+        comments returned by get_existing_comments().
+        Returns empty list on any error.
+        """
+        try:
+            return self._request(
+                "GET", f"/repos/{self._repo}/issues/{pr_id}/comments"
+            )
+        except Exception as exc:
+            logger.error("get_issue_comments failed for PR %d: %s", pr_id, exc)
+            return []
+
+    def _graphql(self, query: str, variables: dict) -> dict:
+        """Execute a GraphQL query/mutation against the GitHub API."""
+        data = json.dumps({"query": query, "variables": variables}).encode()
+        headers = {**self._headers(), "Content-Type": "application/json"}
+        req = urllib.request.Request(
+            "https://api.github.com/graphql",
+            data=data,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                result = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode()
+            raise RuntimeError(f"GraphQL HTTP error {exc.code}: {exc.reason} — {body}") from exc
+        if "errors" in result:
+            raise RuntimeError(f"GraphQL error: {result['errors']}")
+        return result
+
     def resolve_position(
         self, file_path: str, line_number: int, diff: str
     ) -> DiffPosition:
@@ -313,16 +348,13 @@ class GitHubAdapter:
     ) -> bool:
         """Resolve a GitHub review comment thread.
 
-        GitHub has native thread resolution via the Discussions API:
-        PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}
-        with { "resolved": true }
-
-        Optionally posts a reply before resolving (for context).
+        Posts an optional reply then resolves the thread via the GraphQL
+        resolveReviewThread mutation (the REST API has no resolution endpoint).
 
         Args:
-            pr_id:       Pull request ID (unused for resolution, kept for protocol compliance).
-            comment_id:  The GitHub review comment ID.
-            reply_body:  Optional reply message before resolving.
+            pr_id:       Pull request number.
+            comment_id:  The GitHub review comment ID (numeric string).
+            reply_body:  Optional reply message to post before resolving.
 
         Returns:
             True on success, False on error.
@@ -336,20 +368,71 @@ class GitHubAdapter:
                     {"body": reply_body},
                 )
             except Exception as exc:
-                logger.warning("resolve_inline_comment: reply failed for PR %d comment %s: %s", pr_id, comment_id, exc)
+                logger.warning(
+                    "resolve_inline_comment: reply failed for PR %d comment %s: %s",
+                    pr_id, comment_id, exc,
+                )
                 # Continue to resolve even if reply fails
 
-        # Resolve the thread
+        # Resolve the thread via GraphQL (REST PATCH /resolved is not a GitHub API)
         try:
-            self._request(
-                "PATCH",
-                f"/repos/{self._repo}/pulls/comments/{comment_id}",
-                {"resolved": True},
+            owner, name = self._repo.split("/", 1)
+            threads_query = """
+            query($owner: String!, $name: String!, $pr: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $pr) {
+                  reviewThreads(first: 100) {
+                    nodes {
+                      id
+                      comments(first: 1) {
+                        nodes { databaseId }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """
+            data = self._graphql(threads_query, {"owner": owner, "name": name, "pr": pr_id})
+            review_threads = (
+                data.get("data", {}).get("repository", {})
+                .get("pullRequest", {}).get("reviewThreads", {}).get("nodes", [])
             )
-            logger.info("Resolved comment thread %s on PR %d", comment_id, pr_id)
-            return True
+            thread_id = None
+            for t in review_threads:
+                first_comment = t.get("comments", {}).get("nodes", [{}])[0]
+                db_id = first_comment.get("databaseId")
+                if db_id and str(db_id) == str(comment_id):
+                    thread_id = t["id"]
+                    break
+
+            if not thread_id:
+                logger.warning(
+                    "resolve_inline_comment: no thread found for comment %s on PR %d",
+                    comment_id, pr_id,
+                )
+                return False
+
+            resolve_mutation = """
+            mutation($threadId: ID!) {
+              resolveReviewThread(input: {threadId: $threadId}) {
+                thread { isResolved }
+              }
+            }
+            """
+            result = self._graphql(resolve_mutation, {"threadId": thread_id})
+            resolved = (
+                result.get("data", {}).get("resolveReviewThread", {})
+                .get("thread", {}).get("isResolved", False)
+            )
+            if resolved:
+                logger.info("Resolved comment thread %s on PR %d", comment_id, pr_id)
+            return resolved
         except Exception as exc:
-            logger.warning("resolve_inline_comment failed for PR %d comment %s: %s", pr_id, comment_id, exc)
+            logger.warning(
+                "resolve_inline_comment failed for PR %d comment %s: %s",
+                pr_id, comment_id, exc,
+            )
             return False
 
     @staticmethod

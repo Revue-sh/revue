@@ -400,6 +400,26 @@ def test_resolve_comment_graceful_fallback_when_thread_not_found() -> None:
 # REVUE-119 T5: GitHubAdapter.get_pr_template()
 # ---------------------------------------------------------------------------
 
+def test_github_adapter_post_reply_uses_pr_number_in_url() -> None:
+    """post_reply must include pr_number in URL — /pulls/{pr}/comments/{id}/replies."""
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    gh = GitHubAdapter("ghp_tok")
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = {"id": 999}
+
+    with patch("httpx.post", return_value=mock_resp) as mock_post:
+        result = gh.post_reply("owner", "repo", 42, "101", None, "Acknowledged.")
+
+    assert result == "999"
+    called_url = mock_post.call_args[0][0]
+    assert "/pulls/42/comments/101/replies" in called_url, (
+        f"URL missing pr_number: {called_url}"
+    )
+
+
 def test_github_adapter_get_pr_template_primary_path() -> None:
     """T5.1: get_pr_template returns decoded content from .github/ path."""
     from revue.comments.platform_adapter import GitHubAdapter

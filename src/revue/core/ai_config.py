@@ -68,6 +68,12 @@ class AIConfig:
     
     # Feature flags (configurable via .revue.yml)
     preserve_comment_threads: bool = False  # REVUE-104: preserve inline comment threads across commits
+    show_reviewed_files: bool = True  # REVUE-134: show/hide reviewed-files list in summary
+
+    # Rating formula weights (configurable via .revue.yml `rating:` section)
+    rating_weights: dict = field(default_factory=lambda: {
+        "high": 1.5, "medium": 0.3, "low": 0.05, "info": 0.0, "floor": 1.0,
+    })
 
     def __repr__(self) -> str:
         masked_key = '***' if self.api_key else ''

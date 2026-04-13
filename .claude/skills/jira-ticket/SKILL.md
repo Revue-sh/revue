@@ -119,7 +119,7 @@ A `204` response means success. Confirm to the user.
 
 ```bash
 source ~/.zshenv && curl -s -X POST \
-  -u "dsanchezcisneros@gmail.com:${JIRA_API_TOKEN}" \
+  -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "fields": {

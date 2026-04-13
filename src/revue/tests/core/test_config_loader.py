@@ -356,3 +356,14 @@ def test_validate_config_max_parallel_agents_too_high() -> None:
     config.max_parallel_agents = 11
     errors = validate_config(config)
     assert any("max_parallel_agents" in e for e in errors)
+
+
+def test_load_config_parses_show_reviewed_files_false(tmp_path) -> None:
+    """REVUE-134: features.show_reviewed_files: false is parsed into AIConfig."""
+    cfg_file = tmp_path / ".revue.yml"
+    cfg_file.write_text(
+        'version: "1"\nfeatures:\n  show_reviewed_files: false\n'
+    )
+    from revue.core.config_loader import load_config
+    config = load_config(config_path=str(cfg_file))
+    assert config.show_reviewed_files is False

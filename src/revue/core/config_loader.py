@@ -72,6 +72,15 @@ review:
 
 features:
   preserve_comment_threads: false  # Preserve conversation threads across commits (experimental)
+  show_reviewed_files: true        # Show the list of reviewed files in the summary comment
+
+rating:
+  weights:
+    high:   1.5   # penalty per HIGH finding
+    medium: 0.3   # penalty per MEDIUM finding
+    low:    0.05  # penalty per LOW finding
+    info:   0.0   # INFO findings do not affect the score
+  floor: 1.0      # minimum possible score regardless of finding count
 
 output:
   comment_style: per-issue      # "per-issue" = one inline comment per finding (default)
@@ -172,6 +181,18 @@ def load_config(
     if "disallowed_patterns" in nf:
         config.disallowed_patterns = _validate_patterns(nf["disallowed_patterns"], "disallowed_patterns", config_path)  # type: ignore[arg-type]
 
+    # --- rating section ---
+    rating: dict[str, object] = raw.get("rating", {}) or {}  # type: ignore[assignment]
+    if rating:
+        weights: dict[str, object] = rating.get("weights", {}) or {}  # type: ignore[assignment]
+        rw = dict(config.rating_weights)
+        for key in ("high", "medium", "low", "info"):
+            if key in weights:
+                rw[key] = float(weights[key])  # type: ignore[arg-type]
+        if "floor" in rating:
+            rw["floor"] = float(rating["floor"])  # type: ignore[arg-type]
+        config.rating_weights = rw
+
     # --- agents section ---
     agents: dict[str, object] = raw.get("agents", {}) or {}  # type: ignore[assignment]
     _set_if(config, "agents_team", agents, "team")
@@ -181,6 +202,8 @@ def load_config(
     features: dict[str, object] = raw.get("features", {}) or {}  # type: ignore[assignment]
     if "preserve_comment_threads" in features:
         config.preserve_comment_threads = bool(features["preserve_comment_threads"])
+    if "show_reviewed_files" in features:
+        config.show_reviewed_files = bool(features["show_reviewed_files"])
 
     # --- output section ---
     output: dict[str, object] = raw.get("output", {}) or {}  # type: ignore[assignment]

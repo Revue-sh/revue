@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Callable, Optional
@@ -386,12 +387,30 @@ _CATEGORY_CLEAN_LABELS = {
 }
 
 
-def _star_rating(total: int, high: int, medium: int) -> str:
-    """Return a star rating string (1–5) based on finding severity counts."""
+def _star_rating(
+    total: int,
+    high: int,
+    medium: int,
+    low: int = 0,
+    info: int = 0,
+    rating_cfg: dict | None = None,
+) -> str:
+    """Return a star rating string (1–5) based on finding severity counts.
+
+    Weights and floor are read from *rating_cfg* (the ``rating:`` section of
+    .revue.yml).  When *rating_cfg* is None the built-in defaults apply so
+    behaviour is unchanged for callers that don't pass the config.
+    """
     if total == 0:
         return "⭐⭐⭐⭐⭐ 5.0/5.0"
-    score = 5.0 - (high * 1.5 + medium * 0.5)
-    score = max(1.0, min(5.0, score))
+    cfg = rating_cfg or {}
+    w_high   = float(cfg.get("high",   1.5))
+    w_medium = float(cfg.get("medium", 0.3))
+    w_low    = float(cfg.get("low",    0.05))
+    w_info   = float(cfg.get("info",   0.0))
+    floor    = float(cfg.get("floor",  1.0))
+    score = 5.0 - (high * w_high + medium * w_medium + low * w_low + info * w_info)
+    score = max(floor, min(5.0, score))
     full = int(score)
     half = 1 if (score - full) >= 0.5 else 0
     empty = 5 - full - half
@@ -405,6 +424,8 @@ def _build_enhanced_summary(
     revision: int,
     last_updated_at: str,
     fallback_mode: str = "normal",
+    show_reviewed_files: bool = True,
+    rating_cfg: dict | None = None,
 ) -> str:
     """Build the rich REVUE-97 summary comment body (AC1–AC7).
 
@@ -419,6 +440,8 @@ def _build_enhanced_summary(
     total = sum(total_findings.values())
     high = total_findings.get("high", 0)
     medium = total_findings.get("medium", 0)
+    low = total_findings.get("low", 0)
+    info = total_findings.get("info", 0)
 
     # AC1: verdict + star rating
     if total == 0:
@@ -431,7 +454,7 @@ def _build_enhanced_summary(
         verdict_icon = "⚠️"
         verdict_text = f"{total} issue{'s' if total != 1 else ''} found"
 
-    stars = _star_rating(total, high, medium)
+    stars = _star_rating(total, high, medium, low, info, rating_cfg)
 
     lines = [
         f"## 🤖 Revue.io — Code Review (Review #{revision})",
@@ -485,12 +508,14 @@ def _build_enhanced_summary(
             lines.append(f"- ⚠️ **{display_label}:** {sev_parts}")
     lines.append("")
 
-    # AC3: files reviewed
-    reviewed_files = [rr for rr in review_results if not rr.error and rr.response]
-    lines.append(f"### Files Reviewed ({len(reviewed_files)})")
-    for rr in reviewed_files:
-        lines.append(f"- `{rr.file_path}`")
-    lines.append("")
+    # AC3: files reviewed (REVUE-134: dedup by path; honour show_reviewed_files flag)
+    if show_reviewed_files:
+        reviewed_files = [rr for rr in review_results if not rr.error and rr.response]
+        unique_paths = list(dict.fromkeys(rr.file_path for rr in reviewed_files))
+        lines.append(f"### Files Reviewed ({len(unique_paths)})")
+        for path in unique_paths:
+            lines.append(f"- `{path}`")
+        lines.append("")
 
     # AC1 / AC4: findings summary
     if total == 0:
@@ -625,52 +650,61 @@ def _format_file_review(file_path: str, response: str) -> str:
     return "\n".join(lines)
 
 
+# Compiled once at module level — used by fingerprint scanning helpers below.
+_FP_SENTINEL_RE = re.compile(r'\[//\]: # \(revue:fp:([a-f0-9]+)\)')
+_FINDING_HEADER_RE = re.compile(r'^\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]')
+
+
+def _apply_sentinel_strategy(body: str, comment_id_str: str, result: dict) -> None:
+    """Strategy 1: extract a sentinel-embedded fingerprint from a comment body.
+
+    Each Revue finding comment written by REVUE-119+ code contains
+    ``[//]: # (revue:fp:{hash})`` — extract and record it so fresh-CI
+    runs can skip re-posting the same finding.
+    """
+    m = _FP_SENTINEL_RE.search(body)
+    if m:
+        result[m.group(1)] = {"platform_comment_id": comment_id_str, "file_path": ""}
+
+
+def _apply_location_strategy(c: dict, body: str, comment_id_str: str, result: dict, gen_fp) -> None:
+    """Strategy 2: derive a location-based fingerprint from inline comment metadata.
+
+    Uses ``file_path + line`` only (no diff context) so it matches findings
+    computed by ``gen_fingerprint(file, line, "")`` — covers older comments
+    that pre-date the sentinel scheme.
+    """
+    inline = c.get("inline") or {}
+    if not inline or not _FINDING_HEADER_RE.match(body):
+        return
+    file_path = inline.get("path", "")
+    line = inline.get("to") or 0
+    if file_path and line:
+        result[gen_fp(file_path, int(line), "")] = {
+            "platform_comment_id": comment_id_str,
+            "file_path": file_path,
+        }
+
+
 def _build_api_fingerprint_map(adapter, pr_num: int) -> dict[str, dict]:
     """Scan live PR comments for embedded fingerprint sentinels and location-based fingerprints.
 
-    Two discovery strategies (both run, results merged):
-    1. Sentinel-based: each Revue finding comment contains ``[//]: # (revue:fp:{hash})``
-       in its body — works on comments posted by REVUE-119+ code.
-    2. Location-based: derives fingerprint from ``file_path`` and ``line`` only
-       (no diff dependency) — covers older comments without a sentinel.
-
+    Runs both discovery strategies in a single pass over PR comments.
     Collecting these on startup makes deduplication work on fresh CI checkouts
     where the local ``.revue/`` store is empty.
 
     Returns ``{fingerprint: {"platform_comment_id": str, "file_path": str}}``
     so the result merges cleanly with ``PerPRCommentStore.get_unresolved_fingerprints``.
     """
-    import re as _re
     from revue.comments.fingerprint import fingerprint as gen_fingerprint
-    _FP_RE = _re.compile(r'\[//\]: # \(revue:fp:([a-f0-9]+)\)')
-    _FINDING_RE = _re.compile(r'^\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]')
     result: dict[str, dict] = {}
     try:
         comments = adapter.get_existing_comments(pr_id=pr_num)
         for c in comments:
             body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
             comment_id_str = str(c.get("id", ""))
-            # Strategy 1: sentinel embedded in body
-            m = _FP_RE.search(body)
-            if m:
-                result[m.group(1)] = {
-                    "platform_comment_id": comment_id_str,
-                    "file_path": "",
-                }
-            # Strategy 2: location-based (for comments without sentinel)
-            inline = c.get("inline") or {}
-            if not inline:
-                continue
-            if not _FINDING_RE.match(body):
-                continue
-            file_path = inline.get("path", "")
-            line = inline.get("to") or 0
-            if file_path and line:
-                fp = gen_fingerprint(file_path, int(line), "")
-                result[fp] = {
-                    "platform_comment_id": comment_id_str,
-                    "file_path": file_path,
-                }
+            _apply_sentinel_strategy(body, comment_id_str, result)
+            _apply_location_strategy(c, body, comment_id_str, result, gen_fingerprint)
     except Exception:
         pass
     return result
@@ -735,15 +769,17 @@ def _run_per_issue_dedup(
                 total_findings[sev] += 1
 
             fp = gen_fingerprint(rr.file_path, line, diff_content)
-            # Location-based fp (no diff) — matches API-derived fingerprints in
-            # _build_api_fingerprint_map which use inline.to without diff context.
-            fp_location = gen_fingerprint(rr.file_path, line, "")
             seen_hunk_fps.add(fp)
 
             # AC1/AC2: skip if already posted in a previous review cycle.
-            # merged_prior covers both local store (diff-based) and live API
-            # (sentinel and location-based) fingerprints — check all to handle any source.
-            if fp in merged_prior or fp_location in merged_prior:
+            # Check diff-based fp first (most precise); fall back to location-based
+            # fp (file+line only, no diff) which matches API-derived fingerprints
+            # from _apply_location_strategy that lack diff context.
+            if fp in merged_prior:
+                skipped += 1
+                continue
+            fp_location = gen_fingerprint(rr.file_path, line, "")
+            if fp_location in merged_prior:
                 skipped += 1
                 continue
 
@@ -830,6 +866,8 @@ def _post_to_platform(
     comment_style: str,
     pr_label: str = "PR",
     fallback_mode: str = "normal",
+    show_reviewed_files: bool = True,
+    rating_cfg: dict | None = None,
 ) -> None:
     """Shared posting logic for Bitbucket, GitHub, and GitLab (Winston #2).
 
@@ -872,10 +910,23 @@ def _post_to_platform(
     _REVUE_SUMMARY_MARKER = "## 🤖 Revue.io — Code Review"
 
     def _scan_for_existing_summary() -> Optional[str]:
-        """Scan live platform comments for a Revue summary, return its comment ID."""
+        """Scan live platform comments for a Revue summary, return its comment ID.
+
+        Checks issue-level comments first (GitHub summary lives there), then
+        falls back to all PR comments (Bitbucket/GitLab use a unified endpoint).
+        """
         try:
-            comments = adapter.get_existing_comments(pr_id=pr_num)
-            for c in comments:
+            # GitHub posts the summary as an issue comment (/issues/{id}/comments),
+            # not as a review comment (/pulls/{id}/comments).  Use get_issue_comments
+            # when available so we find the existing summary and update in-place.
+            get_issue_fn = getattr(adapter, "get_issue_comments", None)
+            if callable(get_issue_fn):
+                for c in get_issue_fn(pr_id=pr_num):
+                    body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
+                    if _REVUE_SUMMARY_MARKER in body:
+                        return str(c.get("id", ""))
+            # Fallback: covers Bitbucket/GitLab where summary is in general comments
+            for c in adapter.get_existing_comments(pr_id=pr_num):
                 body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
                 if _REVUE_SUMMARY_MARKER in body:
                     return str(c.get("id", ""))
@@ -964,6 +1015,8 @@ def _post_to_platform(
         summary_body = _build_enhanced_summary(
             review_results, total_findings, _revision, _last_updated,
             fallback_mode=fallback_mode,
+            show_reviewed_files=show_reviewed_files,
+            rating_cfg=rating_cfg,
         )
 
         # GitLab and Bitbucket show comments newest-first: post inline first,
@@ -1004,6 +1057,8 @@ def _post_to_platform(
         summary_body = _build_enhanced_summary(
             review_results, total_findings, _revision, _last_updated,
             fallback_mode=fallback_mode,
+            show_reviewed_files=show_reviewed_files,
+            rating_cfg=rating_cfg,
         )
         if file_sections:
             summary_body += "\n\n---\n\n" + "\n\n".join(file_sections)
@@ -1033,6 +1088,8 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=No
         print(f"Warning: Bitbucket posting skipped — missing: {', '.join(missing)}", file=sys.stderr)
         return
 
+    show_reviewed_files = getattr(config, "show_reviewed_files", True) if config else True
+    rating_cfg = getattr(config, "rating_weights", None) if config else None
     adapter = BitbucketAdapter(
         api_token=bb_token, username=bb_username,
         workspace=workspace, repo_slug=repo_slug,
@@ -1045,6 +1102,8 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=No
         review_results=review_results, diff_by_file=diff_by_file,
         comment_style=comment_style, pr_label="PR",
         fallback_mode=fallback_mode,
+        show_reviewed_files=show_reviewed_files,
+        rating_cfg=rating_cfg,
     )
 
 
@@ -1077,6 +1136,8 @@ def _post_to_github(args: argparse.Namespace, review_results: list, config=None,
         return
 
     repo_owner, repo_name = (repo.split("/", 1) + [""])[:2]
+    show_reviewed_files = getattr(config, "show_reviewed_files", True) if config else True
+    rating_cfg = getattr(config, "rating_weights", None) if config else None
     adapter = GitHubAdapter(token=token, repo=repo)
     diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
     _post_to_platform(
@@ -1086,6 +1147,8 @@ def _post_to_github(args: argparse.Namespace, review_results: list, config=None,
         review_results=review_results, diff_by_file=diff_by_file,
         comment_style=comment_style, pr_label="GitHub PR",
         fallback_mode=fallback_mode,
+        show_reviewed_files=show_reviewed_files,
+        rating_cfg=rating_cfg,
     )
 
 
@@ -1118,6 +1181,8 @@ def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None,
         return
 
     repo_owner, repo_name = (project_id.split("/", 1) + [""])[:2]
+    show_reviewed_files = getattr(config, "show_reviewed_files", True) if config else True
+    rating_cfg = getattr(config, "rating_weights", None) if config else None
     adapter = GitLabAdapter(token=token, project_id=project_id)
     diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
     _post_to_platform(
@@ -1127,6 +1192,8 @@ def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None,
         review_results=review_results, diff_by_file=diff_by_file,
         comment_style=comment_style, pr_label="GitLab MR",
         fallback_mode=fallback_mode,
+        show_reviewed_files=show_reviewed_files,
+        rating_cfg=rating_cfg,
     )
 
 

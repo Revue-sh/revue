@@ -273,7 +273,7 @@ def test_api_sentinel_deduplicates_on_fresh_ci(tmp_path) -> None:
 # TC_FRESH_CI: Empty local store + API sentinel → finding skipped (no re-post)
 # =====================================================================
 
-def test_api_sentinel_deduplicates_on_fresh_ci(tmp_path) -> None:
+def test_location_based_fingerprint_deduplicates_on_fresh_ci(tmp_path) -> None:
     """Fresh CI: local store is empty but the finding was already posted (detected
     via inline comment metadata).  post_review_comment must NOT be called again."""
     from revue.comments.fingerprint import fingerprint as fp_func

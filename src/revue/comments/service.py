@@ -623,13 +623,19 @@ class WontFixReplyService:
 
                 # (d) Resolve the thread — won't-fix is a closed decision
                 try:
-                    self._adapter.resolve_comment(
+                    ok = self._adapter.resolve_comment(
                         self._repo_owner,
                         self._repo_name,
                         pr_number,
                         comment_id,
                     )
-                    print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
+                    if ok:
+                        print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
+                    else:
+                        _log.warning(
+                            "[REVUE-112] resolve_comment returned False for comment %s (decision=%s) on PR #%d",
+                            comment_id, dec, pr_number,
+                        )
                 except Exception:
                     _log.exception(
                         "[REVUE-112] resolve_comment failed for comment %s (decision=%s) on PR #%d",
@@ -693,13 +699,19 @@ class WontFixReplyService:
                             comment_id, dec, pr_number,
                         )
                 try:
-                    self._adapter.resolve_comment(
+                    ok = self._adapter.resolve_comment(
                         self._repo_owner,
                         self._repo_name,
                         pr_number,
                         comment_id,
                     )
-                    print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
+                    if ok:
+                        print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
+                    else:
+                        _log.warning(
+                            "[REVUE-112] resolve_comment returned False for comment %s (decision=%s) on PR #%d",
+                            comment_id, dec, pr_number,
+                        )
                 except Exception:
                     _log.exception(
                         "[REVUE-112] resolve_comment failed for comment %s (decision=%s) on PR #%d",
@@ -732,13 +744,19 @@ class WontFixReplyService:
                         comment_id, dec, pr_number,
                     )
                 try:
-                    self._adapter.resolve_comment(
+                    ok = self._adapter.resolve_comment(
                         self._repo_owner,
                         self._repo_name,
                         pr_number,
                         comment_id,
                     )
-                    print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
+                    if ok:
+                        print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
+                    else:
+                        _log.warning(
+                            "[REVUE-112] resolve_comment returned False for comment %s (decision=%s) on PR #%d",
+                            comment_id, dec, pr_number,
+                        )
                 except Exception:
                     _log.exception(
                         "[REVUE-112] resolve_comment failed for comment %s (decision=%s) on PR #%d",

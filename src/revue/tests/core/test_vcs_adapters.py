@@ -446,6 +446,89 @@ def test_github_get_existing_comments() -> None:
     assert comments[1]["body"] == "Second comment"
 
 
+def test_github_get_issue_comments() -> None:
+    """get_issue_comments fetches from /issues/{pr_id}/comments, not /pulls/."""
+    body = json.dumps([{"id": 42, "body": "## 🤖 Revue.io — Code Review (Review #1)"}]).encode()
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+
+    with patch("urllib.request.urlopen", return_value=_make_resp(body)) as mock_open:
+        result = adapter.get_issue_comments(7)
+
+    assert len(result) == 1
+    assert result[0]["id"] == 42
+    called_url = mock_open.call_args[0][0].full_url
+    assert "/issues/7/comments" in called_url
+    assert "/pulls/" not in called_url
+
+
+def test_github_resolve_inline_comment_uses_graphql() -> None:
+    """resolve_inline_comment posts reply then resolves via GraphQL, not PATCH."""
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+
+    threads_resp = json.dumps({
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {
+                                "id": "PRRT_kwAB",
+                                "comments": {"nodes": [{"databaseId": 101}]},
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }).encode()
+    resolve_resp = json.dumps({
+        "data": {"resolveReviewThread": {"thread": {"isResolved": True}}}
+    }).encode()
+    reply_resp = json.dumps({"id": 999}).encode()
+
+    responses = [
+        _make_resp(reply_resp),   # POST reply
+        _make_resp(threads_resp), # GraphQL threads query
+        _make_resp(resolve_resp), # GraphQL resolve mutation
+    ]
+
+    with patch("urllib.request.urlopen", side_effect=responses):
+        result = adapter.resolve_inline_comment(4, "101", "Resolved.")
+
+    assert result is True
+
+
+def test_github_resolve_inline_comment_no_patch_endpoint() -> None:
+    """resolve_inline_comment must NOT call PATCH /pulls/comments/{id}."""
+    import urllib.request as _urllib_req
+
+    adapter = GitHubAdapter(token="tok", repo="org/repo")
+
+    threads_resp = json.dumps({
+        "data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}
+    }).encode()
+    reply_resp = json.dumps({"id": 1}).encode()
+
+    called_urls: list[str] = []
+
+    def _fake_urlopen(req):
+        called_urls.append(req.full_url)
+        if "graphql" in req.full_url:
+            return _make_resp(threads_resp)
+        return _make_resp(reply_resp)
+
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+        adapter.resolve_inline_comment(4, "101", "Resolved.")
+
+    patch_calls = [u for u in called_urls if "PATCH" in str(getattr(
+        [r for r in _urllib_req.Request.__mro__], 'method', '')) or "pulls/comments" in u and "replies" not in u]
+    # Simpler: no URL should be a PATCH to /pulls/comments without /replies
+    for url in called_urls:
+        assert not (url.endswith(f"/pulls/comments/101") and "graphql" not in url), (
+            f"Unexpected PATCH to REST resolve endpoint: {url}"
+        )
+
+
 # =====================================================================
 # GitLab — Story 13: get_diff, post_inline_comment, post_summary_comment,
 #                    get_existing_comments (discussions), renamed file
@@ -920,53 +1003,70 @@ def test_gitlab_set_review_status_api_error_returns_false() -> None:
 
 
 def test_github_resolve_inline_comment_patches_and_replies() -> None:
-    """resolve_inline_comment calls PATCH on /pulls/comments/{id} with resolved=True
-    and POSTs reply when reply_body is non-empty."""
+    """resolve_inline_comment POSTs reply then resolves via GraphQL (not PATCH)."""
     adapter = GitHubAdapter(token="tok", repo="org/repo")
-    calls = []
 
-    def mock_request(method, path, body=None):
-        calls.append((method, path, body))
-        return {}
+    threads_resp = json.dumps({
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {"id": "PRRT_abc", "comments": {"nodes": [{"databaseId": 55}]}}
+                        ]
+                    }
+                }
+            }
+        }
+    }).encode()
+    resolve_resp = json.dumps({
+        "data": {"resolveReviewThread": {"thread": {"isResolved": True}}}
+    }).encode()
+    reply_resp = json.dumps({"id": 999}).encode()
 
-    with patch.object(adapter, "_request", side_effect=mock_request):
-        result = adapter.resolve_inline_comment(
-            pr_id=10, comment_id="55", reply_body="Fixed!"
-        )
+    responses = [_make_resp(reply_resp), _make_resp(threads_resp), _make_resp(resolve_resp)]
+    with patch("urllib.request.urlopen", side_effect=responses) as mock_open:
+        result = adapter.resolve_inline_comment(pr_id=10, comment_id="55", reply_body="Fixed!")
 
     assert result is True
-    assert len(calls) == 2
-
-    # First call: POST reply
-    assert calls[0][0] == "POST"
-    assert "/pulls/10/comments/55/replies" in calls[0][1]
-    assert calls[0][2] == {"body": "Fixed!"}
-
-    # Second call: PATCH to resolve
-    assert calls[1][0] == "PATCH"
-    assert "/pulls/comments/55" in calls[1][1]
-    assert calls[1][2] == {"resolved": True}
+    # First call must be POST reply to /pulls/10/comments/55/replies
+    first_req = mock_open.call_args_list[0][0][0]
+    assert "/pulls/10/comments/55/replies" in first_req.full_url
+    assert first_req.method == "POST"
+    # Subsequent calls go to GraphQL
+    graphql_calls = [c[0][0] for c in mock_open.call_args_list[1:]]
+    assert all("graphql" in r.full_url for r in graphql_calls)
 
 
 def test_github_resolve_inline_comment_no_reply_body() -> None:
     """resolve_inline_comment skips reply POST when reply_body is empty."""
     adapter = GitHubAdapter(token="tok", repo="org/repo")
-    calls = []
 
-    def mock_request(method, path, body=None):
-        calls.append((method, path, body))
-        return {}
+    threads_resp = json.dumps({
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {"id": "PRRT_abc", "comments": {"nodes": [{"databaseId": 55}]}}
+                        ]
+                    }
+                }
+            }
+        }
+    }).encode()
+    resolve_resp = json.dumps({
+        "data": {"resolveReviewThread": {"thread": {"isResolved": True}}}
+    }).encode()
 
-    with patch.object(adapter, "_request", side_effect=mock_request):
-        result = adapter.resolve_inline_comment(
-            pr_id=10, comment_id="55", reply_body=""
-        )
+    responses = [_make_resp(threads_resp), _make_resp(resolve_resp)]
+    with patch("urllib.request.urlopen", side_effect=responses) as mock_open:
+        result = adapter.resolve_inline_comment(pr_id=10, comment_id="55", reply_body="")
 
     assert result is True
-    # Only the PATCH call, no reply
-    assert len(calls) == 1
-    assert calls[0][0] == "PATCH"
-    assert calls[0][2] == {"resolved": True}
+    # No reply POST — only 2 GraphQL calls
+    assert len(mock_open.call_args_list) == 2
+    assert all("graphql" in c[0][0].full_url for c in mock_open.call_args_list)
 
 
 def test_github_resolve_inline_comment_returns_false_on_error() -> None:

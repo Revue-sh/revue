@@ -13,6 +13,7 @@ Place `.revue.yml` in the root of your repository. If the file is absent, Revue 
 | `version` | string | **Yes** | Config schema version. Must be `"1"`. |
 | `ai` | object | No | AI provider settings. |
 | `review` | object | No | Review behaviour settings. |
+| `rating` | object | No | Star-rating formula weights. |
 | `noise_filters` | object | No | Noise filter settings. |
 | `agents` | object | No | Agent team and custom agent settings. |
 | `output` | object | No | Output format settings. |
@@ -120,6 +121,62 @@ review:
     - "test_*"
     - "*_test.*"
 ```
+
+---
+
+## `rating`
+
+Controls how findings are translated into the 1–5 star score shown in the PR summary comment.
+
+The score starts at **5.0** and a weighted penalty is subtracted for each finding. The result is clamped between `floor` and `5.0`.
+
+```
+score = 5.0 − (high × w_high + medium × w_medium + low × w_low + info × w_info)
+score = max(floor, min(5.0, score))
+```
+
+### `rating.weights`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `high` | float | `1.5` | Penalty subtracted per HIGH finding. |
+| `medium` | float | `0.3` | Penalty subtracted per MEDIUM finding. |
+| `low` | float | `0.05` | Penalty subtracted per LOW finding. |
+| `info` | float | `0.0` | Penalty subtracted per INFO finding (none by default). |
+| `floor` | float | `1.0` | Minimum possible score, regardless of finding count. Set to `0.0` to allow a score of zero. |
+
+### Examples
+
+```yaml
+# Default (balanced — typical projects)
+rating:
+  weights:
+    high:   1.5
+    medium: 0.3
+    low:    0.05
+    info:   0.0
+  floor: 1.0
+
+# Strict team — medium findings penalised as heavily as high
+rating:
+  weights:
+    high:   2.0
+    medium: 1.0
+    low:    0.2
+    info:   0.0
+  floor: 0.0
+
+# Lenient team — only high findings meaningfully affect the score
+rating:
+  weights:
+    high:   1.0
+    medium: 0.1
+    low:    0.0
+    info:   0.0
+  floor: 2.0
+```
+
+> **Note:** `revue init` pre-fills this section with the default weights. You can adjust the values without restarting — they are read fresh on each run.
 
 ---
 
@@ -248,6 +305,14 @@ review:
     - "*.min.js"
     - "node_modules/*"
     - "vendor/*"
+
+rating:
+  weights:
+    high:   1.5   # penalty per HIGH finding
+    medium: 0.3   # penalty per MEDIUM finding
+    low:    0.05  # penalty per LOW finding
+    info:   0.0   # INFO findings do not affect the score
+  floor: 1.0      # minimum possible score
 
 noise_filters:
   disable: []

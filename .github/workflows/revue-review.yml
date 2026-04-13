@@ -53,7 +53,7 @@ jobs:
           AI_PROVIDER: anthropic
           AI_MODEL: claude-sonnet-4-5-20250929
           REVUE_TIER_OVERRIDE: ${{ vars.REVUE_TIER_OVERRIDE }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.REVUE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           APP_ENV: staging
         run: |

@@ -1287,3 +1287,57 @@ def test_pipeline_respond_runs_after_agents(tmp_path):
     assert call_order.index("agents") < call_order.index("respond"), (
         "respond must run after agents"
     )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-134: reviewed-files dedup + show_reviewed_files flag (TC14–TC16)
+# ---------------------------------------------------------------------------
+
+def test_build_enhanced_summary_deduplicates_reviewed_files():
+    """TC14: files reviewed section deduplicates by file_path."""
+    from revue.cli import _build_enhanced_summary
+
+    rr_cls = ReviewResult
+    review_results = [
+        rr_cls(file_path="service.py", response="ok", error=None),
+        rr_cls(file_path="service.py", response="ok", error=None),
+        rr_cls(file_path="service.py", response="ok", error=None),
+        rr_cls(file_path="pipeline.py", response="ok", error=None),
+    ]
+    body = _build_enhanced_summary(
+        review_results=review_results,
+        total_findings={},
+        revision=1,
+        last_updated_at="just now",
+    )
+    assert "Files Reviewed (2)" in body, "Count should reflect 2 unique files"
+    assert body.count("service.py") == 1, "service.py should appear exactly once"
+
+
+def test_build_enhanced_summary_flag_disabled_hides_section():
+    """TC15: show_reviewed_files=False suppresses the Files Reviewed section even with results."""
+    from revue.cli import _build_enhanced_summary
+
+    rr = ReviewResult(file_path="auth.py", response="ok", error=None)
+    body = _build_enhanced_summary(
+        review_results=[rr],
+        total_findings={},
+        revision=1,
+        last_updated_at="just now",
+        show_reviewed_files=False,
+    )
+    assert "### Files Reviewed" not in body
+    assert "auth.py" not in body
+
+
+def test_build_enhanced_summary_flag_default_shows_section():
+    """TC16: show_reviewed_files defaults to True — section is present."""
+    from revue.cli import _build_enhanced_summary
+
+    body = _build_enhanced_summary(
+        review_results=[],
+        total_findings={},
+        revision=1,
+        last_updated_at="just now",
+    )
+    assert "### Files Reviewed" in body

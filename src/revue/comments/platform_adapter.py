@@ -324,7 +324,7 @@ class GitHubAdapter(PlatformAdapter):
         body: str
     ) -> str:
         """Post reply to GitHub PR comment."""
-        url = f"{self.base_url}/repos/{repo_owner}/{repo_name}/pulls/comments/{comment_id}/replies"
+        url = f"{self.base_url}/repos/{repo_owner}/{repo_name}/pulls/{pr_number}/comments/{comment_id}/replies"
 
         response = httpx.post(
             url,
@@ -493,8 +493,12 @@ class GitHubAdapter(PlatformAdapter):
 
         try:
             result = self._graphql(mutation, variables)
-            return result.get("data", {}).get("resolveReviewThread", {}).get("thread", {}).get("isResolved", False)
-        except Exception:
+            resolved = result.get("data", {}).get("resolveReviewThread", {}).get("thread", {}).get("isResolved", False)
+            if not resolved:
+                _log.warning("resolve_thread: mutation returned isResolved=False for thread %s", thread_id)
+            return resolved
+        except Exception as exc:
+            _log.warning("resolve_thread: GraphQL mutation failed for thread %s: %s", thread_id, exc)
             return False
 
     def get_pr_template(self, repo_owner: str, repo_name: str) -> Optional[str]:

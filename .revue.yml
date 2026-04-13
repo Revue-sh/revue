@@ -19,6 +19,14 @@ review:
     - "dist/**"
     - "*.whl"
 
+rating:
+  weights:
+    high:   1.5   # penalty per HIGH finding
+    medium: 0.3   # penalty per MEDIUM finding (reduced from 0.5 — architecture notes ≠ bugs)
+    low:    0.05  # penalty per LOW finding (minimal impact)
+    info:   0.0   # INFO findings do not affect the score
+  floor: 1.0      # minimum possible score
+
 output:
   comment_style: per-issue   # "per-issue" = one inline comment per finding (default)
                               # "summary"   = one grouped comment per file
