@@ -95,7 +95,7 @@ runs:
         REVUE_FAIL_ON_CRITICAL: ${{ inputs.fail_on_critical }}
         GITHUB_TOKEN: ${{ github.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
-        REPO: ${{ github.repository }}
+        REPOSITORY: ${{ github.repository }}
         DIFF_FILE: /tmp/revue_pr.diff
 
     - name: Review skipped notice

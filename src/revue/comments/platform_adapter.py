@@ -303,11 +303,15 @@ class GitHubAdapter(PlatformAdapter):
         comment_id: str,
         thread_id: Optional[str] = None
     ) -> bool:
-        """
-        GitHub doesn't support resolution via PAT.
+        """Resolve a GitHub PR review thread via GraphQL (REVUE-119 AC12).
 
-        Returns False to trigger fallback to comment acknowledgment.
+        Looks up thread_id from comment_id via fetch_review_thread_ids,
+        then calls resolve_thread(). Returns False gracefully if thread not found.
         """
+        threads = self.fetch_review_thread_ids(pr_number, repo_owner, repo_name)
+        for t in threads:
+            if str(t.get("comment_id")) == str(comment_id):
+                return self.resolve_thread(t["thread_id"])
         return False
 
     def post_reply(
@@ -337,8 +341,46 @@ class GitHubAdapter(PlatformAdapter):
         repo_name: str,
         pr_number: int,
     ) -> list[dict]:
-        """Fetch all GitHub PR review comments (TODO: implement)."""
-        return []
+        """Fetch all GitHub PR review comments and normalise to common shape.
+
+        Returns a list of dicts with keys:
+        - id: comment ID
+        - inline: {"path": ..., "to": ...} (all are inline review comments)
+        - parent: {"id": in_reply_to_id} or None
+        - content: {"raw": body}
+        - resolution: None (GitHub tracks resolution via threads, not comment state)
+        """
+        url = f"{self.base_url}/repos/{repo_owner}/{repo_name}/pulls/{pr_number}/comments?per_page=100"
+
+        comments = []
+        while url:
+            response = httpx.get(url, headers=self.headers)
+            response.raise_for_status()
+
+            batch = response.json()
+            for c in batch:
+                normalised = {
+                    "id": c["id"],
+                    "inline": {
+                        "path": c.get("path", ""),
+                        "to": c.get("line") or c.get("original_line") or 0,
+                    },
+                    "parent": {"id": c["in_reply_to_id"]} if c.get("in_reply_to_id") else None,
+                    "content": {"raw": c["body"]},
+                    "resolution": None,
+                }
+                comments.append(normalised)
+
+            # Handle pagination via Link header
+            url = None
+            if "link" in response.headers:
+                import re
+                links = response.headers.get("link", "")
+                match = re.search(r'<([^>]+)>;\s*rel="next"', links)
+                if match:
+                    url = match.group(1)
+
+        return comments
 
     def get_comment_replies(
         self,
@@ -359,6 +401,132 @@ class GitHubAdapter(PlatformAdapter):
     ) -> bool:
         """GitHub resolution check (not accessible via PAT)."""
         return False
+
+    # ── GraphQL helpers (REVUE-119 AC12) ──────────────────────────────────
+
+    def _graphql(self, query: str, variables: dict) -> dict:
+        """Execute a GraphQL query against the GitHub API.
+
+        Raises RuntimeError if response contains 'errors' key.
+        Returns the response JSON dict.
+        """
+        url = "https://api.github.com/graphql"
+        headers = self.headers.copy()
+
+        response = httpx.post(
+            url,
+            json={"query": query, "variables": variables},
+            headers=headers
+        )
+        response.raise_for_status()
+
+        data = response.json()
+        if "errors" in data:
+            raise RuntimeError(f"GraphQL error: {data['errors']}")
+        return data
+
+    def fetch_review_thread_ids(
+        self,
+        pr_number: int,
+        repo_owner: str,
+        repo_name: str,
+    ) -> list[dict]:
+        """Fetch all review threads for a PR via GraphQL.
+
+        Returns list of dicts:
+        [{"thread_id": "PRRT_xxx", "comment_id": int, "is_resolved": bool}, ...]
+        """
+        query = """
+        query($owner: String!, $name: String!, $pr: Int!) {
+          repository(owner: $owner, name: $name) {
+            pullRequest(number: $pr) {
+              reviewThreads(first: 100) {
+                nodes {
+                  id
+                  isResolved
+                  comments(first: 1) {
+                    nodes {
+                      databaseId
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        variables = {
+            "owner": repo_owner,
+            "name": repo_name,
+            "pr": pr_number,
+        }
+
+        result = self._graphql(query, variables)
+        threads = result.get("data", {}).get("repository", {}).get("pullRequest", {}).get("reviewThreads", {}).get("nodes", [])
+
+        normalised = []
+        for t in threads:
+            comment_id = t.get("comments", {}).get("nodes", [{}])[0].get("databaseId")
+            if comment_id is not None:
+                normalised.append({
+                    "thread_id": t["id"],
+                    "comment_id": comment_id,
+                    "is_resolved": t.get("isResolved", False),
+                })
+        return normalised
+
+    def resolve_thread(self, thread_id: str) -> bool:
+        """Resolve a review thread via GraphQL mutation (idempotent).
+
+        Returns True on success, False on failure.
+        """
+        mutation = """
+        mutation($threadId: ID!) {
+          resolveReviewThread(input: {threadId: $threadId}) {
+            thread {
+              isResolved
+            }
+          }
+        }
+        """
+        variables = {"threadId": thread_id}
+
+        try:
+            result = self._graphql(mutation, variables)
+            return result.get("data", {}).get("resolveReviewThread", {}).get("thread", {}).get("isResolved", False)
+        except Exception:
+            return False
+
+    def get_pr_template(self, repo_owner: str, repo_name: str) -> Optional[str]:
+        """Fetch PR template from GitHub, trying multiple paths in order.
+
+        Tries: .github/pull_request_template.md → pull_request_template.md → docs/pull_request_template.md
+        Returns decoded content or None if not found.
+        """
+        import base64
+
+        paths = [
+            ".github/pull_request_template.md",
+            "pull_request_template.md",
+            "docs/pull_request_template.md",
+        ]
+
+        for path in paths:
+            try:
+                url = f"{self.base_url}/repos/{repo_owner}/{repo_name}/contents/{path}"
+                response = httpx.get(url, headers=self.headers)
+                response.raise_for_status()
+
+                data = response.json()
+                if data.get("encoding") == "base64":
+                    content = base64.b64decode(data["content"]).decode("utf-8")
+                else:
+                    content = data.get("content", "")
+                return content.rstrip()
+            except Exception:
+                continue
+
+        return None
 
 
 class GitLabAdapter(PlatformAdapter):

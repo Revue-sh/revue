@@ -917,6 +917,9 @@ def test_respond_posts_replies_and_creates_lessons_pr(tmp_path) -> None:
     mock_append.assert_called_once()
     mock_pr.assert_called_once()
     instance.post_reply.assert_called_once()
+    # Sentinel appended so subsequent runs skip this thread
+    posted_body = instance.post_reply.call_args[0][5]
+    assert "[//]: # (revue:ack)" in posted_body
     # Thread resolved in Bitbucket — won't-fix is a closed decision
     instance.resolve_comment.assert_called_once_with("ws", "repo", 42, "101")
     # State updated to wont_fix
@@ -925,11 +928,70 @@ def test_respond_posts_replies_and_creates_lessons_pr(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# TC23: respond() is idempotent — skips threads Nova classified as already_handled
+# TC23: respond() is idempotent — skips threads where bot already acknowledged
+# ---------------------------------------------------------------------------
+
+def test_respond_skips_thread_where_bot_already_acknowledged(tmp_path) -> None:
+    """TC23: respond() must not post a second reply if _BOT_ACK_SENTINEL is
+    present in the thread's existing replies (idempotency guard)."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    store = PerPRCommentStore(tmp_path)
+    store.save_finding("bitbucket", 42, "a.py", "fp0001", "101", 5, "Finding A")
+
+    result = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[],
+        decisions=[{
+            "fingerprint": "fp0001",
+            "decision": "not_acknowledged",
+            "reply_draft": "This finding still stands.",
+        }],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            {
+                "id": 101,
+                "inline": {"path": "a.py", "to": 5},
+                "content": {"raw": "**🟡 [MEDIUM] Finding A\n*Code Quality*"},
+            },
+            {
+                "id": 201,
+                "parent": {"id": 101},
+                "content": {"raw": "won't fix — legacy"},
+            },
+            {
+                "id": 202,
+                "parent": {"id": 101},
+                # Bot already replied in a previous run — sentinel present
+                "content": {"raw": "This finding still stands.\n\n[//]: # (revue:ack)"},
+            },
+        ]
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path),
+            ai_client=MagicMock(),
+            bitbucket_username="u",
+            bitbucket_app_password="p",
+            repo_owner="ws",
+            repo_name="repo",
+        )
+        svc.respond(result, 42)
+
+    # Bot must not post again — idempotency
+    instance.post_reply.assert_not_called()
+    instance.resolve_comment.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TC23b: respond() is idempotent — skips threads Nova classified as already_handled
 # ---------------------------------------------------------------------------
 
 def test_respond_skips_already_handled_decision(tmp_path) -> None:
-    """TC23: respond() must not post a second reply when Nova returns
+    """TC23b: respond() must not post a second reply when Nova returns
     already_handled — the AI detected the bot already replied in a prior cycle."""
     from revue.comments.service import WontFixReplyService
     from revue.core.models import ClassificationResult
@@ -965,8 +1027,8 @@ def test_respond_skips_already_handled_decision(tmp_path) -> None:
             {
                 "id": 202,
                 "parent": {"id": 101},
-                # Bot already replied in a previous run
-                "content": {"raw": "This finding still stands."},
+                # Bot already replied in a previous run — sentinel present
+                "content": {"raw": "This finding still stands.\n\n[//]: # (revue:ack)"},
             },
         ]
         svc = WontFixReplyService(
@@ -1127,3 +1189,218 @@ def test_process_wont_fix_replies_is_thin_wrapper(tmp_path) -> None:
     mock_classify.assert_called_once_with(42)
     mock_respond.assert_called_once_with(empty, 42)
     assert call_order == ["classify", "respond"]
+
+
+# ---------------------------------------------------------------------------
+# TC26: respond() — acknowledged_deferred posts reply, resolves thread
+# ---------------------------------------------------------------------------
+
+def test_respond_acknowledged_deferred_posts_reply_and_resolves(tmp_path) -> None:
+    """TC26: acknowledged_deferred → post confirmation reply + resolve thread.
+    No lessons PR created. State remains unresolved in store (not a permanent decision)."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    store = PerPRCommentStore(tmp_path)
+    store.save_finding("bitbucket", 42, "src/service.py", "fp0099", "101", 10, "N+1 query")
+
+    result = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[],
+        decisions=[{
+            "fingerprint": "fp0099",
+            "decision": "acknowledged_deferred",
+            "reply_draft": "Got it — tracked as a deferred fix.",
+        }],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            {
+                "id": 101,
+                "inline": {"path": "src/service.py", "to": 10},
+                "content": {"raw": "**🟡 [MEDIUM] N+1 query"},
+            },
+            {
+                "id": 201,
+                "parent": {"id": 101},
+                "content": {"raw": "Not intentional — tracked, will fix after this PR."},
+            },
+        ]
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path),
+            ai_client=MagicMock(),
+            bitbucket_username="u",
+            bitbucket_app_password="p",
+            repo_owner="ws",
+            repo_name="repo",
+        )
+        svc.respond(result, 42)
+
+    # Must post the confirmation reply with sentinel appended
+    instance.post_reply.assert_called_once()
+    posted_body = instance.post_reply.call_args[0][5]
+    assert "Got it" in posted_body
+    assert "[//]: # (revue:ack)" in posted_body
+
+    # Must resolve the thread — deferred acknowledgement closes the discussion
+    instance.resolve_comment.assert_called_once()
+
+    # No lessons PR created — acknowledged_deferred is not a permanent decision
+    unresolved = store.get_unresolved_fingerprints("bitbucket", 42)
+    assert "fp0099" in unresolved  # state remains unresolved in store (no wont_fix)
+
+
+# ---------------------------------------------------------------------------
+# REVUE-119 T3: WontFixReplyService platform param
+# ---------------------------------------------------------------------------
+
+def test_wont_fix_service_platform_default_is_bitbucket(tmp_path) -> None:
+    """T3.1: WontFixReplyService without explicit platform= defaults to 'bitbucket'."""
+    from revue.comments.service import WontFixReplyService
+
+    with patch("revue.comments.service.BitbucketAdapter"):
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path),
+            ai_client=MagicMock(),
+            bitbucket_username="u",
+            bitbucket_app_password="p",
+            repo_owner="ws",
+            repo_name="repo",
+        )
+    assert svc._platform == "bitbucket"
+
+
+def test_wont_fix_service_platform_param_stored(tmp_path) -> None:
+    """T3.1: platform kwarg is stored on the instance."""
+    from revue.comments.service import WontFixReplyService
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        bitbucket_username="",
+        bitbucket_app_password="",
+        repo_owner="owner",
+        repo_name="repo",
+        platform="github",
+        adapter=GitHubAdapter("ghp_tok"),
+    )
+    assert svc._platform == "github"
+
+
+def test_collect_threads_uses_platform_for_store_lookup(tmp_path) -> None:
+    """T3.2: _collect_threads_with_replies calls get_unresolved_fingerprints
+    with the service's platform, not hardcoded 'bitbucket'."""
+    from revue.comments.service import WontFixReplyService
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    # Provide one Revue finding comment so the method reaches the store lookup
+    finding_comment = {
+        "id": 101,
+        "inline": {"path": "src/db.py", "to": 5},
+        "parent": None,
+        "content": {"raw": "**🔴 [HIGH] SQL injection risk in query builder"},
+        "resolution": None,
+    }
+    mock_adapter = MagicMock(spec=GitHubAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [finding_comment]
+
+    mock_store = MagicMock()
+    mock_store.get_unresolved_fingerprints.return_value = {}
+
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        bitbucket_username="",
+        bitbucket_app_password="",
+        repo_owner="owner",
+        repo_name="repo",
+        platform="github",
+        adapter=mock_adapter,
+    )
+    svc._store = mock_store
+
+    svc._collect_threads_with_replies(pr_number=4)
+
+    # Store must be queried with "github", not "bitbucket"
+    mock_store.get_unresolved_fingerprints.assert_called_once_with("github", 4)
+
+
+# ---------------------------------------------------------------------------
+# REVUE-119 bugfix: respond() must use self._platform in mark_resolved
+# ---------------------------------------------------------------------------
+
+def test_respond_marks_resolved_with_correct_platform(tmp_path) -> None:
+    """respond() must call mark_resolved with self._platform, not hardcoded 'bitbucket'.
+
+    Regression test for the bug found in code review: service.py:599 was
+    hardcoded to 'bitbucket', causing GitHub decisions to target the wrong
+    platform bucket in the store.
+    """
+    from revue.comments.service import WontFixReplyService
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    store = PerPRCommentStore(tmp_path)
+    store.save_finding(
+        platform="github",
+        pr_number=7,
+        file_path="src/auth.py",
+        fingerprint="ghfp001",
+        platform_comment_id="701",
+        line_number=12,
+        comment_body="Hardcoded secret",
+    )
+
+    decisions = [
+        {
+            "fingerprint": "ghfp001",
+            "decision": "allowed_pattern",
+            "reply_draft": "Noted. Lessons PR: [LESSONS_PR_URL]",
+            "pattern": "Test credentials only",
+            "rationale": "Non-production fixture",
+        }
+    ]
+    client = _ai_client_returning(decisions)
+
+    mock_adapter = MagicMock(spec=GitHubAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 701,
+            "inline": {"path": "src/auth.py", "to": 12},
+            "parent": None,
+            "content": {"raw": "**🔴 [HIGH] Hardcoded secret\n*Security*"},
+            "resolution": None,
+        },
+        {
+            "id": 702,
+            "inline": {"path": "src/auth.py", "to": 12},
+            "parent": {"id": 701},
+            "content": {"raw": "Won't fix — these are test-only credentials"},
+            "resolution": None,
+        },
+    ]
+
+    with patch(
+        "revue.comments.service.WontFixReplyService._ensure_lessons_pr",
+        return_value="https://github.com/owner/repo/pull/99",
+    ):
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path),
+            ai_client=client,
+            bitbucket_username="",
+            bitbucket_app_password="",
+            repo_owner="owner",
+            repo_name="repo",
+            platform="github",
+            adapter=mock_adapter,
+        )
+        svc.process_wont_fix_replies(pr_number=7)
+
+    # The store entry must be resolved under "github", not "bitbucket"
+    unresolved_github = store.get_unresolved_fingerprints("github", 7)
+    assert "ghfp001" not in unresolved_github, (
+        "respond() must use self._platform ('github') not 'bitbucket' in mark_resolved"
+    )

@@ -10,7 +10,7 @@ Access Jira tickets for the revue.io project via the Atlassian REST API.
 ## Configuration
 
 - Base URL: `https://urukia.atlassian.net`
-- Auth: Basic auth — email `dsanchezcisneros@gmail.com` + env var `JIRA_API_TOKEN` (in `~/.zshenv`)
+- Auth: Basic auth — email `BITBUCKET_USERNAME` +  `JIRA_API_TOKEN` env vars (in `~/.zshenv`)
 - Project key: `REVUE`
 - Search endpoint: `POST /rest/api/3/search/jql`
 - Issue endpoint: `GET /rest/api/3/issue/{key}`
@@ -35,7 +35,7 @@ Parse the user's argument to determine intent:
 
 ```bash
 source ~/.zshenv && curl -s \
-  -u "dsanchezcisneros@gmail.com:${JIRA_API_TOKEN}" \
+  -u "${BITBUCKET_USERNAME}:${JIRA_API_TOKEN}" \
   "https://urukia.atlassian.net/rest/api/3/issue/REVUE-117" | python3 -c "
 import json, sys
 
@@ -66,7 +66,7 @@ Output a clean summary to the user: key, summary, status, type, description, and
 
 ```bash
 source ~/.zshenv && curl -s \
-  -u "dsanchezcisneros@gmail.com:${JIRA_API_TOKEN}" \
+  -u "${BITBUCKET_USERNAME}:${JIRA_API_TOKEN}" \
   -X POST "https://urukia.atlassian.net/rest/api/3/search/jql" \
   -H "Content-Type: application/json" \
   -d '{"jql":"project=REVUE ORDER BY updated DESC","fields":["key","summary","status","issuetype","priority"],"maxResults":20}' | python3 -c "
@@ -94,7 +94,7 @@ First fetch available transitions:
 
 ```bash
 source ~/.zshenv && curl -s \
-  -u "dsanchezcisneros@gmail.com:${JIRA_API_TOKEN}" \
+  -u "${BITBUCKET_USERNAME}:${JIRA_API_TOKEN}" \
   "https://urukia.atlassian.net/rest/api/3/issue/REVUE-117/transitions" | python3 -c "
 import json, sys
 for t in json.load(sys.stdin).get('transitions', []):
@@ -105,7 +105,7 @@ Then apply the transition using the ID:
 
 ```bash
 source ~/.zshenv && curl -s -o /dev/null -w "%{http_code}" \
-  -u "dsanchezcisneros@gmail.com:${JIRA_API_TOKEN}" \
+  -u "${BITBUCKET_USERNAME}:${JIRA_API_TOKEN}" \
   -X POST "https://urukia.atlassian.net/rest/api/3/issue/REVUE-117/transitions" \
   -H "Content-Type: application/json" \
   -d '{"transition":{"id":"10111"}}'

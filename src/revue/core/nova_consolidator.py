@@ -41,14 +41,23 @@ For each thread, determine ONE of these decisions:
 - **not_acknowledged**: The developer has not addressed the finding at all,
   or the reply is unrelated to the finding.
 
+- **acknowledged_deferred**: The developer has (a) acknowledged that the
+  finding is a real issue AND (b) provided a clear, stated reason for
+  deferring the fix — e.g. the overhead is acceptable under current
+  conditions, or the fix is tracked for a later sprint. This is NOT a
+  permanent suppression. Revue thanks the developer and closes the thread.
+  No lessons PR is created. Use this when the developer explicitly commits
+  to fixing it later with a stated justification.
+
 - **acknowledged_fixed**: The developer has replied stating they fixed the
   code (e.g. "Fixed in commit X", "Done", "Addressed"). The finding is
   resolved by a code change rather than a policy decision.
 
 - **already_handled**: The thread already contains a bot acknowledgment reply
-  from a previous review cycle. Indicators: a reply mentions "Lessons PR",
-  "reaffirming this finding", "could you explain", or otherwise reads as an
-  automated response rather than a developer reply. No further action needed.
+  from a previous review cycle. Indicators: a reply contains
+  "[//]: # (revue:ack)", mentions "Lessons PR", "reaffirming this finding",
+  "could you explain", or otherwise reads as an automated response rather
+  than a developer reply. No further action needed.
 
 Intent is determined semantically — no specific keywords are required.
 
@@ -61,6 +70,7 @@ Tone guidance for reply_draft:
   opened so the team can learn from this decision (use placeholder
   "[LESSONS_PR_URL]" — the actual URL will be filled in by the service layer)
 - For acknowledged_fixed: brief acknowledgment that the fix is confirmed
+- For acknowledged_deferred: brief thank-you acknowledging the deferral justification
 
 Output ONLY a JSON array. Each element must have these fields:
   fingerprint    (string — copy from input)
@@ -70,7 +80,7 @@ Output ONLY a JSON array. Each element must have these fields:
   rationale      (string — present only for allowed_pattern or disallowed_pattern)
 
 Do not include pattern or rationale for reason_missing, not_acknowledged,
-acknowledged_fixed, or already_handled.
+acknowledged_deferred, acknowledged_fixed, or already_handled.
 """
 
 
@@ -137,7 +147,7 @@ def _parse_thread_decisions(raw: str) -> list[dict]:
     Strips markdown code fences if present. Returns [] on parse failure
     (the caller can decide how to handle a partial failure).
     """
-    clean = raw.strip()
+    clean = raw.strip()  # fence-stripped JSON string
     if clean.startswith("```"):
         # Strip ```json ... ``` or ``` ... ```
         lines = clean.splitlines()

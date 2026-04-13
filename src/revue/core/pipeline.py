@@ -419,38 +419,49 @@ class ReviewPipeline:
         # ── Won't-fix classify phase (REVUE-112 Phase 2, AC16) ───────────────
         # classify() is zero side-effects and must run BEFORE diff parsing so
         # that new allowed/disallowed patterns are in memory when agents execute.
+        # OCP/DIP: platform strategy looked up from registry — no if/elif chain.
         wont_fix_svc = None
         classification = None
-        if pr_context is not None and pr_context.platform == "bitbucket":
-            wont_fix_svc = self._build_wont_fix_svc(pr_context)
-            if wont_fix_svc is not None:
+        if pr_context is not None:
+            from revue.core.reply_tracking import get_strategy
+            strategy = get_strategy(pr_context.platform)
+            if strategy is not None:
+                wont_fix_svc = strategy.build_wont_fix_svc(pr_context, self._client)
+            else:
                 print(
-                    f"[revue]   💬 Won't-fix classify: PR #{pr_context.pr_number} "
-                    f"({pr_context.repo_owner}/{pr_context.repo_name})",
+                    f"[revue]   💬 Won't-fix reply tracking: platform '{pr_context.platform}' "
+                    "not yet supported — skipping classify/respond.",
                     flush=True,
                 )
-                classification = wont_fix_svc.classify(pr_context.pr_number)
-                print(
-                    f"[revue]   💬 Won't-fix classify result: "
-                    f"{len(classification.decisions)} decision(s), "
-                    f"{len(classification.state_updates)} state update(s), "
-                    f"{len(classification.patterns_to_allow)} pattern(s) to allow.",
-                    flush=True,
-                )
-                # Patch config in-memory — no file write (AC17)
-                if classification.patterns_to_allow:
-                    self.config.allowed_patterns = list(
-                        getattr(self.config, "allowed_patterns", None) or []
-                    ) + classification.patterns_to_allow
-                if classification.patterns_to_disallow:
-                    self.config.disallowed_patterns = list(
-                        getattr(self.config, "disallowed_patterns", None) or []
-                    ) + classification.patterns_to_disallow
-                # Apply state updates before diff parse (AC18).
-                # Delegates to wont_fix_svc — pipeline.py must not import
-                # CommentState (comments layer belongs to comments, not core).
-                if classification.state_updates:
-                    wont_fix_svc.apply_state_updates(classification, pr_context.pr_number)
+
+        if wont_fix_svc is not None:
+            print(
+                f"[revue]   💬 Won't-fix classify: PR #{pr_context.pr_number} "  # type: ignore[union-attr]
+                f"({pr_context.repo_owner}/{pr_context.repo_name})",  # type: ignore[union-attr]
+                flush=True,
+            )
+            classification = wont_fix_svc.classify(pr_context.pr_number)  # type: ignore[union-attr]
+            print(
+                f"[revue]   💬 Won't-fix classify result: "
+                f"{len(classification.decisions)} decision(s), "
+                f"{len(classification.state_updates)} state update(s), "
+                f"{len(classification.patterns_to_allow)} pattern(s) to allow.",
+                flush=True,
+            )
+            # Patch config in-memory — no file write (AC17)
+            if classification.patterns_to_allow:
+                self.config.allowed_patterns = list(
+                    getattr(self.config, "allowed_patterns", None) or []
+                ) + classification.patterns_to_allow
+            if classification.patterns_to_disallow:
+                self.config.disallowed_patterns = list(
+                    getattr(self.config, "disallowed_patterns", None) or []
+                ) + classification.patterns_to_disallow
+            # Apply state updates before diff parse (AC18).
+            # Delegates to wont_fix_svc — pipeline.py must not import
+            # CommentState (comments layer belongs to comments, not core).
+            if classification.state_updates:
+                wont_fix_svc.apply_state_updates(classification, pr_context.pr_number)
 
         # ── Step 1: Diff parsing ──────────────────────────────────────────────
         print("[revue] ── Step 1/4: Parsing diff", flush=True)
@@ -560,33 +571,6 @@ class ReviewPipeline:
                 print(f"[revue]   💬 Won't-fix reply tracking complete — {summary}.", flush=True)
 
         return results, excluded, len(included), failed_agents
-
-    def _build_wont_fix_svc(self, pr_context: "PRContext") -> Optional["WontFixReplyService"]:
-        """Construct WontFixReplyService from env vars and pr_context.
-
-        Returns None (with a warning) if credentials are not set, so callers
-        can skip both classify and respond phases cleanly (AC20).
-        """
-        import os
-        from revue.comments.service import WontFixReplyService
-
-        bb_user = os.environ.get("BITBUCKET_USERNAME", "")
-        bb_password = os.environ.get("BITBUCKET_API_TOKEN", "")
-        if not bb_user or not bb_password:
-            print(
-                "[revue]   ⚠ Won't-fix reply tracking skipped — "
-                "BITBUCKET_USERNAME / BITBUCKET_API_TOKEN not set.",
-                flush=True,
-            )
-            return None
-        return WontFixReplyService(
-            repo_path=pr_context.repo_path,
-            ai_client=self._client,
-            bitbucket_username=bb_user,
-            bitbucket_app_password=bb_password,
-            repo_owner=pr_context.repo_owner,
-            repo_name=pr_context.repo_name,
-        )
 
     # ------------------------------------------------------------------
     # Review paths

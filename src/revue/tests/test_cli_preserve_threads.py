@@ -236,6 +236,38 @@ def test_new_finding_posted_and_saved_to_store(tmp_path) -> None:
     fp = fp_func("src/app.py", 10, "")
     assert store.has_fingerprint("bitbucket", 42, "src/app.py", fp)
 
+    # Sentinel must be embedded in the posted body for API-based dedup on re-runs
+    posted_body = adapter.post_review_comment.call_args[1]["body"]
+    assert f"[//]: # (revue:fp:{fp})" in posted_body
+
+
+# =====================================================================
+# TC_FRESH_CI: Empty local store + API sentinel → finding skipped (no re-post)
+# =====================================================================
+
+def test_api_sentinel_deduplicates_on_fresh_ci(tmp_path) -> None:
+    """Fresh CI: local store is empty but the finding was already posted (sentinel
+    present in live API comment).  post_review_comment must NOT be called again."""
+    from revue.comments.fingerprint import fingerprint as fp_func
+
+    fp = fp_func("src/app.py", 10, "")
+
+    # API already has this finding from a prior run — sentinel embedded in body
+    existing = [
+        {"id": 999, "content": {"raw": f"**🔴 [HIGH] SQL injection\n\n[//]: # (revue:fp:{fp})"}}
+    ]
+
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([_FINDING_A]),
+        )
+    ]
+    adapter = _run(_make_args(), review_results, tmp_path=tmp_path, existing_comments=existing)
+
+    # Already posted in a previous run — must be skipped even with empty local store
+    adapter.post_review_comment.assert_not_called()
+
 
 # =====================================================================
 # TC_FRESH_CI: Empty local store + API sentinel → finding skipped (no re-post)

@@ -77,31 +77,55 @@ for root in sorted(roots, key=lambda x: x['id']):
 
 ### GitHub
 
+Use these pre-approved scripts to avoid repeated Bash approval prompts:
+
+**Fetch a single comment:**
 ```bash
-source ~/.zshenv && curl -s \
-  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/cbscd/revue-test-github/pulls/3/comments?per_page=100" | python3 -c "
+/Volumes/LexarSSD/Projects/revue.io/.claude/skills/pr-comments/scripts/gh_get_comment.sh <comment_id> [repo]
+# Default repo: cbscd/revue-test-github
+```
+
+**Post a reply to a comment thread:**
+```bash
+/Volumes/LexarSSD/Projects/revue.io/.claude/skills/pr-comments/scripts/gh_post_reply.sh <parent_comment_id> "<body>" [pr_number] [repo]
+# Defaults: PR #4, repo cbscd/revue-test-github
+# Example: gh_post_reply.sh 3066014233 "False positive — already handled.\n\n[//]: # (revue:ack)"
+```
+
+To list **all comments on a PR**:
+
+```bash
+source ~/.zshenv && gh api repos/cbscd/revue-test-github/pulls/4/comments --paginate | python3 -c "
 import json, sys
+from collections import defaultdict
 comments = json.load(sys.stdin)
-print(f'PR review comments: {len(comments)}')
+roots = [c for c in comments if not c.get('in_reply_to_id')]
+replies_map = defaultdict(list)
 for c in comments:
-    user = c.get('user', {}).get('login', '?')
-    body = (c.get('body') or '')[:200]
-    path = c.get('path', '')
-    line = c.get('line') or c.get('original_line', '')
-    print(f'  #{c[\"id\"]} by {user} on {path}:{line}')
-    print(f'    {body[:160]}')
+    if c.get('in_reply_to_id'):
+        replies_map[c['in_reply_to_id']].append(c)
+print(f'Total: {len(comments)} ({len(roots)} root, {len(comments)-len(roots)} replies)')
+print()
+for i, root in enumerate(sorted(roots, key=lambda x: x['id']), 1):
+    body = (root.get('body') or '')[:160]
+    path = root.get('path', '')
+    line = root.get('line') or root.get('original_line', '')
+    user = root.get('user', {}).get('login', '?')
+    reps = replies_map.get(root['id'], [])
+    print(f'[{i}] #{root[\"id\"]} by {user} — {path}:{line}')
+    print(f'     {body}')
+    for r in sorted(reps, key=lambda x: x['id']):
+        ru = r.get('user', {}).get('login', '?')
+        rb = (r.get('body') or '')[:110]
+        print(f'     → #{r[\"id\"]} by {ru}: {rb}')
+    print()
 "
 ```
 
 For PR-level comments (not inline):
 
 ```bash
-source ~/.zshenv && curl -s \
-  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/cbscd/revue-test-github/issues/3/comments?per_page=100" | python3 -c "
+source ~/.zshenv && gh api repos/cbscd/revue-test-github/issues/4/comments --paginate | python3 -c "
 import json, sys
 comments = json.load(sys.stdin)
 print(f'PR issue comments: {len(comments)}')

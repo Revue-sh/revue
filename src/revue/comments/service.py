@@ -372,11 +372,17 @@ class WontFixReplyService:
         bitbucket_app_password: str,
         repo_owner: str,
         repo_name: str,
+        platform: str = "bitbucket",
+        adapter: Any = None,
     ) -> None:
         self.repo_path = Path(repo_path)
         self._store = PerPRCommentStore(repo_path)
         self._client = ai_client
-        self._adapter = BitbucketAdapter(bitbucket_username, bitbucket_app_password)
+        self._platform = platform
+        if adapter is not None:
+            self._adapter = adapter
+        else:
+            self._adapter = BitbucketAdapter(bitbucket_username, bitbucket_app_password)
         self._bb_username = bitbucket_username
         self._bb_password = bitbucket_app_password
         self._repo_owner = repo_owner
@@ -493,6 +499,9 @@ class WontFixReplyService:
         result = self.classify(pr_number)
         self.respond(result, pr_number)
 
+    # Appended to every bot reply so respond() can detect it already ran on a thread.
+    _BOT_ACK_SENTINEL = "[//]: # (revue:ack)"
+
     def respond(self, result: "ClassificationResult", pr_number: int) -> None:
         """I/O phase: act on the classified decisions (REVUE-112 Phase 2, AC14).
 
@@ -506,6 +515,9 @@ class WontFixReplyService:
           reason_missing → post reply asking for reason (no state change).
           not_acknowledged → post reply reaffirming finding (no state change).
           already_handled → skip silently (classify() detected a prior bot reply).
+
+        Idempotent: skips any thread where the bot already posted a reply
+        containing _BOT_ACK_SENTINEL from a previous run.
         """
         if not result.decisions:
             return
@@ -531,6 +543,15 @@ class WontFixReplyService:
                 _log.warning(
                     "[REVUE-112] No thread found for fingerprint %s — skipping respond.",
                     fingerprint_val,
+                )
+                continue
+
+            # Idempotency guard: skip if bot already acknowledged this thread
+            existing_replies = thread_entry.get("replies", [])
+            if any(self._BOT_ACK_SENTINEL in r for r in existing_replies):
+                print(
+                    f"[revue]   💬  respond(): skip {thread_entry.get('platform_comment_id')} ({dec}) — already acknowledged",
+                    flush=True,
                 )
                 continue
 
@@ -575,7 +596,7 @@ class WontFixReplyService:
 
                 # Update state to wont_fix
                 self._store.mark_resolved(
-                    "bitbucket",
+                    self._platform,
                     pr_number,
                     file_path,
                     fingerprint_val,
@@ -591,7 +612,7 @@ class WontFixReplyService:
                         pr_number,
                         comment_id,
                         None,
-                        final_reply,
+                        final_reply + f"\n\n{self._BOT_ACK_SENTINEL}",
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
@@ -624,7 +645,7 @@ class WontFixReplyService:
                         pr_number,
                         comment_id,
                         None,
-                        reply_draft,
+                        reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}",
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
@@ -642,7 +663,7 @@ class WontFixReplyService:
                         pr_number,
                         comment_id,
                         None,
-                        reply_draft,
+                        reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}",
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
@@ -651,10 +672,44 @@ class WontFixReplyService:
                         comment_id, dec, pr_number,
                     )
 
+            elif dec == "acknowledged_deferred":
+                # Developer acknowledged the finding and provided a deferral reason.
+                # No lessons PR or .revue.yml write — this is not a permanent decision.
+                # Post confirmation reply (with sentinel) and close the thread.
+                if reply_draft:
+                    try:
+                        self._adapter.post_reply(
+                            self._repo_owner,
+                            self._repo_name,
+                            pr_number,
+                            comment_id,
+                            None,
+                            reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}",
+                        )
+                        print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
+                    except Exception:
+                        _log.exception(
+                            "[REVUE-112] post_reply failed for comment %s (decision=%s) on PR #%d",
+                            comment_id, dec, pr_number,
+                        )
+                try:
+                    self._adapter.resolve_comment(
+                        self._repo_owner,
+                        self._repo_name,
+                        pr_number,
+                        comment_id,
+                    )
+                    print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
+                except Exception:
+                    _log.exception(
+                        "[REVUE-112] resolve_comment failed for comment %s (decision=%s) on PR #%d",
+                        comment_id, dec, pr_number,
+                    )
+
             elif dec == "acknowledged_fixed":
                 # Developer fixed the code — post acknowledgment and resolve the thread
                 self._store.mark_resolved(
-                    "bitbucket",
+                    self._platform,
                     pr_number,
                     file_path,
                     fingerprint_val,
@@ -668,7 +723,7 @@ class WontFixReplyService:
                         pr_number,
                         comment_id,
                         None,
-                        reply_draft,
+                        reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}",
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
@@ -765,7 +820,7 @@ class WontFixReplyService:
         # store's content-hash fingerprint so apply_state_updates() can update
         # the correct store entry.  On fresh CI (empty store), fall back to
         # comment_id — state updates are best-effort no-ops in that case.
-        unresolved = self._store.get_unresolved_fingerprints("bitbucket", pr_number)
+        unresolved = self._store.get_unresolved_fingerprints(self._platform, pr_number)
         comment_id_to_fp: dict[str, str] = {
             entry.get("platform_comment_id", ""): fp
             for fp, entry in unresolved.items()
@@ -774,7 +829,7 @@ class WontFixReplyService:
         # Group replies by parent comment ID — in memory, zero extra API calls
         replies_by_parent: dict[str, list[dict]] = {}
         for c in all_comments:
-            pid = str(c.get("parent", {}).get("id", ""))
+            pid = str((c.get("parent") or {}).get("id", ""))
             if pid in finding_comments:
                 replies_by_parent.setdefault(pid, []).append(c)
 
@@ -795,10 +850,12 @@ class WontFixReplyService:
             inline = finding.get("inline", {})
             body = finding.get("content", {}).get("raw", "")
             fp = comment_id_to_fp.get(comment_id, comment_id)
+            # inline may be a bool (GitHub: True) or a dict (Bitbucket: {"path": ..., "to": ...})
+            inline_dict = inline if isinstance(inline, dict) else {}
             threads.append({
                 "fingerprint": fp,
-                "file_path": inline.get("path", ""),
-                "line": inline.get("to", 0) or 0,
+                "file_path": inline_dict.get("path", ""),
+                "line": inline_dict.get("to", 0) or 0,
                 "issue_type": self._issue_type_from_body(body),
                 "severity": self._severity_from_body(body),
                 "original_finding_summary": body[:300],

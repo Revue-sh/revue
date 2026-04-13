@@ -54,7 +54,7 @@ jobs:
           AI_MODEL: claude-sonnet-4-5-20250929
           REVUE_TIER_OVERRIDE: ${{ vars.REVUE_TIER_OVERRIDE }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          REPOSITORY: ${{ github.repository }}
           APP_ENV: staging
         run: |
           echo "[revue] Starting AI code review..."

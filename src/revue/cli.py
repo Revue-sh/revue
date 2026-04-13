@@ -272,8 +272,16 @@ def cmd_review(
     try:
         _platform = getattr(args, "platform", None)
         _pr_id = int(resolved_pr_id) if resolved_pr_id is not None else None
-        _repo_owner = getattr(args, "workspace", None) or os.getenv("BITBUCKET_WORKSPACE")
-        _repo_name = getattr(args, "repo_slug", None) or os.getenv("BITBUCKET_REPO_SLUG")
+        # REPOSITORY is the canonical "owner/repo" env var — set once in
+        # the customer's repo CI variables; the CLI needs no platform detection.
+        # Explicit --workspace / --repo-slug CLI args take precedence.
+        # Fall back to legacy Bitbucket-specific env vars for backward compat.
+        _cli_owner = getattr(args, "workspace", None)
+        _cli_name = getattr(args, "repo_slug", None)
+        _revue_repo = os.getenv("REPOSITORY", "")
+        _env_parts = (_revue_repo.split("/", 1) + [""])[:2]
+        _repo_owner = _cli_owner or _env_parts[0] or os.getenv("BITBUCKET_WORKSPACE")
+        _repo_name = _cli_name or _env_parts[1] or os.getenv("BITBUCKET_REPO_SLUG")
         _pr_context = (
             PRContext(
                 platform=_platform,
@@ -618,26 +626,41 @@ def _format_file_review(file_path: str, response: str) -> str:
 
 
 def _build_api_fingerprint_map(adapter, pr_num: int) -> dict[str, dict]:
-    """Derive already-posted finding fingerprints from live PR comment metadata.
+    """Scan live PR comments for embedded fingerprint sentinels and location-based fingerprints.
 
-    For each existing Revue inline finding comment, computes a location-based
-    fingerprint using only ``file_path`` and ``line`` (no diff dependency and
-    no body modification needed — no invisible marker required).
+    Two discovery strategies (both run, results merged):
+    1. Sentinel-based: each Revue finding comment contains ``[//]: # (revue:fp:{hash})``
+       in its body — works on comments posted by REVUE-119+ code.
+    2. Location-based: derives fingerprint from ``file_path`` and ``line`` only
+       (no diff dependency) — covers older comments without a sentinel.
+
+    Collecting these on startup makes deduplication work on fresh CI checkouts
+    where the local ``.revue/`` store is empty.
 
     Returns ``{fingerprint: {"platform_comment_id": str, "file_path": str}}``
     so the result merges cleanly with ``PerPRCommentStore.get_unresolved_fingerprints``.
     """
     import re as _re
     from revue.comments.fingerprint import fingerprint as gen_fingerprint
+    _FP_RE = _re.compile(r'\[//\]: # \(revue:fp:([a-f0-9]+)\)')
     _FINDING_RE = _re.compile(r'^\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]')
     result: dict[str, dict] = {}
     try:
         comments = adapter.get_existing_comments(pr_id=pr_num)
         for c in comments:
+            body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
+            comment_id_str = str(c.get("id", ""))
+            # Strategy 1: sentinel embedded in body
+            m = _FP_RE.search(body)
+            if m:
+                result[m.group(1)] = {
+                    "platform_comment_id": comment_id_str,
+                    "file_path": "",
+                }
+            # Strategy 2: location-based (for comments without sentinel)
             inline = c.get("inline") or {}
             if not inline:
                 continue
-            body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
             if not _FINDING_RE.match(body):
                 continue
             file_path = inline.get("path", "")
@@ -645,7 +668,7 @@ def _build_api_fingerprint_map(adapter, pr_num: int) -> dict[str, dict]:
             if file_path and line:
                 fp = gen_fingerprint(file_path, int(line), "")
                 result[fp] = {
-                    "platform_comment_id": str(c.get("id", "")),
+                    "platform_comment_id": comment_id_str,
                     "file_path": file_path,
                 }
     except Exception:
@@ -668,9 +691,9 @@ def _run_per_issue_dedup(
     re-posting a finding that already has an open comment from a prior review.
 
     On fresh CI (empty local store), dedup falls back to scanning live API
-    comments via ``_build_api_fingerprint_map`` — location-based fingerprints
-    derived from inline comment metadata prevent re-posting without any stored
-    state or body modification.
+    comments via ``_build_api_fingerprint_map`` — sentinel and location-based
+    fingerprints derived from inline comment metadata prevent re-posting without
+    any stored state.
 
     Returns ``(posted, skipped, total_findings)`` where ``total_findings`` is
     the severity breakdown of Nova's full list — the number the summary shows.
@@ -719,7 +742,7 @@ def _run_per_issue_dedup(
 
             # AC1/AC2: skip if already posted in a previous review cycle.
             # merged_prior covers both local store (diff-based) and live API
-            # (location-based) fingerprints — check both to handle either source.
+            # (sentinel and location-based) fingerprints — check all to handle any source.
             if fp in merged_prior or fp_location in merged_prior:
                 skipped += 1
                 continue
@@ -731,7 +754,8 @@ def _run_per_issue_dedup(
                 body_parts.append(f"\n{details}")
             if rec:
                 body_parts.append(f"\n> 💡 **Recommendation:** {rec}")
-            body = "\n".join(body_parts)
+            # Sentinel embedded so future runs can deduplicate without local store.
+            body = "\n".join(body_parts) + f"\n\n[//]: # (revue:fp:{fp})"
 
             if platform_str == "gitlab":
                 lc, resolved_line, old_ln = compute_gitlab_line_code(
@@ -746,7 +770,14 @@ def _run_per_issue_dedup(
                     side="RIGHT",
                 )
             else:
-                position = DiffPosition(file_path=rr.file_path, line_number=line, side="RIGHT")
+                position = adapter.resolve_position(rr.file_path, line, diff_content)
+
+            # GitHub requires a valid diff position; position=0 means the line is
+            # outside the diff hunk — posting would return a 500 from the API.
+            if platform_str == "github" and position.position == 0:
+                skipped += 1
+                continue
+
             comment_id = adapter.post_review_comment(pr_id=pr_num, position=position, body=body)
 
             if comment_id is not None:

@@ -35,6 +35,7 @@
       fi
   variables:
     ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+    REPOSITORY: $CI_PROJECT_PATH
   artifacts:
     reports:
       junit: review-junit.xml
