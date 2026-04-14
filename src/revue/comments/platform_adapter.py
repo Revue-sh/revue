@@ -666,16 +666,25 @@ class GitLabAdapter(PlatformAdapter):
         result: list[dict] = []
         for disc in discussions:
             disc_id = disc["id"]
+            first_note_id: Optional[int] = None  # ID of first non-system note in this discussion
             for note in disc.get("notes", []):
                 if note.get("system"):
                     continue
                 position = note.get("position") or {}
-                parent_id = note.get("in_reply_to_id")
+                note_id = note["id"]
+                # GitLab always returns in_reply_to_id=None even for reply notes.
+                # Use position within the discussion instead: first non-system note
+                # is the root; all subsequent ones are replies to it.
+                if first_note_id is None:
+                    parent = None
+                    first_note_id = note_id
+                else:
+                    parent = {"id": first_note_id}
                 result.append({
-                    "id": note["id"],
+                    "id": note_id,
                     "thread_id": disc_id,
                     "content": {"raw": note.get("body", "")},
-                    "parent": {"id": parent_id} if parent_id else None,
+                    "parent": parent,
                     "inline": {
                         "path": position.get("new_path", ""),
                         "to": position.get("new_line", 0),

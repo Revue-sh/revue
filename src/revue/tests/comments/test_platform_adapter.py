@@ -615,6 +615,44 @@ def test_gitlab_get_all_pr_comments_normalises_shape() -> None:
     assert reply["thread_id"] == "disc42"
 
 
+def test_gitlab_get_all_pr_comments_reply_detected_when_in_reply_to_id_is_none() -> None:
+    """T2b-regression: GitLab always returns in_reply_to_id=None for reply notes.
+    Parent must be detected by position (second+ note in discussion), not the field.
+    """
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+    discussions = [
+        {
+            "id": "disc99",
+            "notes": [
+                # Root note — first in discussion
+                {"id": 10, "body": "Revue finding", "system": False,
+                 "in_reply_to_id": None,
+                 "position": {"new_path": "foo.py", "new_line": 1}},
+                # Reply note — GitLab returns in_reply_to_id=None even for real replies
+                {"id": 11, "body": "Won't fix", "system": False,
+                 "in_reply_to_id": None,
+                 "position": None},
+            ],
+        },
+    ]
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = discussions
+    resp.headers = {}
+
+    with patch("httpx.get", return_value=resp):
+        result = gl.get_all_pr_comments("owner", "repo", 1)
+
+    assert len(result) == 2
+    root = next(r for r in result if r["id"] == 10)
+    reply = next(r for r in result if r["id"] == 11)
+    assert root["parent"] is None
+    # Reply must be linked to root even though in_reply_to_id was None
+    assert reply["parent"] == {"id": 10}
+
+
 def test_gitlab_get_all_pr_comments_paginates() -> None:
     """T2c: follows X-Next-Page header to fetch all pages."""
     from revue.comments.platform_adapter import GitLabAdapter
