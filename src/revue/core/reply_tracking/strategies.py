@@ -101,7 +101,39 @@ class GitHubReplyTrackingStrategy:
         )
 
 
+class GitLabReplyTrackingStrategy:
+    """Builds WontFixReplyService for GitLab MRs (REVUE-120)."""
+
+    def build_wont_fix_svc(
+        self,
+        pr_context: "PRContext",
+        ai_client: Any,
+    ) -> "Optional[WontFixReplyService]":
+        from revue.comments.service import WontFixReplyService
+        from revue.comments.platform_adapter import GitLabAdapter
+
+        token = os.environ.get("GITLAB_TOKEN", "")
+        if not token:
+            print(
+                "[revue]   ⚠ Won't-fix reply tracking skipped — "
+                "GITLAB_TOKEN not set.",
+                flush=True,
+            )
+            return None
+        return WontFixReplyService(
+            repo_path=pr_context.repo_path,
+            ai_client=ai_client,
+            bitbucket_username="",
+            bitbucket_app_password="",
+            repo_owner=pr_context.repo_owner,
+            repo_name=pr_context.repo_name,
+            platform="gitlab",
+            adapter=GitLabAdapter(token),
+        )
+
+
 _REPLY_TRACKING_REGISTRY: dict[str, ReplyTrackingStrategy] = {
     "bitbucket": BitbucketReplyTrackingStrategy(),
     "github": GitHubReplyTrackingStrategy(),
+    "gitlab": GitLabReplyTrackingStrategy(),
 }

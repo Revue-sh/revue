@@ -504,3 +504,296 @@ def test_github_adapter_get_pr_template_third_path_fallback() -> None:
     assert mock_get.call_count == 3
     third_url = mock_get.call_args_list[2][0][0]
     assert "docs/pull_request_template.md" in third_url
+
+
+# ===========================================================================
+# GitLabAdapter — REVUE-120
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# T1: resolve_discussion sends body {"resolved": True}, not query param
+# ---------------------------------------------------------------------------
+
+def test_gitlab_resolve_discussion_sends_body_not_query_param() -> None:
+    """T1: resolve_discussion must PUT with JSON body, not ?resolved=true query param."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+
+    with patch("httpx.put", return_value=mock_resp) as mock_put:
+        result = gl.resolve_discussion("owner", "repo", 1, "abc123")
+
+    assert result is True
+    call_kwargs = mock_put.call_args
+    # Must NOT pass params= with resolved
+    params = call_kwargs.kwargs.get("params") or (call_kwargs.args[1] if len(call_kwargs.args) > 1 else {})
+    assert "resolved" not in str(params)
+    # Must pass json body
+    json_body = call_kwargs.kwargs.get("json", {})
+    assert json_body.get("resolved") is True
+    # URL must NOT contain ?resolved
+    url = call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs.get("url", "")
+    assert "?resolved" not in url
+
+
+# ---------------------------------------------------------------------------
+# T2: get_all_pr_comments — fetch, filter system notes, normalise shape
+# ---------------------------------------------------------------------------
+
+def test_gitlab_get_all_pr_comments_filters_system_notes() -> None:
+    """T2a: system notes are excluded; only non-system notes returned."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+    discussions = [
+        {
+            "id": "disc1",
+            "notes": [
+                {"id": 1, "body": "Revue finding", "system": False,
+                 "in_reply_to_id": None, "position": {"new_path": "foo.py", "new_line": 10}},
+            ],
+        },
+        {
+            "id": "disc2",
+            "notes": [
+                {"id": 2, "body": "assigned to @dev", "system": True,
+                 "in_reply_to_id": None, "position": None},
+            ],
+        },
+    ]
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = discussions
+    resp.headers = {}
+
+    with patch("httpx.get", return_value=resp):
+        result = gl.get_all_pr_comments("owner", "repo", 1)
+
+    assert len(result) == 1
+    assert result[0]["id"] == 1
+
+
+def test_gitlab_get_all_pr_comments_normalises_shape() -> None:
+    """T2b: each returned dict has id, thread_id, content.raw, parent, inline."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+    discussions = [
+        {
+            "id": "disc42",
+            "notes": [
+                {"id": 7, "body": "Some finding", "system": False,
+                 "in_reply_to_id": None,
+                 "position": {"new_path": "app/main.py", "new_line": 55}},
+                {"id": 8, "body": "I disagree", "system": False,
+                 "in_reply_to_id": 7,
+                 "position": None},
+            ],
+        },
+    ]
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = discussions
+    resp.headers = {}
+
+    with patch("httpx.get", return_value=resp):
+        result = gl.get_all_pr_comments("owner", "repo", 1)
+
+    assert len(result) == 2
+    root = next(r for r in result if r["id"] == 7)
+    reply = next(r for r in result if r["id"] == 8)
+
+    assert root["thread_id"] == "disc42"
+    assert root["content"]["raw"] == "Some finding"
+    assert root["parent"] is None
+    assert root["inline"]["path"] == "app/main.py"
+    assert root["inline"]["to"] == 55
+
+    assert reply["parent"] == {"id": 7}
+    assert reply["thread_id"] == "disc42"
+
+
+def test_gitlab_get_all_pr_comments_paginates() -> None:
+    """T2c: follows X-Next-Page header to fetch all pages."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+
+    page1_note = {"id": 1, "body": "p1", "system": False, "in_reply_to_id": None,
+                  "position": {"new_path": "a.py", "new_line": 1}}
+    page2_note = {"id": 2, "body": "p2", "system": False, "in_reply_to_id": None,
+                  "position": {"new_path": "b.py", "new_line": 2}}
+
+    resp1 = MagicMock()
+    resp1.raise_for_status = MagicMock()
+    resp1.json.return_value = [{"id": "d1", "notes": [page1_note]}]
+    resp1.headers = {"X-Next-Page": "2"}
+
+    resp2 = MagicMock()
+    resp2.raise_for_status = MagicMock()
+    resp2.json.return_value = [{"id": "d2", "notes": [page2_note]}]
+    resp2.headers = {}
+
+    with patch("httpx.get", side_effect=[resp1, resp2]):
+        result = gl.get_all_pr_comments("owner", "repo", 1)
+
+    assert len(result) == 2
+    assert {r["id"] for r in result} == {1, 2}
+
+
+# ---------------------------------------------------------------------------
+# T3: get_comment_replies — returns replies for a given root note id
+# ---------------------------------------------------------------------------
+
+def test_gitlab_get_comment_replies_returns_replies_for_comment() -> None:
+    """T3: replies with in_reply_to_id == comment_id are returned; root is excluded."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+    discussions = [
+        {
+            "id": "disc1",
+            "notes": [
+                {"id": 10, "body": "root", "system": False, "in_reply_to_id": None,
+                 "position": {"new_path": "x.py", "new_line": 1}},
+                {"id": 11, "body": "reply1", "system": False, "in_reply_to_id": 10,
+                 "position": None},
+                {"id": 12, "body": "reply2", "system": False, "in_reply_to_id": 10,
+                 "position": None},
+            ],
+        },
+        {
+            "id": "disc2",
+            "notes": [
+                {"id": 20, "body": "other root", "system": False, "in_reply_to_id": None,
+                 "position": {"new_path": "y.py", "new_line": 5}},
+            ],
+        },
+    ]
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = discussions
+    resp.headers = {}
+
+    with patch("httpx.get", return_value=resp):
+        result = gl.get_comment_replies("owner", "repo", 1, "10")
+
+    assert len(result) == 2
+    assert all(r["parent"] == {"id": 10} for r in result)
+    assert {r["id"] for r in result} == {11, 12}
+
+
+# ---------------------------------------------------------------------------
+# T4: post_reply — uses discussion_id in URL, returns note id
+# ---------------------------------------------------------------------------
+
+def test_gitlab_post_reply_uses_discussion_id_in_url() -> None:
+    """T4a: POST URL contains discussions/{thread_id}/notes."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {"id": 99}
+
+    with patch("httpx.post", return_value=resp) as mock_post:
+        gl.post_reply("owner", "repo", 1, "10", "disc42", "Won't fix — REVUE-138")
+
+    url = mock_post.call_args.args[0]
+    assert "discussions/disc42/notes" in url
+
+
+def test_gitlab_post_reply_returns_empty_string_when_thread_id_none() -> None:
+    """T4c: post_reply returns '' and makes no HTTP call when thread_id is None."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+    with patch("httpx.post") as mock_post:
+        result = gl.post_reply("owner", "repo", 1, "10", None, "body")
+
+    assert result == ""
+    mock_post.assert_not_called()
+
+
+def test_gitlab_post_reply_returns_note_id_as_string() -> None:
+    """T4b: post_reply returns str(note_id) from response."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {"id": 42}
+
+    with patch("httpx.post", return_value=resp):
+        result = gl.post_reply("owner", "repo", 1, "10", "disc1", "body")
+
+    assert result == "42"
+
+
+# ---------------------------------------------------------------------------
+# T5: get_pr_template — Default template, fallback, None when empty
+# ---------------------------------------------------------------------------
+
+def test_gitlab_get_pr_template_returns_default_template() -> None:
+    """T5a: returns content from Default template when it exists."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {"content": "## Summary\n\nDescribe your change."}
+
+    with patch("httpx.get", return_value=resp):
+        result = gl.get_pr_template("owner", "repo")
+
+    assert result == "## Summary\n\nDescribe your change."
+
+
+def test_gitlab_get_pr_template_falls_back_to_first_template() -> None:
+    """T5b: falls back to first listed template when Default returns 404."""
+    import httpx as httpx_mod
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+
+    not_found = MagicMock()
+    not_found.raise_for_status.side_effect = httpx_mod.HTTPStatusError(
+        "404", request=MagicMock(), response=MagicMock()
+    )
+
+    list_resp = MagicMock()
+    list_resp.raise_for_status = MagicMock()
+    list_resp.json.return_value = [{"name": "feature_request"}]
+
+    content_resp = MagicMock()
+    content_resp.raise_for_status = MagicMock()
+    content_resp.json.return_value = {"content": "Feature request template"}
+
+    with patch("httpx.get", side_effect=[not_found, list_resp, content_resp]):
+        result = gl.get_pr_template("owner", "repo")
+
+    assert result == "Feature request template"
+
+
+def test_gitlab_get_pr_template_returns_none_when_no_templates() -> None:
+    """T5c: returns None when no templates exist on the project."""
+    import httpx as httpx_mod
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+
+    not_found = MagicMock()
+    not_found.raise_for_status.side_effect = httpx_mod.HTTPStatusError(
+        "404", request=MagicMock(), response=MagicMock()
+    )
+
+    empty_list = MagicMock()
+    empty_list.raise_for_status = MagicMock()
+    empty_list.json.return_value = []
+
+    with patch("httpx.get", side_effect=[not_found, empty_list]):
+        result = gl.get_pr_template("owner", "repo")
+
+    assert result is None

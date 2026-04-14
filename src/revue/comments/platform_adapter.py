@@ -608,13 +608,12 @@ class GitLabAdapter(PlatformAdapter):
         pr_number: int,
         discussion_id: str
     ) -> bool:
-        """Resolve GitLab discussion (correct API call)."""
+        """Resolve GitLab discussion via PUT with JSON body (AC12)."""
         project_id = f"{repo_owner}%2F{repo_name}"
-        url = f"{self.base_url}/projects/{project_id}/merge_requests/{pr_number}/discussions/{discussion_id}?resolved=true"
-        
-        response = httpx.put(url, headers=self.headers)
+        url = f"{self.base_url}/projects/{project_id}/merge_requests/{pr_number}/discussions/{discussion_id}"
+        response = httpx.put(url, json={"resolved": True}, headers=self.headers)
         return response.status_code == 200
-    
+
     def post_reply(
         self,
         repo_owner: str,
@@ -624,9 +623,34 @@ class GitLabAdapter(PlatformAdapter):
         thread_id: Optional[str],
         body: str
     ) -> str:
-        """Post reply to GitLab discussion (placeholder)."""
-        # Implement based on actual API needs
-        return ""
+        """Post a reply note to a GitLab discussion."""
+        if not thread_id:
+            _log.error("post_reply: thread_id is None for comment %s — skipping", comment_id)
+            return ""
+        project_id = f"{repo_owner}%2F{repo_name}"
+        url = f"{self.base_url}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}/notes"
+        response = httpx.post(url, json={"body": body}, headers=self.headers)
+        response.raise_for_status()
+        return str(response.json()["id"])
+
+    def _fetch_discussions(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+    ) -> list[dict]:
+        """Fetch all MR discussions with pagination (X-Next-Page header)."""
+        project_id = f"{repo_owner}%2F{repo_name}"
+        base_url = f"{self.base_url}/projects/{project_id}/merge_requests/{pr_number}/discussions"
+        url: Optional[str] = base_url
+        discussions: list[dict] = []
+        while url:
+            response = httpx.get(url, headers=self.headers)
+            response.raise_for_status()
+            discussions.extend(response.json())
+            next_page = response.headers.get("X-Next-Page", "")
+            url = f"{base_url}?page={next_page}" if next_page else None
+        return discussions
 
     def get_all_pr_comments(
         self,
@@ -634,8 +658,31 @@ class GitLabAdapter(PlatformAdapter):
         repo_name: str,
         pr_number: int,
     ) -> list[dict]:
-        """Fetch all GitLab MR discussion notes (TODO: implement)."""
-        return []
+        """Fetch all non-system MR notes, normalised to the common comment shape.
+
+        Shape: {id, thread_id, content: {raw}, parent: {id} | None, inline: {path, to}}
+        """
+        discussions = self._fetch_discussions(repo_owner, repo_name, pr_number)
+        result: list[dict] = []
+        for disc in discussions:
+            disc_id = disc["id"]
+            for note in disc.get("notes", []):
+                if note.get("system"):
+                    continue
+                position = note.get("position") or {}
+                parent_id = note.get("in_reply_to_id")
+                result.append({
+                    "id": note["id"],
+                    "thread_id": disc_id,
+                    "content": {"raw": note.get("body", "")},
+                    "parent": {"id": parent_id} if parent_id else None,
+                    "inline": {
+                        "path": position.get("new_path", ""),
+                        "to": position.get("new_line", 0),
+                    },
+                    "resolution": None,
+                })
+        return result
 
     def get_comment_replies(
         self,
@@ -644,8 +691,42 @@ class GitLabAdapter(PlatformAdapter):
         pr_number: int,
         comment_id: str
     ) -> list[dict]:
-        """Fetch GitLab discussion replies (placeholder)."""
-        return []
+        """Return normalised reply notes for the discussion containing *comment_id*."""
+        all_comments = self.get_all_pr_comments(repo_owner, repo_name, pr_number)
+        try:
+            root_id = int(comment_id)
+        except ValueError:
+            _log.warning("get_comment_replies: non-integer comment_id %r — returning []", comment_id)
+            return []
+        return [c for c in all_comments if (c.get("parent") or {}).get("id") == root_id]
+
+    def get_pr_template(self, repo_owner: str, repo_name: str) -> Optional[str]:
+        """Fetch MR description template from GitLab project templates (AC13).
+
+        Tries 'Default' first; falls back to the first listed template.
+        Returns None when no templates exist.
+        """
+        project_id = f"{repo_owner}%2F{repo_name}"
+        base = f"{self.base_url}/projects/{project_id}/templates/merge_requests"
+        try:
+            resp = httpx.get(f"{base}/Default", headers=self.headers)
+            resp.raise_for_status()
+            return resp.json().get("content")
+        except httpx.HTTPStatusError:
+            pass
+        # Fallback: list templates and use the first one
+        try:
+            list_resp = httpx.get(base, headers=self.headers)
+            list_resp.raise_for_status()
+            templates = list_resp.json()
+            if not templates:
+                return None
+            name = templates[0]["name"]
+            content_resp = httpx.get(f"{base}/{name}", headers=self.headers)
+            content_resp.raise_for_status()
+            return content_resp.json().get("content")
+        except httpx.HTTPStatusError:
+            return None
 
     def is_comment_resolved(
         self,

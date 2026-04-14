@@ -115,9 +115,41 @@ def test_reply_tracking_registry_github_returns_service_when_token_set(tmp_path)
 
 def test_reply_tracking_registry_unknown_platform_returns_none():
     from revue.core.reply_tracking import get_strategy
-    assert get_strategy("gitlab") is None
     assert get_strategy("azuredevops") is None
     assert get_strategy("") is None
+
+
+# ---------------------------------------------------------------------------
+# T6 — GitLab strategy (REVUE-120)
+# ---------------------------------------------------------------------------
+
+def test_gitlab_strategy_registered_in_registry():
+    """T6a: get_strategy('gitlab') returns a non-None strategy after REVUE-120."""
+    from revue.core.reply_tracking import get_strategy
+    assert get_strategy("gitlab") is not None
+
+
+def test_gitlab_strategy_returns_none_without_token(monkeypatch):
+    """T6b: build_wont_fix_svc returns None and prints warning when GITLAB_TOKEN unset."""
+    from revue.core.reply_tracking import get_strategy
+    monkeypatch.delenv("GITLAB_TOKEN", raising=False)
+
+    strategy = get_strategy("gitlab")
+    pr_ctx = type("PC", (), {"repo_path": ".", "repo_owner": "o", "repo_name": "r"})()
+    result = strategy.build_wont_fix_svc(pr_ctx, ai_client=None)
+    assert result is None
+
+
+def test_gitlab_strategy_builds_service_with_token(monkeypatch):
+    """T6c: build_wont_fix_svc returns a WontFixReplyService when GITLAB_TOKEN is set."""
+    from revue.core.reply_tracking import get_strategy
+    from revue.comments.service import WontFixReplyService
+    monkeypatch.setenv("GITLAB_TOKEN", "glpat-test")
+
+    strategy = get_strategy("gitlab")
+    pr_ctx = type("PC", (), {"repo_path": ".", "repo_owner": "owner", "repo_name": "repo"})()
+    result = strategy.build_wont_fix_svc(pr_ctx, ai_client=None)
+    assert isinstance(result, WontFixReplyService)
 
 
 # ---------------------------------------------------------------------------
