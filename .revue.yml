@@ -107,6 +107,16 @@ noise_filters:
       rationale: "Summary generation runs once per review run on a small dataset (one
         summary comment). Caching adds complexity for zero measurable benefit."
       applies_to: ["kai"]  # kai=performance
+    - pattern: "Logging AI provider name or model name may expose sensitive information"
+      rationale: "provider (e.g. 'openai') and model (e.g. 'gpt-4o-mini') are public
+        configuration metadata, not credentials. The API key is resolved separately
+        by key_resolver.py and is never logged. No masking is needed."
+      applies_to: ["maya", "zara"]  # maya=code-quality, zara=security
+    - pattern: "Removing --provider/--model CLI flags may confuse users who expect command-line configuration"
+      rationale: "A comment is present in every CI config explaining that provider and
+        model are now read from .revue.yml. The change is intentional and documented
+        inline at the point of removal."
+      applies_to: ["maya"]  # maya=code-quality
   disallowed_patterns:
     - pattern: "TODO comments in production code"
       rationale: "TODOs should be tracked as Jira tickets"

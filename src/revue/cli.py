@@ -268,6 +268,7 @@ def cmd_review(
 
     # 9. Run pipeline
     from revue.core.pipeline import AllAgentsFailedError
+    print(f"[revue] Provider: {config.provider}  Model: {config.model}", flush=True)
     print(f"[revue] Validating license...")
     fallback_mode = "normal"
     try:

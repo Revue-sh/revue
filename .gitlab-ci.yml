@@ -58,14 +58,14 @@ revue-review:
     - PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
 
     # Run AI code review
+    # Provider and model are read from .revue.yml — no --provider/--model flags needed.
+    # Set the API key CI variable matching your provider (e.g. OPENAI_API_KEY). (REVUE-148)
     - echo "[revue] Starting AI code review..."
     - |
       PYTHONPATH="$(pwd)/src" python3 -u src/revue/cli.py review \
         --diff /tmp/revue_pr.diff \
         --platform gitlab \
         --pr-id "$CI_MERGE_REQUEST_IID" \
-        --provider "${AI_PROVIDER:-anthropic}" \
-        --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" \
         --config .revue.yml \
         --comment-style per-issue \
         --pr-description-file /tmp/revue_mr_description.txt
