@@ -75,7 +75,7 @@ class GitLabAdapter:
 
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
@@ -253,7 +253,16 @@ class GitLabAdapter:
             )
             notes: list[dict] = []
             for discussion in discussions:
-                notes.extend(discussion.get("notes", []))
+                resolved = bool(discussion.get("resolved", False))
+                discussion_id = str(discussion.get("id", ""))
+                for note in discussion.get("notes", []):
+                    # Inject discussion-level metadata so downstream dedup can:
+                    # - exclude resolved won't-fix threads from summary count
+                    # - use discussion ID (not note ID) for AC5 resolve_inline_comment
+                    note_copy = dict(note)
+                    note_copy["_discussion_resolved"] = resolved
+                    note_copy["_discussion_id"] = discussion_id
+                    notes.append(note_copy)
             return notes
         except Exception as exc:
             _LOG.warning("get_existing_comments failed for MR %s: %s", pr_id, exc)

@@ -238,7 +238,7 @@ _GITLAB_CHANGES_RESPONSE = json.dumps(
 ).encode()
 
 
-def _mock_urlopen_gitlab(request: object) -> MagicMock:
+def _mock_urlopen_gitlab(request: object, **kwargs) -> MagicMock:
     """Return a context-manager mock that yields the changes response."""
     resp = MagicMock()
     resp.read.return_value = _GITLAB_CHANGES_RESPONSE
@@ -678,6 +678,71 @@ def test_gitlab_get_existing_comments_flattens_discussions() -> None:
     assert comments[0]["body"] == "Note A"
     assert comments[1]["body"] == "Note B"
     assert comments[2]["body"] == "Note C"
+
+
+def test_gitlab_get_existing_comments_injects_discussion_resolved() -> None:
+    """Each note receives _discussion_resolved from its parent discussion.
+
+    Regression: summary was counting resolved-thread findings as 'requiring
+    attention'. The fix needs per-note resolution state so dedup can exclude
+    resolved-prior findings from the summary total.
+    """
+    discussions = json.dumps([
+        {
+            "id": "d1",
+            "resolved": True,
+            "notes": [{"id": 1, "body": "Note A"}, {"id": 2, "body": "Note B"}],
+        },
+        {
+            "id": "d2",
+            "resolved": False,
+            "notes": [{"id": 3, "body": "Note C"}],
+        },
+        {
+            "id": "d3",
+            # no "resolved" key — absent means unresolved
+            "notes": [{"id": 4, "body": "Note D"}],
+        },
+    ]).encode()
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch("urllib.request.urlopen", return_value=_make_resp(discussions)):
+        comments = adapter.get_existing_comments(1)
+
+    assert len(comments) == 4
+    assert comments[0]["_discussion_resolved"] is True   # Note A in resolved discussion
+    assert comments[1]["_discussion_resolved"] is True   # Note B in resolved discussion
+    assert comments[2]["_discussion_resolved"] is False  # Note C in open discussion
+    assert comments[3]["_discussion_resolved"] is False  # Note D, absent → False
+
+
+def test_gitlab_get_existing_comments_injects_discussion_id() -> None:
+    """Each note receives _discussion_id from its parent discussion.
+
+    AC5 (auto-resolve) calls resolve_inline_comment with the platform_comment_id
+    stored in the fingerprint map.  GitLab's resolve endpoint requires the
+    *discussion* ID — not the *note* ID.  Without _discussion_id injection,
+    AC5 stores note IDs and silently fails with 404 when trying to resolve.
+    """
+    discussions = json.dumps([
+        {
+            "id": "disc-abc",
+            "resolved": False,
+            "notes": [{"id": 10, "body": "Note A"}, {"id": 11, "body": "Note B"}],
+        },
+        {
+            "id": "disc-xyz",
+            "resolved": True,
+            "notes": [{"id": 20, "body": "Note C"}],
+        },
+    ]).encode()
+    adapter = GitLabAdapter(token="tok", project_id=42)
+    with patch("urllib.request.urlopen", return_value=_make_resp(discussions)):
+        comments = adapter.get_existing_comments(1)
+
+    assert len(comments) == 3
+    assert comments[0]["_discussion_id"] == "disc-abc"  # Note A
+    assert comments[1]["_discussion_id"] == "disc-abc"  # Note B shares discussion
+    assert comments[2]["_discussion_id"] == "disc-xyz"  # Note C
 
 
 # =====================================================================

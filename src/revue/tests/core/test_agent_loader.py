@@ -152,7 +152,7 @@ def test_loaded_agent_analyse_returns_reviews():
     results = agent.analyse([_fc()])
     assert len(results) == 1
     assert isinstance(results[0], AIReview)
-    assert results[0].category == "zara"
+    assert results[0].category == "security"  # normalised from agent name fallback
 
 
 def test_loaded_agent_analyse_propagates_client_error():
@@ -238,6 +238,41 @@ def test_loaded_agent_analyse_preserves_category_from_finding():
     agent = LoadedAgent(defn, _mock_client(payload))
     results = agent.analyse([_fc()])
     assert results[0].category == "security"
+
+
+def test_loaded_agent_falls_back_to_canonical_category_not_agent_name():
+    """When AI omits category, the fallback must be the agent's canonical category
+    string (e.g. 'code-quality'), NOT the raw agent name ('maya').
+
+    Regression: agent names like 'maya', 'zara', 'leo', 'kai' are not in
+    cli._CATEGORY_MAP so findings with those as category were silently dropped
+    from the Quality Breakdown while still being counted in total_findings.
+    """
+    payload = json.dumps([{
+        "file_path": "a.py", "line_number": 3, "severity": "medium",
+        "issue": "Dead code", "suggestion": "remove", "confidence": 0.7
+        # No "category" field — AI omitted it
+    }])
+    defn = AgentDefinition(name="maya", display_name="Maya", role="code quality",
+                           system_prompt="Find quality issues.")
+    agent = LoadedAgent(defn, _mock_client(payload))
+    results = agent.analyse([_fc()])
+    assert results[0].category == "code-quality"  # NOT "maya"
+
+
+def test_loaded_agent_normalises_unknown_category_to_agent_canonical():
+    """When AI returns an unrecognised category string, normalise to the agent's
+    canonical so the Quality Breakdown never silently drops findings."""
+    payload = json.dumps([{
+        "file_path": "a.py", "line_number": 1, "severity": "high",
+        "issue": "SQL injection", "suggestion": "parameterize", "confidence": 0.9,
+        "category": "some-unexpected-value"
+    }])
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    agent = LoadedAgent(defn, _mock_client(payload))
+    results = agent.analyse([_fc()])
+    assert results[0].category == "security"  # agent canonical, not the AI garbage
 
 
 # ---------------------------------------------------------------------------
@@ -628,3 +663,56 @@ def test_empty_patterns_no_injection():
     assert agent._def.system_prompt == original_prompt
     assert "Allowed Patterns" not in agent._def.system_prompt
     assert "Disallowed Patterns" not in agent._def.system_prompt
+
+
+def test_applies_to_scopes_pattern_to_matching_agent():
+    """Pattern with applies_to only injects into agents whose name is in the list."""
+    scoped = {"pattern": "SRP violation in models", "rationale": "intentional",
+              "applies_to": ["leo"]}
+    leo = LoadedAgent(AgentDefinition(name="leo", display_name="Leo", role="architecture",
+                                     system_prompt="Review architecture."), _mock_client())
+    zara = LoadedAgent(AgentDefinition(name="zara", display_name="Zara", role="security",
+                                      system_prompt="Find security issues."), _mock_client())
+
+    inject_patterns([leo, zara], allowed_patterns=[scoped], disallowed_patterns=[])
+
+    assert "SRP violation in models" in leo._def.system_prompt
+    assert "SRP violation in models" not in zara._def.system_prompt
+
+
+def test_pattern_without_applies_to_injects_into_all_agents():
+    """Pattern without applies_to (backward compat) appears in every agent's prompt."""
+    global_pattern = {"pattern": "TODO in production code", "rationale": "track as Jira ticket"}
+    leo = LoadedAgent(AgentDefinition(name="leo", display_name="Leo", role="architecture",
+                                     system_prompt="Review architecture."), _mock_client())
+    zara = LoadedAgent(AgentDefinition(name="zara", display_name="Zara", role="security",
+                                      system_prompt="Find security issues."), _mock_client())
+
+    inject_patterns([leo, zara], allowed_patterns=[], disallowed_patterns=[global_pattern])
+
+    assert "TODO in production code" in leo._def.system_prompt
+    assert "TODO in production code" in zara._def.system_prompt
+
+
+def test_agent_with_no_matching_scoped_patterns_gets_no_injection():
+    """Agent whose name isn't in any applies_to list receives no injection."""
+    leo_only = {"pattern": "Architecture concern", "rationale": "intentional",
+                "applies_to": ["leo"]}
+    zara = LoadedAgent(AgentDefinition(name="zara", display_name="Zara", role="security",
+                                      system_prompt="Find security issues."), _mock_client())
+    original = zara._def.system_prompt
+
+    inject_patterns([zara], allowed_patterns=[leo_only], disallowed_patterns=[])
+
+    assert zara._def.system_prompt == original
+
+
+def test_applies_to_case_insensitive():
+    """Agent name matching is case-insensitive — 'LEO' matches agent named 'leo'."""
+    scoped = {"pattern": "Architecture note", "rationale": "ok", "applies_to": ["LEO"]}
+    leo = LoadedAgent(AgentDefinition(name="leo", display_name="Leo", role="architecture",
+                                     system_prompt="Review architecture."), _mock_client())
+
+    inject_patterns([leo], allowed_patterns=[scoped], disallowed_patterns=[])
+
+    assert "Architecture note" in leo._def.system_prompt

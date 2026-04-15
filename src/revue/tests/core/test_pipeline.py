@@ -1341,3 +1341,248 @@ def test_build_enhanced_summary_flag_default_shows_section():
         last_updated_at="just now",
     )
     assert "### Files Reviewed" in body
+
+
+def test_build_enhanced_summary_unknown_category_falls_back_to_code_quality():
+    """B4 regression: findings with unrecognised category must appear under Code Quality."""
+    import json
+    from revue.cli import _build_enhanced_summary
+
+    response_json = json.dumps({
+        "findings": [
+            {
+                "category": "unexpected-garbage",
+                "severity": "low",
+                "issue": "Some unexpected issue",
+                "suggestion": "Fix it",
+                "line": 1,
+            }
+        ],
+        "summary": "one finding",
+    })
+    rr = ReviewResult(file_path="app.py", response=response_json, error=None)
+    body = _build_enhanced_summary(
+        review_results=[rr],
+        total_findings={"low": 1},
+        revision=1,
+        last_updated_at="just now",
+    )
+    # The finding must appear under Code Quality, not be silently dropped
+    assert "Code Quality" in body
+    # Code Quality row must show a finding (warning icon), not the clean-slate label
+    lines = body.splitlines()
+    cq_line = next((l for l in lines if "Code Quality" in l), None)
+    assert cq_line is not None
+    assert "⚠️" in cq_line, (
+        "Code Quality row must show a warning when the unknown-category finding is present"
+    )
+
+
+def test_build_enhanced_summary_previously_tracked_adjusts_findings_section():
+    """When previously_tracked>0 the Findings section shows active count and a
+    '(N previously tracked)' note, rather than claiming all issues require attention.
+
+    Regression: resolved won't-fix threads were still counted in 'requires attention'
+    even though they were already decided.
+    """
+    import json
+    from revue.cli import _build_enhanced_summary
+
+    body = _build_enhanced_summary(
+        review_results=[],
+        total_findings={"medium": 6, "low": 0, "high": 0, "info": 0},
+        revision=3,
+        last_updated_at="just now",
+        previously_tracked=3,
+    )
+    # Should show the active count (6), not inflated total (9)
+    assert "6 issue" in body
+    # Must mention the previously tracked count so the user understands the discrepancy
+    assert "previously tracked" in body
+
+
+def test_build_enhanced_summary_zero_previously_tracked_unchanged():
+    """When previously_tracked=0 the output is identical to not passing the argument."""
+    import json
+    from revue.cli import _build_enhanced_summary
+
+    body_default = _build_enhanced_summary(
+        review_results=[],
+        total_findings={"medium": 3},
+        revision=1,
+        last_updated_at="just now",
+    )
+    body_zero = _build_enhanced_summary(
+        review_results=[],
+        total_findings={"medium": 3},
+        revision=1,
+        last_updated_at="just now",
+        previously_tracked=0,
+    )
+    assert body_default == body_zero
+
+
+def test_apply_sentinel_strategy_stores_resolved_flag():
+    """_apply_sentinel_strategy should store resolved state from the comment dict.
+
+    Regression: fingerprint map dropped resolved state, so resolved-thread
+    findings were counted as 'requiring attention' in the summary.
+    """
+    from revue.cli import _apply_sentinel_strategy
+
+    body = "[//]: # (revue:fp:abc123) some finding text"
+    result: dict = {}
+    _apply_sentinel_strategy(body, "42", result, resolved=True)
+
+    assert "abc123" in result
+    assert result["abc123"]["resolved"] is True
+
+
+def test_apply_sentinel_strategy_resolved_false_by_default():
+    """When resolved is False (default), the stored entry has resolved=False."""
+    from revue.cli import _apply_sentinel_strategy
+
+    body = "[//]: # (revue:fp:def456) another finding"
+    result: dict = {}
+    _apply_sentinel_strategy(body, "99", result, resolved=False)
+
+    assert "def456" in result
+    assert result["def456"]["resolved"] is False
+
+
+def test_apply_location_strategy_uses_gitlab_position() -> None:
+    """_apply_location_strategy must recognise GitLab 'position' as well as
+    Bitbucket 'inline', so pre-sentinel comments on GitLab are fingerprinted
+    and AC5 can auto-resolve them.
+
+    Regression: location strategy only read c.get('inline'), which is
+    Bitbucket-specific. GitLab notes use c.get('position') with new_path /
+    new_line. Ghost threads from pre-sentinel runs were invisible to merged_prior
+    → AC5 never fired → open threads persisted unresolved.
+    """
+    from revue.cli import _apply_location_strategy
+    from revue.comments.fingerprint import fingerprint as gen_fp
+
+    gitlab_note = {
+        "id": 99,
+        "body": "**🔴 [HIGH] Missing validation**\ndetails here",
+        "_discussion_resolved": False,
+        # GitLab inline comment has 'position', not 'inline'
+        "position": {
+            "new_path": "src/app.py",
+            "new_line": 42,
+        },
+    }
+    result: dict = {}
+    _apply_location_strategy(gitlab_note, gitlab_note["body"], "disc-99", result, gen_fp)
+
+    expected_fp = gen_fp("src/app.py", 42, "")
+    assert expected_fp in result, "GitLab position must produce a location fingerprint"
+    assert result[expected_fp]["file_path"] == "src/app.py"
+    assert result[expected_fp]["platform_comment_id"] == "disc-99"
+    assert result[expected_fp]["severity"] == "high"
+
+
+def test_apply_location_strategy_bitbucket_inline_still_works() -> None:
+    """Ensure the GitLab position fix does not break Bitbucket 'inline' support."""
+    from revue.cli import _apply_location_strategy
+    from revue.comments.fingerprint import fingerprint as gen_fp
+
+    bitbucket_note = {
+        "id": 55,
+        "body": "**🟡 [MEDIUM] Unused import**\ndetails",
+        "_discussion_resolved": False,
+        "inline": {"path": "lib/util.py", "to": 7},
+    }
+    result: dict = {}
+    _apply_location_strategy(bitbucket_note, bitbucket_note["body"], "55", result, gen_fp)
+
+    expected_fp = gen_fp("lib/util.py", 7, "")
+    assert expected_fp in result
+    assert result[expected_fp]["file_path"] == "lib/util.py"
+    assert result[expected_fp]["severity"] == "medium"
+
+
+def test_build_api_fingerprint_map_uses_discussion_id_as_platform_id() -> None:
+    """_build_api_fingerprint_map must store _discussion_id as platform_comment_id.
+
+    GitLab's resolve_inline_comment endpoint requires the discussion ID, not the
+    note ID. If the fingerprint map stores note IDs, AC5 fails silently with 404.
+    """
+    from revue.cli import _build_api_fingerprint_map
+    from revue.comments.fingerprint import fingerprint as gen_fp
+
+    fp_hash = gen_fp("app.py", 10, "")
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = [
+        {
+            "id": 9999,               # note ID — must NOT be stored
+            "_discussion_id": "disc-aaa",  # discussion ID — MUST be stored
+            "_discussion_resolved": False,
+            "body": f"**🔴 [HIGH] Some issue**\n\n[//]: # (revue:fp:{fp_hash})",
+        }
+    ]
+
+    result = _build_api_fingerprint_map(mock_adapter, 1)
+
+    assert fp_hash in result
+    assert result[fp_hash]["platform_comment_id"] == "disc-aaa", (
+        "platform_comment_id must be discussion ID for AC5 resolve_inline_comment to work"
+    )
+
+
+def test_apply_location_strategy_github_flat_structure() -> None:
+    """_apply_location_strategy must handle GitHub's flat comment structure.
+
+    GitHub review comments have top-level 'path' and 'line' fields.
+    They also have 'position' as an INTEGER (diff position), not a dict —
+    calling .get() on it would raise AttributeError.
+
+    Regression guard: the GitLab 'position' dict fix must not break GitHub
+    by treating integer position as a dict.
+    """
+    from revue.cli import _apply_location_strategy
+    from revue.comments.fingerprint import fingerprint as gen_fp
+
+    github_comment = {
+        "id": 777,
+        "body": "**🟡 [MEDIUM] Missing type hints**\ndetails",
+        "_discussion_resolved": False,
+        # GitHub: integer diff position (NOT a dict), plus flat path/line
+        "position": 5,
+        "path": "src/utils.py",
+        "line": 20,
+    }
+    result: dict = {}
+    _apply_location_strategy(github_comment, github_comment["body"], "777", result, gen_fp)
+
+    expected_fp = gen_fp("src/utils.py", 20, "")
+    assert expected_fp in result, "GitHub flat path/line must produce a location fingerprint"
+    assert result[expected_fp]["file_path"] == "src/utils.py"
+    assert result[expected_fp]["severity"] == "medium"
+
+
+def test_apply_location_strategy_github_integer_position_no_crash() -> None:
+    """GitHub's integer 'position' field must not raise AttributeError.
+
+    Verifies the isinstance(position, dict) guard prevents .get() being called
+    on an integer — even for a comment that doesn't pass the FINDING_HEADER_RE
+    guard, the position extraction code path must not crash.
+    """
+    from revue.cli import _apply_location_strategy
+    from revue.comments.fingerprint import fingerprint as gen_fp
+
+    github_non_revue_comment = {
+        "id": 888,
+        "body": "Some regular review comment (not a Revue finding)",
+        "position": 3,   # integer — must NOT be called with .get()
+        "path": "file.py",
+        "line": 10,
+    }
+    result: dict = {}
+    # Must not raise AttributeError even though position is an int
+    _apply_location_strategy(
+        github_non_revue_comment, github_non_revue_comment["body"], "888", result, gen_fp
+    )
+    # Non-Revue comment filtered by FINDING_HEADER_RE → no entry
+    assert result == {}

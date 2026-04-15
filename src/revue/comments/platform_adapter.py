@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import urllib.parse
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -110,6 +111,30 @@ class PlatformAdapter(ABC):
     ) -> bool:
         """Check if comment is resolved on platform."""
         pass
+
+    def get_pr_template(self, repo_owner: str, repo_name: str) -> Optional[str]:
+        """Fetch the repo's PR/MR description template. Returns None if not found."""
+        return None
+
+    def ensure_lessons_pr(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        branch: str,
+        revue_yml_content: str,
+        commit_message: str,
+        pr_title: str,
+        pr_description: str,
+    ) -> str:
+        """Create or update a lessons PR/MR for the given branch. Returns PR/MR URL.
+
+        Must be overridden by platform-specific adapters. Raises NotImplementedError
+        if the platform does not yet support automatic lessons PR creation.
+        """
+        raise NotImplementedError(
+            f"Lessons PR creation is not supported on {type(self).__name__}"
+        )
 
 
 class BitbucketAdapter(PlatformAdapter):
@@ -249,11 +274,91 @@ class BitbucketAdapter(PlatformAdapter):
     ) -> bool:
         """Check if Bitbucket comment is resolved."""
         url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/pullrequests/comments/{comment_id}"
-        
+
         response = httpx.get(url, **self._auth_kwargs())
         response.raise_for_status()
 
         return response.json().get('resolved', False)
+
+    _BB_PR_TEMPLATE_PATH = ".bitbucket/pull_request_template.md"
+
+    def get_pr_template(self, repo_owner: str, repo_name: str) -> Optional[str]:
+        """Fetch Bitbucket PR template from .bitbucket/pull_request_template.md.
+        Returns template text on 200, None on 404 or error."""
+        url = (
+            f"{self.base_url}/repositories/{repo_owner}/{repo_name}"
+            f"/src/HEAD/{self._BB_PR_TEMPLATE_PATH}"
+        )
+        try:
+            resp = httpx.get(url, **self._auth_kwargs())
+            if resp.status_code == 200:
+                return resp.text
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+        except Exception:
+            _log.debug("get_pr_template: could not fetch Bitbucket PR template for %s/%s", repo_owner, repo_name)
+        return None
+
+    def ensure_lessons_pr(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        branch: str,
+        revue_yml_content: str,
+        commit_message: str,
+        pr_title: str,
+        pr_description: str,
+    ) -> str:
+        """Create or update Bitbucket lessons PR. Returns PR URL.
+
+        If an open PR for ``branch`` already exists, commits the updated
+        .revue.yml to it and returns the existing URL.  Otherwise commits
+        and creates a new PR targeting main.
+        """
+        # Check for existing open PR on the lessons branch
+        prs_url = (
+            f"{self.base_url}/repositories/{repo_owner}/{repo_name}"
+            f'/pullrequests?q=source.branch.name="{branch}" AND state="OPEN"'
+        )
+        existing_url: Optional[str] = None
+        try:
+            resp = httpx.get(prs_url, **self._auth_kwargs())
+            resp.raise_for_status()
+            values = resp.json().get("values", [])
+            if values:
+                existing_url = values[0].get("links", {}).get("html", {}).get("href", "")
+        except Exception:
+            _log.exception("[REVUE-112] Failed to search for existing Bitbucket lessons PR")
+
+        # Always commit the updated .revue.yml to the branch
+        src_url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/src"
+        commit_resp = httpx.post(
+            src_url,
+            data={"message": commit_message, "branch": branch, ".revue.yml": revue_yml_content},
+            **self._auth_kwargs(),
+        )
+        commit_resp.raise_for_status()
+
+        if existing_url:
+            return existing_url
+
+        # Create a new PR
+        create_url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/pullrequests"
+        pr_resp = httpx.post(
+            create_url,
+            json={
+                "title": pr_title,
+                "description": pr_description,
+                "source": {"branch": {"name": branch}},
+                "destination": {"branch": {"name": "main"}},
+                "close_source_branch": True,
+            },
+            **self._auth_kwargs(),
+        )
+        pr_resp.raise_for_status()
+        return pr_resp.json().get("links", {}).get("html", {}).get("href", "")
 
 
 class GitHubAdapter(PlatformAdapter):
@@ -745,6 +850,87 @@ class GitLabAdapter(PlatformAdapter):
     ) -> bool:
         """Check GitLab discussion resolution (placeholder)."""
         return False
+
+    def ensure_lessons_pr(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        branch: str,
+        revue_yml_content: str,
+        commit_message: str,
+        pr_title: str,
+        pr_description: str,
+    ) -> str:
+        """Create or update a GitLab lessons MR. Returns MR web URL.
+
+        Steps:
+          1. Ensure the lessons branch exists (create from main if not).
+          2. Commit .revue.yml to the branch (POST if new, PUT if exists).
+          3. Find an open MR for the branch or create one.
+        """
+        project_id = f"{repo_owner}%2F{repo_name}"
+        encoded_branch = urllib.parse.quote(branch, safe="")
+
+        # 1. Ensure branch exists
+        branch_url = f"{self.base_url}/projects/{project_id}/repository/branches/{encoded_branch}"
+        branch_resp = httpx.get(branch_url, headers=self.headers)
+        if branch_resp.status_code == 404:
+            httpx.post(
+                f"{self.base_url}/projects/{project_id}/repository/branches",
+                json={"branch": branch, "ref": "main"},
+                headers=self.headers,
+            ).raise_for_status()
+        elif branch_resp.status_code != 200:
+            branch_resp.raise_for_status()
+
+        # 2. Commit .revue.yml (POST if new, PUT if already on branch)
+        encoded_file = urllib.parse.quote(".revue.yml", safe="")
+        file_url = f"{self.base_url}/projects/{project_id}/repository/files/{encoded_file}"
+        file_check = httpx.get(file_url, headers=self.headers, params={"ref": branch})
+        if file_check.status_code == 404:
+            httpx.post(
+                file_url,
+                json={"branch": branch, "commit_message": commit_message, "content": revue_yml_content},
+                headers=self.headers,
+            ).raise_for_status()
+        else:
+            file_check.raise_for_status()
+            last_commit_id = file_check.json().get("last_commit_id", "")
+            httpx.put(
+                file_url,
+                json={
+                    "branch": branch,
+                    "commit_message": commit_message,
+                    "content": revue_yml_content,
+                    "last_commit_id": last_commit_id,
+                },
+                headers=self.headers,
+            ).raise_for_status()
+
+        # 3. Find or create MR
+        mrs_resp = httpx.get(
+            f"{self.base_url}/projects/{project_id}/merge_requests",
+            headers=self.headers,
+            params={"source_branch": branch, "state": "opened"},
+        )
+        mrs_resp.raise_for_status()
+        mrs = mrs_resp.json()
+        if mrs:
+            return mrs[0]["web_url"]
+
+        mr_resp = httpx.post(
+            f"{self.base_url}/projects/{project_id}/merge_requests",
+            json={
+                "source_branch": branch,
+                "target_branch": "main",
+                "title": pr_title,
+                "description": pr_description,
+            },
+            headers=self.headers,
+        )
+        mr_resp.raise_for_status()
+        return mr_resp.json()["web_url"]
 
 
 def get_platform_adapter(platform: Platform) -> PlatformAdapter:

@@ -58,8 +58,8 @@ class AIConfig:
     ignore_patterns: list[str] = field(default_factory=list)
     disabled_noise_filters: list[str] = field(default_factory=list)  # filter names to disable
     noise_filter_confidence_threshold: float = 0.5  # LowConfidenceFilter threshold
-    allowed_patterns: list[dict[str, str]] = field(default_factory=list)  # REVUE-94
-    disallowed_patterns: list[dict[str, str]] = field(default_factory=list)  # REVUE-94
+    allowed_patterns: list[dict[str, object]] = field(default_factory=list)  # REVUE-94
+    disallowed_patterns: list[dict[str, object]] = field(default_factory=list)  # REVUE-94
     agents_team: str = "team-full-review"
     custom_agents_dir: str = ""
     output_format: str = "markdown"

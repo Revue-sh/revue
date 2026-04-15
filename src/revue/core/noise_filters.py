@@ -76,7 +76,7 @@ class TestFileFilter:
 
     def should_suppress(self, review: AIReview) -> bool:
         path = review.file_path.lower()
-        if review.severity == "critical":
+        if review.severity == "high":
             return False
         return any(pattern in path for pattern in self._TEST_PATTERNS)
 

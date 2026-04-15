@@ -3,7 +3,7 @@
 **Status:** In Development  
 **Epic:** REVUE-87 (Revue as Peer Reviewer Initiative)  
 **Story:** REVUE-98 (Auto-resolve fixed comments)  
-**Updated:** 2026-04-01
+**Updated:** 2026-04-14
 
 ---
 
@@ -271,6 +271,68 @@ def process_comment(comment):
 - **API Resolution:** ✅ Supported via `PUT /discussions/{id}?resolved=true`
 - **Thread ID:** Discussion ID (GitLab groups comments into discussions)
 - **Acknowledgment:** Not needed (API resolution works)
+
+---
+
+## Platform Comment Response Structure
+
+Each platform returns inline comment data in a different shape. This section is the
+canonical reference for anyone editing `_apply_location_strategy` or
+`_build_api_fingerprint_map` in `cli.py`.
+
+### Inline location fields
+
+| Field | Bitbucket | GitLab | GitHub |
+|---|---|---|---|
+| File path | `c["inline"]["path"]` | `c["position"]["new_path"]` | `c["path"]` |
+| Line number | `c["inline"]["to"]` | `c["position"]["new_line"]` | `c["line"]` |
+| `position` key type | absent | **dict** | **integer** (diff-hunk offset, not a dict) |
+
+> **GitHub gotcha:** `c["position"]` is an integer on GitHub review comments.
+> Calling `.get()` on it raises `AttributeError`.
+> `_apply_location_strategy` guards with `isinstance(pos_raw, dict)` before treating
+> it as the GitLab position object.
+
+### Note ID vs. Discussion ID (GitLab only)
+
+GitLab structures inline comments as *discussions* (threads), each containing one or
+more *notes* (individual messages).  The two IDs are different objects:
+
+| Object | ID field | Used for |
+|---|---|---|
+| Discussion | `discussion["id"]` (string, e.g. `"abc123..."`) | `PUT /discussions/{id}` to resolve the thread (AC5) |
+| Note | `note["id"]` (integer) | Identifying a specific message within the thread |
+
+`resolve_inline_comment` requires the **discussion ID**.
+`GitLabAdapter.get_existing_comments` injects `_discussion_id` onto every note dict so
+that `_build_api_fingerprint_map` can store the correct ID as `platform_comment_id`.
+Using the note ID instead silently produces a 404 — AC5 appears to run but nothing
+gets resolved.
+
+Bitbucket and GitHub have no equivalent split: the comment ID is the right handle for
+all operations on both platforms.
+
+### `_apply_location_strategy` field priority
+
+```python
+# How _apply_location_strategy resolves file_path and line for each platform:
+inline   = c.get("inline") or {}                       # Bitbucket
+pos_raw  = c.get("position")
+position = pos_raw if isinstance(pos_raw, dict) else {}  # GitLab (guard GitHub int)
+
+file_path = inline.get("path") or position.get("new_path") or c.get("path", "")
+line      = inline.get("to")   or position.get("new_line") or c.get("line") or 0
+```
+
+### `_build_api_fingerprint_map` ID selection
+
+```python
+# Prefers _discussion_id (GitLab) over plain id (Bitbucket / GitHub)
+effective_id = str(c.get("_discussion_id", "") or c.get("id", ""))
+```
+
+This is why `GitLabAdapter.get_existing_comments` injects `_discussion_id` — it is the
+only place in the call stack that has access to both the note and its parent discussion.
 
 ---
 

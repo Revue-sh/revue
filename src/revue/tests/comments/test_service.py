@@ -122,6 +122,30 @@ def test_parse_thread_decisions_handles_plain_code_fence() -> None:
     assert result[0]["decision"] == "not_acknowledged"
 
 
+def test_parse_thread_decisions_strips_trailing_commas() -> None:
+    """TC3b: AI sometimes emits trailing commas — parser must tolerate them."""
+    raw = (
+        '```json\n'
+        '[\n'
+        '  {\n'
+        '    "fingerprint": "fp1",\n'
+        '    "decision": "reason_missing",\n'
+        '    "reply_draft": "",\n'
+        '  },\n'
+        '  {\n'
+        '    "fingerprint": "fp2",\n'
+        '    "decision": "acknowledged_fixed",\n'
+        '    "reply_draft": "Fix confirmed.",\n'
+        '  },\n'
+        ']\n'
+        '```'
+    )
+    result = _parse_thread_decisions(raw)
+    assert len(result) == 2
+    assert result[0]["fingerprint"] == "fp1"
+    assert result[1]["decision"] == "acknowledged_fixed"
+
+
 # ---------------------------------------------------------------------------
 # TC4: Invalid JSON from AI → ValueError raised (AC10)
 # ---------------------------------------------------------------------------
@@ -921,7 +945,7 @@ def test_respond_posts_replies_and_creates_lessons_pr(tmp_path) -> None:
     posted_body = instance.post_reply.call_args[0][5]
     assert "[//]: # (revue:ack)" in posted_body
     # Thread resolved in Bitbucket — won't-fix is a closed decision
-    instance.resolve_comment.assert_called_once_with("ws", "repo", 42, "101")
+    instance.resolve_comment.assert_called_once_with("ws", "repo", 42, "101", None)
     # State updated to wont_fix
     unresolved = store.get_unresolved_fingerprints("bitbucket", 42)
     assert "fp0001" not in unresolved
@@ -1095,7 +1119,7 @@ def test_respond_acknowledged_fixed_posts_reply_and_resolves(tmp_path) -> None:
         svc.respond(result, 42)
 
     instance.post_reply.assert_called_once()
-    instance.resolve_comment.assert_called_once_with("ws", "repo", 42, "101")
+    instance.resolve_comment.assert_called_once_with("ws", "repo", 42, "101", None)
     unresolved = store.get_unresolved_fingerprints("bitbucket", 42)
     assert "fp0001" not in unresolved
 
@@ -1404,3 +1428,644 @@ def test_respond_marks_resolved_with_correct_platform(tmp_path) -> None:
     assert "ghfp001" not in unresolved_github, (
         "respond() must use self._platform ('github') not 'bitbucket' in mark_resolved"
     )
+
+
+# ---------------------------------------------------------------------------
+# Bug fix: thread_id forwarded to post_reply / resolve_comment (GitLab)
+# ---------------------------------------------------------------------------
+
+def test_collect_threads_includes_thread_id(tmp_path) -> None:
+    """_collect_threads_with_replies must include thread_id from the comment dict
+    so that GitLab's discussion ID is available for post_reply / resolve_comment."""
+    from revue.comments.service import WontFixReplyService
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    mock_adapter = MagicMock(spec=GitLabAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 101,
+            "thread_id": "disc-abc123",
+            "inline": {"path": "src/foo.py", "to": 5},
+            "parent": None,
+            "content": {"raw": "**🟡 [MEDIUM] Some finding\n*Code Quality*"},
+            "resolution": None,
+        },
+        {
+            "id": 201,
+            "thread_id": "disc-abc123",
+            "parent": {"id": 101},
+            "content": {"raw": "Fixed in this PR"},
+            "resolution": None,
+        },
+    ]
+
+    mock_store = MagicMock()
+    mock_store.get_unresolved_fingerprints.return_value = {}
+
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        bitbucket_username="",
+        bitbucket_app_password="",
+        repo_owner="owner",
+        repo_name="repo",
+        platform="gitlab",
+        adapter=mock_adapter,
+    )
+    svc._store = mock_store
+
+    threads = svc._collect_threads_with_replies(pr_number=4)
+
+    assert len(threads) == 1
+    assert threads[0]["thread_id"] == "disc-abc123"
+
+
+def test_respond_passes_thread_id_to_gitlab_post_reply(tmp_path) -> None:
+    """respond() must forward thread_id (discussion ID) to post_reply — not None."""
+    from revue.comments.service import WontFixReplyService
+    from revue.comments.platform_adapter import GitLabAdapter
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[],
+        decisions=[{
+            "fingerprint": "101",
+            "decision": "acknowledged_fixed",
+            "reply_draft": "Fixed — resolving.",
+        }],
+    )
+
+    mock_adapter = MagicMock(spec=GitLabAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 101,
+            "thread_id": "disc-abc123",
+            "inline": {"path": "src/foo.py", "to": 5},
+            "parent": None,
+            "content": {"raw": "**🟡 [MEDIUM] Some finding\n*Code Quality*"},
+            "resolution": None,
+        },
+        {
+            "id": 201,
+            "thread_id": "disc-abc123",
+            "parent": {"id": 101},
+            "content": {"raw": "Fixed in this PR"},
+            "resolution": None,
+        },
+    ]
+    mock_adapter.resolve_comment.return_value = True
+
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        bitbucket_username="",
+        bitbucket_app_password="",
+        repo_owner="owner",
+        repo_name="repo",
+        platform="gitlab",
+        adapter=mock_adapter,
+    )
+
+    svc.respond(result, 4)
+
+    mock_adapter.post_reply.assert_called_once()
+    # thread_id is the 5th positional arg (index 4)
+    call_args = mock_adapter.post_reply.call_args[0]
+    assert call_args[4] == "disc-abc123", f"Expected thread_id='disc-abc123', got {call_args[4]!r}"
+
+
+def test_respond_passes_thread_id_to_gitlab_resolve_comment(tmp_path) -> None:
+    """respond() must forward thread_id (discussion ID) to resolve_comment — not omit it."""
+    from revue.comments.service import WontFixReplyService
+    from revue.comments.platform_adapter import GitLabAdapter
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[],
+        decisions=[{
+            "fingerprint": "101",
+            "decision": "acknowledged_fixed",
+            "reply_draft": "Fixed — resolving.",
+        }],
+    )
+
+    mock_adapter = MagicMock(spec=GitLabAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 101,
+            "thread_id": "disc-abc123",
+            "inline": {"path": "src/foo.py", "to": 5},
+            "parent": None,
+            "content": {"raw": "**🟡 [MEDIUM] Some finding\n*Code Quality*"},
+            "resolution": None,
+        },
+        {
+            "id": 201,
+            "thread_id": "disc-abc123",
+            "parent": {"id": 101},
+            "content": {"raw": "Fixed in this PR"},
+            "resolution": None,
+        },
+    ]
+    mock_adapter.resolve_comment.return_value = True
+
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        bitbucket_username="",
+        bitbucket_app_password="",
+        repo_owner="owner",
+        repo_name="repo",
+        platform="gitlab",
+        adapter=mock_adapter,
+    )
+
+    svc.respond(result, 4)
+
+    mock_adapter.resolve_comment.assert_called_once()
+    # thread_id is the 5th positional arg (index 4)
+    call_args = mock_adapter.resolve_comment.call_args[0]
+    assert call_args[4] == "disc-abc123", f"Expected thread_id='disc-abc123', got {call_args[4]!r}"
+
+
+# ---------------------------------------------------------------------------
+# _ensure_lessons_pr delegates to adapter.ensure_lessons_pr (REVUE-112/120)
+# ---------------------------------------------------------------------------
+
+def test_ensure_lessons_pr_delegates_to_adapter(tmp_path) -> None:
+    """_ensure_lessons_pr must call adapter.ensure_lessons_pr with correct args."""
+    from revue.comments.service import WontFixReplyService
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    mock_adapter = MagicMock(spec=GitLabAdapter)
+    mock_adapter.ensure_lessons_pr.return_value = "https://gitlab.com/o/r/-/merge_requests/5"
+    mock_adapter.get_pr_template.return_value = None
+
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        bitbucket_username="",
+        bitbucket_app_password="",
+        repo_owner="owner",
+        repo_name="repo",
+        platform="gitlab",
+        adapter=mock_adapter,
+    )
+
+    result = svc._ensure_lessons_pr(4, "some pattern", "some rationale", "disallowed_pattern")
+
+    assert result == "https://gitlab.com/o/r/-/merge_requests/5"
+    mock_adapter.ensure_lessons_pr.assert_called_once()
+    call_kwargs = mock_adapter.ensure_lessons_pr.call_args.kwargs
+    assert call_kwargs["repo_owner"] == "owner"
+    assert call_kwargs["repo_name"] == "repo"
+    assert call_kwargs["pr_number"] == 4
+    assert call_kwargs["branch"] == "chore/revue-lessons-4"
+
+
+def test_respond_gitlab_disallowed_pattern_calls_adapter_ensure_lessons_pr(tmp_path) -> None:
+    """respond() with GitLab + disallowed_pattern must call adapter.ensure_lessons_pr and
+    include the returned MR URL in the reply — not fall back to YAML block."""
+    from revue.comments.service import WontFixReplyService
+    from revue.comments.platform_adapter import GitLabAdapter
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[{"pattern": "bad-pattern", "rationale": "disallow this"}],
+        state_updates=[],
+        decisions=[{
+            "fingerprint": "101",
+            "decision": "disallowed_pattern",
+            "pattern": "bad-pattern",
+            "rationale": "disallow this",
+            "reply_draft": "Noted. PR: [LESSONS_PR_URL]",
+        }],
+    )
+
+    mock_adapter = MagicMock(spec=GitLabAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 101,
+            "thread_id": "disc-xyz",
+            "inline": {"path": "src/foo.py", "to": 5},
+            "parent": None,
+            "content": {"raw": "**🟡 [MEDIUM] Some finding\n*Code Quality*"},
+            "resolution": None,
+        },
+        {
+            "id": 201,
+            "thread_id": "disc-xyz",
+            "parent": {"id": 101},
+            "content": {"raw": "won't fix — internal use only"},
+            "resolution": None,
+        },
+    ]
+    mock_adapter.resolve_comment.return_value = False
+    mock_adapter.get_pr_template.return_value = None
+    mock_adapter.ensure_lessons_pr.return_value = "https://gitlab.com/o/r/-/merge_requests/5"
+
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        bitbucket_username="",
+        bitbucket_app_password="",
+        repo_owner="owner",
+        repo_name="repo",
+        platform="gitlab",
+        adapter=mock_adapter,
+    )
+
+    svc.respond(result, 4)
+
+    mock_adapter.ensure_lessons_pr.assert_called_once()
+    mock_adapter.post_reply.assert_called_once()
+    posted_body = mock_adapter.post_reply.call_args[0][5]
+    # Reply should contain the MR URL, not a YAML fallback block
+    assert "https://gitlab.com/o/r/-/merge_requests/5" in posted_body
+    assert "```yaml" not in posted_body
+
+
+# ---------------------------------------------------------------------------
+# Bug fix: two allowed_pattern decisions in one respond() call (REVUE-112)
+# _commit_pattern_to_lessons_branch was removed; both patterns must delegate
+# to adapter.ensure_lessons_pr — the adapter handles idempotency.
+# ---------------------------------------------------------------------------
+
+def test_respond_two_allowed_patterns_both_delegate_to_adapter(tmp_path) -> None:
+    """Two allowed_pattern decisions in one respond() call must each call
+    adapter.ensure_lessons_pr — no AttributeError from removed method."""
+    from revue.comments.service import WontFixReplyService
+    from revue.comments.platform_adapter import GitLabAdapter
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[
+            {"pattern": "pattern-a", "rationale": "reason a"},
+            {"pattern": "pattern-b", "rationale": "reason b"},
+        ],
+        patterns_to_disallow=[],
+        state_updates=[],
+        decisions=[
+            {
+                "fingerprint": "101",
+                "decision": "allowed_pattern",
+                "pattern": "pattern-a",
+                "rationale": "reason a",
+                "reply_draft": "Noted. PR: [LESSONS_PR_URL]",
+            },
+            {
+                "fingerprint": "102",
+                "decision": "allowed_pattern",
+                "pattern": "pattern-b",
+                "rationale": "reason b",
+                "reply_draft": "Noted. PR: [LESSONS_PR_URL]",
+            },
+        ],
+    )
+
+    mock_adapter = MagicMock(spec=GitLabAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 101, "thread_id": "disc-a", "inline": {"path": "a.py", "to": 1},
+            "parent": None, "content": {"raw": "**🟡 [MEDIUM] Finding A\n*Code Quality*"},
+            "resolution": None,
+        },
+        {
+            "id": 201, "thread_id": "disc-a", "parent": {"id": 101},
+            "content": {"raw": "fine, won't fix"}, "resolution": None,
+        },
+        {
+            "id": 102, "thread_id": "disc-b", "inline": {"path": "b.py", "to": 2},
+            "parent": None, "content": {"raw": "**🔵 [LOW] Finding B\n*Code Quality*"},
+            "resolution": None,
+        },
+        {
+            "id": 202, "thread_id": "disc-b", "parent": {"id": 102},
+            "content": {"raw": "also fine"}, "resolution": None,
+        },
+    ]
+    mock_adapter.resolve_comment.return_value = True
+    mock_adapter.get_pr_template.return_value = None
+    mock_adapter.ensure_lessons_pr.return_value = "https://gitlab.com/o/r/-/merge_requests/5"
+
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        bitbucket_username="",
+        bitbucket_app_password="",
+        repo_owner="owner",
+        repo_name="repo",
+        platform="gitlab",
+        adapter=mock_adapter,
+    )
+
+    svc.respond(result, 4)
+
+    # Both patterns must reach the adapter — no AttributeError from dead method
+    assert mock_adapter.ensure_lessons_pr.call_count == 2
+    assert mock_adapter.post_reply.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Bug fix: sentinel detection uses last-reply only (REVUE-112)
+# ---------------------------------------------------------------------------
+
+_SENTINEL = "[//]: # (revue:ack)"
+_FINDING_BODY_S = "**🟡 [MEDIUM] Finding A\n*Code Quality*"
+
+
+def _c(cid, parent_id=None, body=""):
+    """Build a minimal comment dict for sentinel tests."""
+    return {
+        "id": cid,
+        "thread_id": f"disc-{cid}",
+        "inline": {"path": "a.py", "to": 5},
+        "parent": {"id": parent_id} if parent_id else None,
+        "content": {"raw": body},
+        "resolution": None,
+    }
+
+
+def _sentinel_svc(tmp_path, adapter, platform="bitbucket"):
+    from revue.comments.service import WontFixReplyService
+    return WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        bitbucket_username="u",
+        bitbucket_app_password="p",
+        repo_owner="owner",
+        repo_name="repo",
+        platform=platform,
+        adapter=adapter,
+    )
+
+
+def test_collect_threads_already_handled_when_sentinel_is_last_reply(tmp_path) -> None:
+    """Sentinel in last reply → already_handled=True. classify() must not send to AI."""
+    from revue.comments.platform_adapter import BitbucketAdapter
+
+    mock_adapter = MagicMock(spec=BitbucketAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix — pre-existing"),
+        _c(202, parent_id=101, body=f"Could you clarify?\n\n{_SENTINEL}"),
+    ]
+
+    svc = _sentinel_svc(tmp_path, mock_adapter)
+    threads = svc._collect_threads_with_replies(1)
+
+    assert len(threads) == 1
+    assert threads[0]["already_handled"] is True
+
+
+def test_collect_threads_not_already_handled_when_dev_reply_after_sentinel(tmp_path) -> None:
+    """Developer replies after sentinel → already_handled=False. Thread needs re-evaluation."""
+    from revue.comments.platform_adapter import BitbucketAdapter
+
+    mock_adapter = MagicMock(spec=BitbucketAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix — unclear"),
+        _c(202, parent_id=101, body=f"Please clarify.\n\n{_SENTINEL}"),
+        _c(203, parent_id=101, body="It's a rate-limit delay — pre-existing, tracked in REVUE-140."),
+    ]
+
+    svc = _sentinel_svc(tmp_path, mock_adapter)
+    threads = svc._collect_threads_with_replies(1)
+
+    assert len(threads) == 1
+    assert threads[0]["already_handled"] is False
+
+
+def test_classify_skips_ai_for_sentinel_last_threads(tmp_path) -> None:
+    """classify() must not call analyse_reply_threads for already-handled threads.
+    Returns already_handled decisions without an AI call."""
+    from revue.comments.platform_adapter import BitbucketAdapter
+
+    mock_adapter = MagicMock(spec=BitbucketAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix"),
+        _c(202, parent_id=101, body=f"Please clarify.\n\n{_SENTINEL}"),
+    ]
+
+    svc = _sentinel_svc(tmp_path, mock_adapter)
+
+    with patch("revue.core.nova_consolidator.NovaConsolidator.analyse_reply_threads") as mock_ai_call:
+        result = svc.classify(1)
+
+    mock_ai_call.assert_not_called()
+    assert len(result.decisions) == 1
+    assert result.decisions[0]["decision"] == "already_handled"
+    assert result.decisions[0]["fingerprint"] == "101"
+
+
+def test_respond_processes_thread_when_dev_reply_after_sentinel(tmp_path) -> None:
+    """When developer replies after the bot sentinel, respond() must process the
+    decision instead of skipping due to the old sentinel."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[{"pattern": "rate-limit sleep", "rationale": "pre-existing"}],
+        patterns_to_disallow=[],
+        state_updates=[{"fingerprint": "101", "file_path": "a.py", "decision": "allowed_pattern"}],
+        decisions=[{
+            "fingerprint": "101",
+            "decision": "allowed_pattern",
+            "pattern": "rate-limit sleep",
+            "rationale": "pre-existing, tracked",
+            "reply_draft": "Noted — lessons PR: [LESSONS_PR_URL]",
+        }],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            _c(101, body=_FINDING_BODY_S),
+            _c(201, parent_id=101, body="won't fix — unclear"),
+            _c(202, parent_id=101, body=f"Please clarify.\n\n{_SENTINEL}"),
+            # Developer provides reason AFTER the bot's sentinel reply
+            _c(203, parent_id=101, body="It's a rate-limit delay — pre-existing, tracked in REVUE-140."),
+        ]
+        instance.ensure_lessons_pr.return_value = "https://bitbucket.org/ws/repo/pull-requests/9"
+        instance.get_pr_template.return_value = None
+
+        with patch("revue.comments.service.WontFixReplyService._append_pattern_to_config"):
+            svc = WontFixReplyService(
+                repo_path=str(tmp_path),
+                ai_client=MagicMock(),
+                bitbucket_username="u",
+                bitbucket_app_password="p",
+                repo_owner="owner",
+                repo_name="repo",
+            )
+            svc.respond(result, 1)
+
+    # Must have posted — old sentinel does not block when it's not the last reply
+    instance.post_reply.assert_called_once()
+    posted_body = instance.post_reply.call_args[0][5]
+    assert "https://bitbucket.org/ws/repo/pull-requests/9" in posted_body
+
+
+def test_respond_reason_missing_posts_fallback_when_reply_draft_empty(tmp_path) -> None:
+    """reason_missing with empty reply_draft must post a human-readable message,
+    not just the invisible sentinel comment."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[],
+        decisions=[{
+            "fingerprint": "101",
+            "decision": "reason_missing",
+            "reply_draft": "",
+        }],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            _c(101, body=_FINDING_BODY_S),
+            _c(201, parent_id=101, body="won't fix"),
+        ]
+
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path),
+            ai_client=MagicMock(),
+            bitbucket_username="u",
+            bitbucket_app_password="p",
+            repo_owner="owner",
+            repo_name="repo",
+        )
+        svc.respond(result, 1)
+
+    instance.post_reply.assert_called_once()
+    posted_body = instance.post_reply.call_args[0][5]
+    # Must contain a human-readable message, not just the sentinel
+    assert _SENTINEL in posted_body
+    assert posted_body.strip() != _SENTINEL  # more than just the sentinel
+
+
+# ---------------------------------------------------------------------------
+# Resolved-sentinel (revue:resolved) — terminal decision recovery
+# ---------------------------------------------------------------------------
+
+_RESOLVED_SENTINEL = "[//]: # (revue:resolved)"
+
+
+def test_collect_threads_already_terminal_when_resolved_sentinel_is_last(tmp_path) -> None:
+    """revue:resolved in last reply → already_terminal=True (terminal decision, thread should be resolved)."""
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix — pre-existing"),
+        _c(202, parent_id=101, body=f"Won't fix: pre-existing pattern.\n\n{_SENTINEL}\n{_RESOLVED_SENTINEL}"),
+    ]
+
+    svc = _sentinel_svc(tmp_path, mock_adapter)
+    threads = svc._collect_threads_with_replies(1)
+
+    assert len(threads) == 1
+    assert threads[0]["already_handled"] is True
+    assert threads[0]["already_terminal"] is True
+
+
+def test_collect_threads_not_terminal_for_ack_only_last_reply(tmp_path) -> None:
+    """revue:ack only (no revue:resolved) → already_terminal=False (still awaiting developer)."""
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix"),
+        _c(202, parent_id=101, body=f"Please provide a reason.\n\n{_SENTINEL}"),
+    ]
+
+    svc = _sentinel_svc(tmp_path, mock_adapter)
+    threads = svc._collect_threads_with_replies(1)
+
+    assert len(threads) == 1
+    assert threads[0]["already_handled"] is True
+    assert threads[0]["already_terminal"] is False
+
+
+def test_respond_resolves_thread_when_already_terminal(tmp_path) -> None:
+    """already_handled + already_terminal → resolve_comment called (recovery for terminal decisions)."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[],
+        decisions=[{
+            "fingerprint": "101",
+            "decision": "already_handled",
+            "reply_draft": "",
+        }],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            _c(101, body=_FINDING_BODY_S),
+            _c(201, parent_id=101, body="won't fix — pre-existing"),
+            _c(202, parent_id=101, body=f"Won't fix: tracked.\n\n{_SENTINEL}\n{_RESOLVED_SENTINEL}"),
+        ]
+
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path),
+            ai_client=MagicMock(),
+            bitbucket_username="u",
+            bitbucket_app_password="p",
+            repo_owner="owner",
+            repo_name="repo",
+        )
+        svc.respond(result, 1)
+
+    instance.resolve_comment.assert_called_once()
+    instance.post_reply.assert_not_called()
+
+
+def test_respond_does_not_resolve_ack_only_already_handled(tmp_path) -> None:
+    """already_handled without revue:resolved → no resolve_comment (still awaiting reason)."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[],
+        decisions=[{
+            "fingerprint": "101",
+            "decision": "already_handled",
+            "reply_draft": "",
+        }],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            _c(101, body=_FINDING_BODY_S),
+            _c(201, parent_id=101, body="won't fix"),
+            _c(202, parent_id=101, body=f"Please provide a reason.\n\n{_SENTINEL}"),
+        ]
+
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path),
+            ai_client=MagicMock(),
+            bitbucket_username="u",
+            bitbucket_app_password="p",
+            repo_owner="owner",
+            repo_name="repo",
+        )
+        svc.respond(result, 1)
+
+    instance.resolve_comment.assert_not_called()
+    instance.post_reply.assert_not_called()

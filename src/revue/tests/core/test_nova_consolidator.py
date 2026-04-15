@@ -44,12 +44,25 @@ def test_keeps_highest_confidence_duplicate():
 
 
 def test_sorted_by_severity_then_confidence():
-    minor = _review(severity="minor", line_number=1)
-    critical = _review(severity="critical", line_number=2)
-    major = _review(severity="major", line_number=3)
-    result = consolidate([minor, critical, major], strategies=[SameFileLineStrategy()])
+    low = _review(severity="low", line_number=1)
+    high = _review(severity="high", line_number=2)
+    medium = _review(severity="medium", line_number=3)
+    result = consolidate([low, high, medium], strategies=[SameFileLineStrategy()])
     severities = [f.severity for f in result.findings]
-    assert severities == ["critical", "major", "minor"]
+    assert severities == ["high", "medium", "low"]
+
+
+def test_normalised_severity_sort_order():
+    """B1 regression: _SEVERITY_ORDER must use normalised keys so findings sort correctly."""
+    low = _review(severity="low", line_number=1, confidence=0.9)
+    high = _review(severity="high", line_number=2, confidence=0.9)
+    medium = _review(severity="medium", line_number=3, confidence=0.9)
+    info = _review(severity="info", line_number=4, confidence=0.9)
+    result = consolidate([info, low, medium, high], strategies=[SameFileLineStrategy()])
+    severities = [f.severity for f in result.findings]
+    assert severities == ["high", "medium", "low", "info"], (
+        "Findings must be sorted high→medium→low→info; old vocab keys get sort key 99"
+    )
 
 
 def test_min_confidence_filter():

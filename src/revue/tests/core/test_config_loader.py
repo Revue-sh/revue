@@ -318,6 +318,44 @@ def test_revue_yml_contains_four_allowed_patterns() -> None:
     assert "Bare except in _inject_pr_context" in pattern_texts
 
 
+def test_validate_patterns_accepts_optional_applies_to() -> None:
+    """applies_to list is accepted and preserved in validated output."""
+    from revue.core.config_loader import _validate_patterns
+
+    entries = [
+        {"pattern": "SRP in models", "rationale": "intentional", "applies_to": ["leo", "maya"]},
+    ]
+    result = _validate_patterns(entries, "allowed_patterns", ".revue.yml")
+    assert result[0]["applies_to"] == ["leo", "maya"]
+
+
+def test_validate_patterns_without_applies_to_is_backward_compatible() -> None:
+    """Pattern without applies_to is still valid — applies to all agents."""
+    from revue.core.config_loader import _validate_patterns
+
+    entries = [{"pattern": "some pattern", "rationale": "some reason"}]
+    result = _validate_patterns(entries, "allowed_patterns", ".revue.yml")
+    assert "applies_to" not in result[0]
+
+
+def test_validate_patterns_rejects_non_list_applies_to() -> None:
+    """applies_to must be a list, not a bare string."""
+    from revue.core.config_loader import _validate_patterns
+
+    entries = [{"pattern": "foo", "rationale": "bar", "applies_to": "leo"}]
+    with pytest.raises(ValueError, match="applies_to"):
+        _validate_patterns(entries, "allowed_patterns", ".revue.yml")
+
+
+def test_validate_patterns_rejects_non_string_items_in_applies_to() -> None:
+    """All items inside applies_to must be strings."""
+    from revue.core.config_loader import _validate_patterns
+
+    entries = [{"pattern": "foo", "rationale": "bar", "applies_to": ["leo", 42]}]
+    with pytest.raises(ValueError, match="applies_to"):
+        _validate_patterns(entries, "allowed_patterns", ".revue.yml")
+
+
 # ---------------------------------------------------------------------------
 # max_parallel_agents — load, default, validate
 # ---------------------------------------------------------------------------

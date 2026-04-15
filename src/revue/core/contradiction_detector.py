@@ -47,10 +47,10 @@ class SameLineSameFileStrategy:
 
     # Pairs that are considered contradictory (high vs low confidence)
     _OPPOSING: dict[str, set[str]] = {
-        "critical": {"suggestion", "minor"},
-        "major": {"suggestion"},
-        "minor": {"critical"},
-        "suggestion": {"critical", "major"},
+        "high": {"info", "low"},
+        "medium": {"info"},
+        "low": {"high"},
+        "info": {"high", "medium"},
     }
 
     def are_contradictory(self, a: AIReview, b: AIReview) -> bool:

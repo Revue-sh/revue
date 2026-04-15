@@ -11,9 +11,11 @@ Fetch and display PR comments with reply threads from Bitbucket, GitHub, or GitL
 
 | Platform | Token env var | Repo |
 |----------|--------------|------|
-| Bitbucket | `BITBUCKET_API_TOKEN` | `cbscd/revue` |
+| Bitbucket | `BITBUCKET_API_TOKEN` + `BITBUCKET_USERNAME` | `cbscd/revue` |
 | GitHub | `GITHUB_TOKEN` | `cbscd/revue-test-github` |
 | GitLab | `GITLAB_TOKEN` | `urukia-group/revue-test-gitlab` |
+
+> **Bitbucket auth note:** GET (read) calls use `Bearer ${BITBUCKET_API_TOKEN}`. POST/PUT/DELETE (write) calls require basic auth: `-u "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}"`. Bearer returns 401 for writes.
 
 ## Instructions
 
@@ -71,6 +73,13 @@ for root in sorted(roots, key=lambda x: x['id']):
         fmt(reply, indent='  → ')
     print()
 "
+```
+
+**Post a reply to a Bitbucket comment:**
+```bash
+/Volumes/LexarSSD/Projects/revue.io/.claude/skills/pr-comments/scripts/bb_post_reply.sh <parent_comment_id> "<body>" [pr_number] [repo]
+# Defaults: PR #48, repo cbscd/revue
+# Example: bb_post_reply.sh 781997361 "Won't fix — tracked as REVUE-138." 48
 ```
 
 ---

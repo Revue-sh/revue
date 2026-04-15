@@ -326,7 +326,21 @@ def _validate_patterns(
                 f"{config_path}: noise_filters.{field_name}[{i}].rationale must be "
                 f"a string, got {type(entry['rationale']).__name__}."
             )
-        validated.append({"pattern": entry["pattern"], "rationale": entry["rationale"]})
+        result: dict[str, object] = {"pattern": entry["pattern"], "rationale": entry["rationale"]}
+        if "applies_to" in entry:
+            at = entry["applies_to"]
+            if not isinstance(at, list):
+                raise ValueError(
+                    f"{config_path}: noise_filters.{field_name}[{i}].applies_to must be "
+                    f"a list of agent name strings, got {type(at).__name__}."
+                )
+            if not all(isinstance(s, str) for s in at):
+                raise ValueError(
+                    f"{config_path}: noise_filters.{field_name}[{i}].applies_to must "
+                    f"contain only strings (agent names)."
+                )
+            result["applies_to"] = [s.lower().strip() for s in at]
+        validated.append(result)
     return validated
 
 

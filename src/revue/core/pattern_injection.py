@@ -44,20 +44,38 @@ def build_pattern_prompt_sections(
     return "\n\n".join(sections)
 
 
+def _pattern_matches_agent(pattern: dict, agent_name: str) -> bool:
+    """Return True if *pattern* applies to *agent_name*.
+
+    A pattern with no ``applies_to`` key (or an empty list) is global —
+    it applies to every agent (backward-compatible behaviour).
+    ``applies_to`` matching is case-insensitive so YAML authors don't need
+    to worry about capitalisation.
+    """
+    applies_to = pattern.get("applies_to", [])
+    if not applies_to:
+        return True
+    return agent_name.lower() in [s.lower() for s in applies_to]
+
+
 def inject_patterns(
     agents: list["LoadedAgent"],
-    allowed_patterns: list[dict[str, str]],
-    disallowed_patterns: list[dict[str, str]],
+    allowed_patterns: list[dict],
+    disallowed_patterns: list[dict],
 ) -> None:
     """Inject pattern sections into each agent's system prompt (in-place).
 
-    Skips injection when both pattern lists are empty.
-    """
-    section = build_pattern_prompt_sections(allowed_patterns, disallowed_patterns)
-    if not section:
-        return
+    Patterns with an ``applies_to`` list are only injected into agents
+    whose name appears in that list.  Patterns without ``applies_to``
+    are injected into every agent (backward-compatible).
 
+    Skips injection entirely for agents that have no matching patterns.
+    """
     for agent in agents:
-        agent._def.system_prompt = (
-            f"{section}\n\n{agent._def.system_prompt}"
-        )
+        agent_allowed = [p for p in allowed_patterns if _pattern_matches_agent(p, agent.name)]
+        agent_disallowed = [p for p in disallowed_patterns if _pattern_matches_agent(p, agent.name)]
+        section = build_pattern_prompt_sections(agent_allowed, agent_disallowed)
+        if section:
+            agent._def.system_prompt = (
+                f"{section}\n\n{agent._def.system_prompt}"
+            )

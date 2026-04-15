@@ -426,16 +426,22 @@ def _build_enhanced_summary(
     fallback_mode: str = "normal",
     show_reviewed_files: bool = True,
     rating_cfg: dict | None = None,
+    previously_tracked: int = 0,
 ) -> str:
     """Build the rich REVUE-97 summary comment body (AC1–AC7).
 
     Args:
-        review_results:  List of ReviewResult objects from the pipeline.
-        total_findings:  Dict of {severity: count} aggregated across all files.
-        revision:        Current review revision number (1 = first post).
-        last_updated_at: Human-readable relative timestamp string.
-        fallback_mode:   Active fallback mode from pipeline (REVUE-117).
-                         Non-normal values add a degradation notice.
+        review_results:     List of ReviewResult objects from the pipeline.
+        total_findings:     Dict of {severity: count} for findings requiring
+                            attention (new postings + open-prior skips).
+                            Does NOT include resolved-prior (won't-fix) findings.
+        revision:           Current review revision number (1 = first post).
+        last_updated_at:    Human-readable relative timestamp string.
+        fallback_mode:      Active fallback mode from pipeline (REVUE-117).
+                            Non-normal values add a degradation notice.
+        previously_tracked: Number of findings skipped because they matched a
+                            resolved (won't-fix) prior thread.  When non-zero
+                            the Findings section notes how many were already decided.
     """
     total = sum(total_findings.values())
     high = total_findings.get("high", 0)
@@ -486,9 +492,8 @@ def _build_enhanced_summary(
             continue
         for f in findings:
             raw_cat = f.get("category", "").lower().strip()
-            display = _CATEGORY_MAP.get(raw_cat)
-            if display:
-                category_counts[display].append(f)
+            display = _CATEGORY_MAP.get(raw_cat, "Code Quality")
+            category_counts[display].append(f)
 
     lines.append("### Quality Breakdown")
     for display_label in _CATEGORY_MAP.values():
@@ -518,12 +523,19 @@ def _build_enhanced_summary(
         lines.append("")
 
     # AC1 / AC4: findings summary
-    if total == 0:
+    if total == 0 and previously_tracked == 0:
         lines.append("### Findings: 0 issues")
         lines.append("")
         lines.append(
             "**Verdict:** Clean implementation following project standards. "
             "No issues detected across all reviewed files."
+        )
+    elif total == 0 and previously_tracked > 0:
+        lines.append("### Findings: 0 issues")
+        lines.append(f"*({previously_tracked} finding{'s' if previously_tracked != 1 else ''} previously tracked — already decided)*")
+        lines.append("")
+        lines.append(
+            "**Verdict:** ✅ All findings have been addressed."
         )
     else:
         counts_str = " · ".join(
@@ -531,11 +543,16 @@ def _build_enhanced_summary(
             for s in SEVERITY_ORDER
             if total_findings.get(s, 0) > 0
         )
-        lines.append(f"### Findings: {total} issue{'s' if total != 1 else ''}")
+        issue_word = f"issue{'s' if total != 1 else ''}"
+        lines.append(f"### Findings: {total} {issue_word}")
         lines.append(f"{counts_str}")
+        if previously_tracked > 0:
+            lines.append(
+                f"*({previously_tracked} previously tracked — won't-fix decisions already recorded)*"
+            )
         lines.append("")
         lines.append(
-            f"**Verdict:** {verdict_icon} {total} issue{'s' if total != 1 else ''} require "
+            f"**Verdict:** {verdict_icon} {total} {issue_word} require "
             f"attention. See inline comments for details."
         )
 
@@ -653,18 +670,36 @@ def _format_file_review(file_path: str, response: str) -> str:
 # Compiled once at module level — used by fingerprint scanning helpers below.
 _FP_SENTINEL_RE = re.compile(r'\[//\]: # \(revue:fp:([a-f0-9]+)\)')
 _FINDING_HEADER_RE = re.compile(r'^\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]')
+# Extracts the normalised severity token from an existing Revue comment body.
+# Used so open-prior counting uses the ORIGINAL severity (as posted) not the
+# current-run re-analysis, keeping the Quality Breakdown consistent with what
+# users see in the UI.
+_FINDING_SEV_EXTRACT_RE = re.compile(r'\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(HIGH|MEDIUM|LOW|INFO)\]')
 
 
-def _apply_sentinel_strategy(body: str, comment_id_str: str, result: dict) -> None:
+def _apply_sentinel_strategy(
+    body: str, comment_id_str: str, result: dict, resolved: bool = False
+) -> None:
     """Strategy 1: extract a sentinel-embedded fingerprint from a comment body.
 
     Each Revue finding comment written by REVUE-119+ code contains
     ``[//]: # (revue:fp:{hash})`` — extract and record it so fresh-CI
     runs can skip re-posting the same finding.
+
+    ``resolved`` is the discussion-level resolution state injected by
+    GitLabAdapter (``_discussion_resolved`` field).  Stored so that
+    ``_run_per_issue_dedup`` can exclude resolved-thread findings from
+    the summary 'requires attention' count.
     """
     m = _FP_SENTINEL_RE.search(body)
     if m:
-        result[m.group(1)] = {"platform_comment_id": comment_id_str, "file_path": ""}
+        sev_m = _FINDING_SEV_EXTRACT_RE.search(body)
+        result[m.group(1)] = {
+            "platform_comment_id": comment_id_str,
+            "file_path": "",
+            "resolved": resolved,
+            "severity": sev_m.group(1).lower() if sev_m else "",
+        }
 
 
 def _apply_location_strategy(c: dict, body: str, comment_id_str: str, result: dict, gen_fp) -> None:
@@ -673,16 +708,34 @@ def _apply_location_strategy(c: dict, body: str, comment_id_str: str, result: di
     Uses ``file_path + line`` only (no diff context) so it matches findings
     computed by ``gen_fingerprint(file, line, "")`` — covers older comments
     that pre-date the sentinel scheme.
+
+    Supports all three platforms:
+    - Bitbucket: ``c["inline"]["path"]`` / ``c["inline"]["to"]``
+    - GitLab:    ``c["position"]["new_path"]`` / ``c["position"]["new_line"]``  (dict)
+    - GitHub:    top-level ``c["path"]`` / ``c["line"]``
+                 (GitHub ``c["position"]`` is an integer diff-position, NOT a dict)
+
+    ``_discussion_resolved`` on the comment dict is propagated so that
+    resolved won't-fix threads don't inflate the summary count.
     """
-    inline = c.get("inline") or {}
-    if not inline or not _FINDING_HEADER_RE.match(body):
+    if not _FINDING_HEADER_RE.match(body):
         return
-    file_path = inline.get("path", "")
-    line = inline.get("to") or 0
+    # Each platform stores location differently:
+    #   Bitbucket: c["inline"]["path"] / c["inline"]["to"]
+    #   GitLab:    c["position"]["new_path"] / c["position"]["new_line"]  (dict)
+    #   GitHub:    c["path"] / c["line"]  (top-level; c["position"] is an int, not a dict)
+    inline = c.get("inline") or {}
+    pos_raw = c.get("position")
+    position = pos_raw if isinstance(pos_raw, dict) else {}
+    file_path = inline.get("path") or position.get("new_path") or c.get("path", "")
+    line = inline.get("to") or position.get("new_line") or c.get("line") or 0
     if file_path and line:
+        sev_m = _FINDING_SEV_EXTRACT_RE.search(body)
         result[gen_fp(file_path, int(line), "")] = {
             "platform_comment_id": comment_id_str,
             "file_path": file_path,
+            "resolved": bool(c.get("_discussion_resolved", False)),
+            "severity": sev_m.group(1).lower() if sev_m else "",
         }
 
 
@@ -702,9 +755,14 @@ def _build_api_fingerprint_map(adapter, pr_num: int) -> dict[str, dict]:
         comments = adapter.get_existing_comments(pr_id=pr_num)
         for c in comments:
             body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
-            comment_id_str = str(c.get("id", ""))
-            _apply_sentinel_strategy(body, comment_id_str, result)
-            _apply_location_strategy(c, body, comment_id_str, result, gen_fingerprint)
+            # For GitLab: use discussion ID (injected as _discussion_id) as the
+            # platform_comment_id so AC5's resolve_inline_comment call uses the
+            # correct endpoint. Bitbucket/GitHub have no _discussion_id, so fall
+            # back to the note/comment ID as before.
+            effective_id = str(c.get("_discussion_id", "") or c.get("id", ""))
+            resolved = bool(c.get("_discussion_resolved", False))
+            _apply_sentinel_strategy(body, effective_id, result, resolved=resolved)
+            _apply_location_strategy(c, body, effective_id, result, gen_fingerprint)
     except Exception:
         pass
     return result
@@ -717,7 +775,7 @@ def _run_per_issue_dedup(
     review_results: list,
     diff_by_file: dict,
     dedup_store,
-) -> tuple[int, int, dict[str, int]]:
+) -> tuple[int, int, dict[str, int], int]:
     """Core per-issue dedup loop shared across all platform posting functions.
 
     Nova's consolidated list is the authoritative set of findings — every item
@@ -729,8 +787,18 @@ def _run_per_issue_dedup(
     fingerprints derived from inline comment metadata prevent re-posting without
     any stored state.
 
-    Returns ``(posted, skipped, total_findings)`` where ``total_findings`` is
-    the severity breakdown of Nova's full list — the number the summary shows.
+    Returns ``(posted, skipped, total_findings, previously_tracked)`` where:
+    - ``total_findings``     — severity breakdown for findings requiring attention
+                               (new postings + open-prior skips; excludes resolved-prior)
+    - ``previously_tracked`` — count of findings skipped because they matched a
+                               RESOLVED prior thread (won't-fix decisions). These are
+                               excluded from total_findings so the summary does not
+                               claim they 'require attention'.
+
+    Order guarantee: total_findings is incremented AFTER the resolved-prior check
+    so that resolved won't-fix findings are never counted toward the summary total.
+    If this order is ever changed, test_resolved_prior_excluded_from_summary_count
+    and test_open_prior_still_counted_in_summary will catch the regression.
     """
     from revue.comments.fingerprint import fingerprint as gen_fingerprint
     from revue.comments.models import CommentState
@@ -743,6 +811,7 @@ def _run_per_issue_dedup(
     merged_prior = {**api_fps, **prior_unresolved}
     posted = 0
     skipped = 0
+    previously_tracked = 0
     total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
     # Hunk fps seen this cycle — used by AC5 to detect fixed findings.
     seen_hunk_fps: set[str] = set()
@@ -764,10 +833,6 @@ def _run_per_issue_dedup(
             if not issue and not details:
                 continue
 
-            # Count every finding in Nova's list (WYSIWYG — summary reflects this).
-            if sev in total_findings:
-                total_findings[sev] += 1
-
             fp = gen_fingerprint(rr.file_path, line, diff_content)
             seen_hunk_fps.add(fp)
 
@@ -775,13 +840,39 @@ def _run_per_issue_dedup(
             # Check diff-based fp first (most precise); fall back to location-based
             # fp (file+line only, no diff) which matches API-derived fingerprints
             # from _apply_location_strategy that lack diff context.
-            if fp in merged_prior:
+            #
+            # ORDER MATTERS: the total_findings increment is BELOW this block so
+            # that resolved-prior findings are excluded from the summary count.
+            # See test_resolved_prior_excluded_from_summary_count for the guard.
+            matched_entry = merged_prior.get(fp) or merged_prior.get(
+                gen_fingerprint(rr.file_path, line, "")
+            )
+            if matched_entry is not None:
+                if matched_entry.get("resolved", False):
+                    # Thread is resolved (won't-fix decision). Do NOT count toward
+                    # total_findings — the issue is already handled.
+                    previously_tracked += 1
+                else:
+                    # Open prior thread — still requires attention, keep in count.
+                    # Use the severity from the EXISTING comment (as visible in the UI),
+                    # not the current re-analysis: the AI may have changed its mind
+                    # between runs, but the user sees the original comment body.
+                    # API fingerprint entries store severity from _apply_sentinel_strategy;
+                    # local-store entries carry comment_body which we parse here.
+                    prior_sev = matched_entry.get("severity", "")
+                    if not prior_sev:
+                        cb = matched_entry.get("comment_body", "")
+                        sev_m = _FINDING_SEV_EXTRACT_RE.search(cb)
+                        prior_sev = sev_m.group(1).lower() if sev_m else sev
+                    count_sev = prior_sev if prior_sev in total_findings else sev
+                    if count_sev in total_findings:
+                        total_findings[count_sev] += 1
                 skipped += 1
                 continue
-            fp_location = gen_fingerprint(rr.file_path, line, "")
-            if fp_location in merged_prior:
-                skipped += 1
-                continue
+
+            # New finding — count it toward the summary total and post it.
+            if sev in total_findings:
+                total_findings[sev] += 1
 
             body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
             if cat:
@@ -851,7 +942,7 @@ def _run_per_issue_dedup(
                     reason="auto-resolved",
                 )
 
-    return posted, skipped, total_findings
+    return posted, skipped, total_findings, previously_tracked
 
 
 def _post_to_platform(
@@ -997,8 +1088,8 @@ def _post_to_platform(
             print(f"Warning: Failed to post review summary to {pr_label}", file=sys.stderr)
 
     if comment_style == "per-issue":
-        # Pre-count from Nova's consolidated list so summary is always accurate
-        # whether it's posted before or after inline comments.
+        # Pre-count all findings so _post_or_update_summary closure has a valid
+        # total_findings to reference regardless of posting order.
         total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
         for rr in review_results:
             if rr.error or not rr.response:
@@ -1012,25 +1103,40 @@ def _post_to_platform(
             except Exception as exc:
                 print(f"[revue] Warning: failed to count findings for {rr.file_path}: {exc}", file=sys.stderr)
 
-        summary_body = _build_enhanced_summary(
-            review_results, total_findings, _revision, _last_updated,
-            fallback_mode=fallback_mode,
-            show_reviewed_files=show_reviewed_files,
-            rating_cfg=rating_cfg,
-        )
-
         # GitLab and Bitbucket show comments newest-first: post inline first,
         # summary last so it lands at the top of the thread.
         # GitHub shows oldest-first: post summary first so it stays pinned.
         gitlab_order = platform_str in ("gitlab", "bitbucket")
+
         if not gitlab_order:
+            # GitHub: post preliminary summary (pre-dedup counts) so it stays
+            # pinned at the top.  May over-count resolved won't-fix findings on
+            # re-runs, but ordering constraint prevents a post-dedup rebuild here.
+            summary_body = _build_enhanced_summary(
+                review_results, total_findings, _revision, _last_updated,
+                fallback_mode=fallback_mode,
+                show_reviewed_files=show_reviewed_files,
+                rating_cfg=rating_cfg,
+            )
             _post_or_update_summary(summary_body)
 
-        posted, skipped, _ = _run_per_issue_dedup(
+        posted, skipped, total_findings, previously_tracked = _run_per_issue_dedup(
             adapter, pr_num, platform_str, review_results, diff_by_file, dedup_store
         )
+        # total_findings is now reassigned to the post-dedup accurate counts.
+        # The closure in _post_or_update_summary sees the updated binding.
 
         if gitlab_order:
+            # Rebuild summary with accurate post-dedup counts: total_findings
+            # excludes resolved-prior findings; previously_tracked notes how many
+            # won't-fix decisions were skipped.
+            summary_body = _build_enhanced_summary(
+                review_results, total_findings, _revision, _last_updated,
+                fallback_mode=fallback_mode,
+                show_reviewed_files=show_reviewed_files,
+                rating_cfg=rating_cfg,
+                previously_tracked=previously_tracked,
+            )
             _post_or_update_summary(summary_body)
 
         if skipped > 0:

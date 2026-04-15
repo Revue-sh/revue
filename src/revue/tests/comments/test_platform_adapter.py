@@ -835,3 +835,227 @@ def test_gitlab_get_pr_template_returns_none_when_no_templates() -> None:
         result = gl.get_pr_template("owner", "repo")
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# T6: GitLabAdapter.ensure_lessons_pr — create branch/file/MR
+# ---------------------------------------------------------------------------
+
+def _gl_ok(json_data=None, text="") -> MagicMock:
+    """Helper: mock httpx response with status_code=200."""
+    m = MagicMock()
+    m.status_code = 200
+    m.raise_for_status = MagicMock()
+    m.json.return_value = json_data or {}
+    m.text = text
+    return m
+
+
+def _gl_404() -> MagicMock:
+    """Helper: mock httpx response with status_code=404."""
+    m = MagicMock()
+    m.status_code = 404
+    m.raise_for_status = MagicMock()
+    m.json.return_value = {}
+    return m
+
+
+def test_gitlab_ensure_lessons_pr_creates_branch_file_and_mr(tmp_path) -> None:
+    """T6a: new branch + new file + no open MR → creates all three, returns web_url."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+
+    branch_missing = _gl_404()           # GET branch → 404
+    create_branch = _gl_ok()             # POST branches
+    file_missing = _gl_404()             # GET file → 404
+    create_file = _gl_ok()               # POST file
+    no_mrs = _gl_ok(json_data=[])        # GET MRs → empty
+    created_mr = _gl_ok(json_data={"web_url": "https://gitlab.com/o/r/-/merge_requests/7"})
+
+    with patch("httpx.get", side_effect=[branch_missing, file_missing, no_mrs]) as mock_get, \
+         patch("httpx.post", side_effect=[create_branch, create_file, created_mr]) as mock_post:
+        url = gl.ensure_lessons_pr(
+            repo_owner="owner",
+            repo_name="repo",
+            pr_number=4,
+            branch="chore/revue-lessons-4",
+            revue_yml_content="noise_filters:\n  allowed_patterns: []\n",
+            commit_message="chore: add pattern",
+            pr_title="chore: Revue lessons from PR #4",
+            pr_description="## Summary\n",
+        )
+
+    assert url == "https://gitlab.com/o/r/-/merge_requests/7"
+    # Branch creation called with correct payload
+    assert mock_post.call_args_list[0].kwargs["json"]["branch"] == "chore/revue-lessons-4"
+    assert mock_post.call_args_list[0].kwargs["json"]["ref"] == "main"
+    # MR creation called with correct source/target
+    mr_payload = mock_post.call_args_list[2].kwargs["json"]
+    assert mr_payload["source_branch"] == "chore/revue-lessons-4"
+    assert mr_payload["target_branch"] == "main"
+
+
+def test_gitlab_ensure_lessons_pr_skips_branch_creation_when_exists() -> None:
+    """T6b: branch already exists → no POST /branches, still commits file and creates MR."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+
+    branch_exists = _gl_ok({"name": "chore/revue-lessons-4"})  # GET branch → 200
+    file_missing = _gl_404()                                     # GET file → 404
+    create_file = _gl_ok()
+    no_mrs = _gl_ok(json_data=[])
+    created_mr = _gl_ok(json_data={"web_url": "https://gitlab.com/o/r/-/merge_requests/8"})
+
+    with patch("httpx.get", side_effect=[branch_exists, file_missing, no_mrs]), \
+         patch("httpx.post", side_effect=[create_file, created_mr]) as mock_post:
+        url = gl.ensure_lessons_pr(
+            "owner", "repo", 4, "chore/revue-lessons-4", "content", "msg", "title", "desc"
+        )
+
+    assert url == "https://gitlab.com/o/r/-/merge_requests/8"
+    # Only file POST + MR POST (no branch POST)
+    assert mock_post.call_count == 2
+
+
+def test_gitlab_ensure_lessons_pr_updates_file_when_already_exists() -> None:
+    """T6c: file already on branch → PUT with last_commit_id, not POST."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+
+    branch_exists = _gl_ok({"name": "chore/revue-lessons-4"})
+    file_exists = _gl_ok({"last_commit_id": "abc123", "content": "old"})  # GET file → 200
+    update_file = _gl_ok()                                                  # PUT file
+    open_mr = _gl_ok(json_data=[{"web_url": "https://gitlab.com/o/r/-/merge_requests/9"}])
+
+    with patch("httpx.get", side_effect=[branch_exists, file_exists, open_mr]), \
+         patch("httpx.put", return_value=update_file) as mock_put, \
+         patch("httpx.post") as mock_post:
+        url = gl.ensure_lessons_pr(
+            "owner", "repo", 4, "chore/revue-lessons-4", "new-content", "msg", "title", "desc"
+        )
+
+    assert url == "https://gitlab.com/o/r/-/merge_requests/9"
+    mock_post.assert_not_called()  # No new MR created
+    assert mock_put.call_count == 1
+    put_payload = mock_put.call_args.kwargs["json"]
+    assert put_payload["last_commit_id"] == "abc123"
+    assert put_payload["content"] == "new-content"
+
+
+def test_gitlab_ensure_lessons_pr_returns_existing_mr_url() -> None:
+    """T6d: open MR already exists → return its URL without creating a new one."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+
+    branch_exists = _gl_ok({"name": "chore/revue-lessons-4"})
+    file_missing = _gl_404()
+    create_file = _gl_ok()
+    existing_mr = _gl_ok(json_data=[{"web_url": "https://gitlab.com/o/r/-/merge_requests/3"}])
+
+    with patch("httpx.get", side_effect=[branch_exists, file_missing, existing_mr]), \
+         patch("httpx.post", return_value=create_file) as mock_post:
+        url = gl.ensure_lessons_pr(
+            "owner", "repo", 4, "chore/revue-lessons-4", "content", "msg", "title", "desc"
+        )
+
+    assert url == "https://gitlab.com/o/r/-/merge_requests/3"
+    # Only one POST — the file commit, not MR creation
+    assert mock_post.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# T7: BitbucketAdapter.get_pr_template and ensure_lessons_pr
+# ---------------------------------------------------------------------------
+
+def test_bitbucket_get_pr_template_returns_content_when_found(adapter) -> None:
+    """T7a: returns template text when Bitbucket src API returns 200."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.text = "## Summary\n\nDescribe your change."
+    resp.raise_for_status = MagicMock()
+
+    with patch("httpx.get", return_value=resp):
+        result = adapter.get_pr_template("owner", "repo")
+
+    assert result == "## Summary\n\nDescribe your change."
+
+
+def test_bitbucket_get_pr_template_returns_none_on_404(adapter) -> None:
+    """T7b: returns None when template file is not found (404)."""
+    resp = MagicMock()
+    resp.status_code = 404
+    resp.raise_for_status = MagicMock()
+
+    with patch("httpx.get", return_value=resp):
+        result = adapter.get_pr_template("owner", "repo")
+
+    assert result is None
+
+
+def test_bitbucket_ensure_lessons_pr_creates_pr_when_none_exists(adapter) -> None:
+    """T7c: no open PR found → commit to branch, create PR, return URL."""
+    empty_list = MagicMock()
+    empty_list.raise_for_status = MagicMock()
+    empty_list.json.return_value = {"values": []}
+
+    commit_resp = MagicMock()
+    commit_resp.raise_for_status = MagicMock()
+
+    create_resp = MagicMock()
+    create_resp.raise_for_status = MagicMock()
+    create_resp.json.return_value = {
+        "links": {"html": {"href": "https://bitbucket.org/ws/repo/pull-requests/5"}}
+    }
+
+    with patch("httpx.get", return_value=empty_list), \
+         patch("httpx.post", side_effect=[commit_resp, create_resp]) as mock_post:
+        url = adapter.ensure_lessons_pr(
+            repo_owner="ws",
+            repo_name="repo",
+            pr_number=10,
+            branch="chore/revue-lessons-10",
+            revue_yml_content="noise_filters: {}",
+            commit_message="chore: add pattern",
+            pr_title="chore: Revue lessons from PR #10",
+            pr_description="## Summary",
+        )
+
+    assert url == "https://bitbucket.org/ws/repo/pull-requests/5"
+    # PR creation payload
+    pr_payload = mock_post.call_args_list[1].kwargs["json"]
+    assert pr_payload["source"]["branch"]["name"] == "chore/revue-lessons-10"
+    assert pr_payload["destination"]["branch"]["name"] == "main"
+
+
+def test_bitbucket_ensure_lessons_pr_returns_existing_url_without_creating(adapter) -> None:
+    """T7d: open PR exists → commit to branch, return existing URL (no new PR)."""
+    open_pr = MagicMock()
+    open_pr.raise_for_status = MagicMock()
+    open_pr.json.return_value = {
+        "values": [
+            {"links": {"html": {"href": "https://bitbucket.org/ws/repo/pull-requests/3"}}}
+        ]
+    }
+
+    commit_resp = MagicMock()
+    commit_resp.raise_for_status = MagicMock()
+
+    with patch("httpx.get", return_value=open_pr), \
+         patch("httpx.post", return_value=commit_resp) as mock_post:
+        url = adapter.ensure_lessons_pr(
+            repo_owner="ws",
+            repo_name="repo",
+            pr_number=10,
+            branch="chore/revue-lessons-10",
+            revue_yml_content="noise_filters: {}",
+            commit_message="chore: add pattern",
+            pr_title="chore: Revue lessons from PR #10",
+            pr_description="## Summary",
+        )
+
+    assert url == "https://bitbucket.org/ws/repo/pull-requests/3"
+    assert mock_post.call_count == 1  # Only the commit, not PR creation

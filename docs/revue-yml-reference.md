@@ -207,9 +207,28 @@ Define patterns that represent intentional design decisions (allowed) or pattern
 | `allowed_patterns` | list[object] | `[]` | Patterns the agent should **not** flag. Each entry has `pattern` (string) and `rationale` (string). |
 | `disallowed_patterns` | list[object] | `[]` | Patterns the agent should **always** flag. Same structure as above. |
 
-Each entry requires:
-- **`pattern`** (string, required): A natural-language description of the code pattern.
-- **`rationale`** (string, required): Why this pattern is allowed or disallowed.
+Each entry requires two fields and supports one optional field:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `pattern` | string | **Yes** | Natural-language description of the code pattern. |
+| `rationale` | string | **Yes** | Why this pattern is allowed or disallowed. |
+| `applies_to` | list[string] | No | Agent names that receive this pattern. Omit (or leave empty) to inject into **all** agents. |
+
+#### `applies_to` — agent-scoped injection
+
+By default every pattern is injected into every agent's system prompt. Use `applies_to` to target only the agents that are relevant, reducing prompt size and preventing unrelated agents from being confused by project-specific context.
+
+Built-in agent names:
+
+| Name | Role |
+|---|---|
+| `zara` | Security |
+| `kai` | Performance |
+| `leo` | Architecture |
+| `maya` | Code quality |
+
+Custom agents (from `custom_agents_dir`) use whatever `name` is declared in their definition file. `applies_to` matching is case-insensitive.
 
 ```yaml
 noise_filters:
@@ -217,16 +236,26 @@ noise_filters:
     - "swift-di"
   low_confidence_threshold: 0.6
   allowed_patterns:
-    - pattern: "_def attribute access on LoadedAgent"
-      rationale: "Internal implementation detail, no public API"
+    # Global — injected into all agents
+    - pattern: "TODO finding where 'TODO'/'FIXME' doesn't literally appear in the line"
+      rationale: "Guard against model hallucinating TODOs from the word 'to' in prose"
+
+    # Scoped — only architecture and code-quality agents need this context
+    - pattern: "N+1 query in comment resolution is acceptable for current dataset size"
+      rationale: "Fewer than 50 comments per PR; batch-fetch deferred to post-MVP"
+      applies_to: ["kai", "leo"]
+
+    # Scoped — code-quality agent only
     - pattern: "Bare except in _inject_pr_context"
-      rationale: "Intentional catch-all, PR context injection must not crash the review loop"
+      rationale: "Intentional catch-all; PR context injection must not crash the review loop"
+      applies_to: ["maya"]
+
   disallowed_patterns:
     - pattern: "TODO comments in production code"
       rationale: "TODOs should be tracked as Jira tickets"
 ```
 
-Allowed patterns are injected under a `## Allowed Patterns — Do Not Flag` heading in each agent's system prompt. Disallowed patterns appear under `## Disallowed Patterns — Always Flag`. When both lists are empty, no injection occurs.
+Patterns are injected under `## Allowed Patterns — Do Not Flag` and `## Disallowed Patterns — Always Flag` headings in each agent's system prompt. Agents with no matching patterns receive no injection at all.
 
 ---
 
@@ -317,6 +346,13 @@ rating:
 noise_filters:
   disable: []
   low_confidence_threshold: 0.5
+  allowed_patterns:
+    - pattern: "N+1 query in comment resolution"
+      rationale: "Fewer than 50 comments per PR; batch-fetch deferred to post-MVP"
+      applies_to: ["kai", "leo"]
+  disallowed_patterns:
+    - pattern: "TODO comments in production code"
+      rationale: "TODOs should be tracked as Jira tickets"
 
 agents:
   team: team-full-review

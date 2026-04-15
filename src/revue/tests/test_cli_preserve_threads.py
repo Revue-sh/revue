@@ -668,6 +668,149 @@ def test_github_missing_token_prints_warning_and_skips(tmp_path, capsys) -> None
     mock_adapter.post_review_comment.assert_not_called()
 
 
+def test_resolved_prior_excluded_from_summary_count(tmp_path) -> None:
+    """Findings whose fingerprint matches a RESOLVED prior thread must NOT be
+    counted in total_findings and must appear as previously_tracked.
+
+    Regression: total_findings was computed before the dedup check so resolved
+    won't-fix findings inflated the summary 'requires attention' count.
+
+    Order-sensitivity guard: if anyone moves the total_findings increment to
+    before the dedup check again, this test will catch it by verifying that
+    total_findings is 0 and previously_tracked is 1 for a resolved-prior hit.
+    """
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.fingerprint import fingerprint as gen_fp
+    from revue.comments.json_store import PerPRCommentStore
+
+    finding = {"severity": "medium", "issue": "SQL injection", "line": 10,
+               "details": "Unsanitised", "recommendation": "Parameterise"}
+    review_results = [_FakeReviewResult(
+        file_path="app.py",
+        response=_make_review_response([finding]),
+    )]
+
+    # Compute the exact fingerprint the dedup will generate (empty diff, line 10)
+    fp_hash = gen_fp("app.py", 10, "")
+
+    mock_adapter = MagicMock()
+    # Existing comment from a RESOLVED discussion — carries the sentinel
+    mock_adapter.get_existing_comments.return_value = [
+        {
+            "id": "existing-123",
+            "body": f"**🟡 [MEDIUM] SQL injection**\n\n[//]: # (revue:fp:{fp_hash})",
+            "_discussion_resolved": True,
+            "inline": {"path": "app.py", "to": 10},
+        }
+    ]
+
+    store = PerPRCommentStore(tmp_path)
+    posted, skipped, total_findings, previously_tracked = _run_per_issue_dedup(
+        mock_adapter, 42, "gitlab", review_results, {}, store
+    )
+
+    assert posted == 0, "resolved-prior finding must not be posted"
+    assert skipped == 1, "dedup must register a skip"
+    assert previously_tracked == 1, "must appear as previously_tracked, not in total"
+    assert total_findings == {"high": 0, "medium": 0, "low": 0, "info": 0}, (
+        "resolved-prior must not count toward total_findings"
+    )
+    mock_adapter.post_review_comment.assert_not_called()
+
+
+def test_open_prior_still_counted_in_summary(tmp_path) -> None:
+    """Findings matching an OPEN (unresolved) prior thread ARE still counted
+    in total_findings — they exist as open threads requiring attention.
+
+    Order-sensitivity guard: verifies that open-prior dedup skips posting
+    but keeps the finding in the summary count.
+    """
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.fingerprint import fingerprint as gen_fp
+    from revue.comments.json_store import PerPRCommentStore
+
+    finding = {"severity": "high", "issue": "XSS", "line": 5,
+               "details": "Unescaped", "recommendation": "Escape output"}
+    review_results = [_FakeReviewResult(
+        file_path="view.py",
+        response=_make_review_response([finding]),
+    )]
+
+    fp_hash = gen_fp("view.py", 5, "")
+
+    mock_adapter = MagicMock()
+    # Existing comment from an OPEN (unresolved) discussion
+    mock_adapter.get_existing_comments.return_value = [
+        {
+            "id": "open-456",
+            "body": f"**🔴 [HIGH] XSS**\n\n[//]: # (revue:fp:{fp_hash})",
+            "_discussion_resolved": False,
+            "inline": {"path": "view.py", "to": 5},
+        }
+    ]
+
+    store = PerPRCommentStore(tmp_path)
+    posted, skipped, total_findings, previously_tracked = _run_per_issue_dedup(
+        mock_adapter, 42, "gitlab", review_results, {}, store
+    )
+
+    assert posted == 0, "open-prior must not be re-posted"
+    assert skipped == 1
+    assert previously_tracked == 0, "open thread is NOT previously tracked — it still needs attention"
+    assert total_findings["high"] == 1, "open-prior finding must remain in the summary count"
+    mock_adapter.post_review_comment.assert_not_called()
+
+
+def test_open_prior_uses_original_comment_severity_not_reanalysis(tmp_path) -> None:
+    """When an existing open comment was posted at 'high' severity but the current
+    analysis re-assesses it as 'medium', the summary must count it as 'high' —
+    the severity visible in the UI comes from the existing comment body, not the
+    new analysis.
+
+    Regression guard: this prevents the Quality Breakdown showing wrong severity
+    counts when the AI changes its mind between pipeline runs.
+    """
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.fingerprint import fingerprint as gen_fp
+    from revue.comments.json_store import PerPRCommentStore
+
+    # Current analysis RE-ASSESSES the finding as medium (AI changed its mind)
+    finding = {"severity": "medium", "issue": "Missing error handling", "line": 15,
+               "details": "No try/except", "recommendation": "Add error handling"}
+    review_results = [_FakeReviewResult(
+        file_path="service.py",
+        response=_make_review_response([finding]),
+    )]
+
+    fp_hash = gen_fp("service.py", 15, "")
+
+    mock_adapter = MagicMock()
+    # Existing OPEN comment was originally posted as HIGH severity
+    mock_adapter.get_existing_comments.return_value = [
+        {
+            "id": "prior-789",
+            "body": f"**🔴 [HIGH] Missing error handling**\ndetails\n\n[//]: # (revue:fp:{fp_hash})",
+            "_discussion_resolved": False,
+            "inline": {"path": "service.py", "to": 15},
+        }
+    ]
+
+    store = PerPRCommentStore(tmp_path)
+    posted, skipped, total_findings, previously_tracked = _run_per_issue_dedup(
+        mock_adapter, 42, "gitlab", review_results, {}, store
+    )
+
+    assert posted == 0, "open-prior must not be re-posted"
+    assert skipped == 1
+    assert previously_tracked == 0
+    # Must use the ORIGINAL comment's severity (high), not current analysis (medium)
+    assert total_findings["high"] == 1, (
+        "summary must reflect the severity shown in the existing comment, not the re-analysis"
+    )
+    assert total_findings["medium"] == 0, "re-analysis severity must not override original"
+    mock_adapter.post_review_comment.assert_not_called()
+
+
 def test_gitlab_missing_token_prints_warning_and_skips(tmp_path, capsys) -> None:
     """GITLAB_TOKEN absent → stderr warning, post_review_comment never called."""
     from revue.cli import _post_to_gitlab

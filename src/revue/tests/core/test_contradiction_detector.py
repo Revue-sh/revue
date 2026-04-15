@@ -36,8 +36,8 @@ def test_single_finding_no_contradiction():
 
 
 def test_same_line_opposing_severity_detected():
-    a = _review(line_number=10, severity="critical")
-    b = _review(line_number=10, severity="suggestion")
+    a = _review(line_number=10, severity="high")
+    b = _review(line_number=10, severity="info")
     result = detect_contradictions([a, b], strategies=[SameLineSameFileStrategy()])
     assert result.has_contradictions
 
@@ -72,18 +72,18 @@ def test_similar_issue_opposing_confidence_detected():
 
 def test_no_duplicate_pairs():
     """Same pair should only produce one contradiction, not two."""
-    a = _review(line_number=10, severity="critical")
-    b = _review(line_number=10, severity="suggestion")
+    a = _review(line_number=10, severity="high")
+    b = _review(line_number=10, severity="info")
     result = detect_contradictions([a, b], strategies=[SameLineSameFileStrategy()])
     assert result.contradiction_count == 1
 
 
 def test_multiple_contradictions():
     findings = [
-        _review(line_number=5, severity="critical"),
-        _review(line_number=5, severity="suggestion"),
-        _review(line_number=15, severity="major"),
-        _review(line_number=15, severity="suggestion"),
+        _review(line_number=5, severity="high"),
+        _review(line_number=5, severity="info"),
+        _review(line_number=15, severity="medium"),
+        _review(line_number=15, severity="info"),
     ]
     result = detect_contradictions(findings, strategies=[SameLineSameFileStrategy()])
     assert result.contradiction_count == 2
@@ -102,3 +102,13 @@ def test_total_findings_count():
     findings = [_review() for _ in range(5)]
     result = detect_contradictions(findings)
     assert result.total_findings == 5
+
+
+def test_normalised_vocab_high_low_contradictory():
+    """B3 regression: _OPPOSING must use normalised keys; 'high' vs 'low' must be contradictory."""
+    a = _review(line_number=10, severity="high")
+    b = _review(line_number=10, severity="low")
+    result = detect_contradictions([a, b], strategies=[SameLineSameFileStrategy()])
+    assert result.has_contradictions, (
+        "'high' and 'low' on the same file+line must be detected as contradictory"
+    )

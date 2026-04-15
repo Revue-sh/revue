@@ -7,7 +7,6 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
-import httpx
 import yaml
 
 from .models import CommentState, Platform, PRComment, SummaryComment
@@ -344,7 +343,6 @@ This comment will update automatically as you address issues.
 # ---------------------------------------------------------------------------
 
 _LESSONS_BRANCH_PREFIX = "chore/revue-lessons-"
-_BB_PR_TEMPLATE_PATH = ".bitbucket/pull_request_template.md"
 _DEFAULT_LESSONS_PR_BODY = """\
 ## Summary
 Automated lessons learned from Revue won't-fix replies.
@@ -387,7 +385,6 @@ class WontFixReplyService:
         self._bb_password = bitbucket_app_password
         self._repo_owner = repo_owner
         self._repo_name = repo_name
-        self._base_url = "https://api.bitbucket.org/2.0"
 
     # ------------------------------------------------------------------
     # Phase 2 API: classify / respond split (REVUE-112 Phase 2, AC14)
@@ -422,13 +419,31 @@ class WontFixReplyService:
                 decisions=[],
             )
 
+        # Threads where the bot's sentinel is the last reply have no new developer
+        # input — skip the AI call for them to avoid confusion and re-posting.
+        threads_for_ai = [t for t in threads if not t.get("already_handled")]
+        already_handled_decisions: list[dict] = [
+            {"fingerprint": t["fingerprint"], "decision": "already_handled", "reply_draft": ""}
+            for t in threads
+            if t.get("already_handled")
+        ]
+
+        if not threads_for_ai:
+            return ClassificationResult(
+                patterns_to_allow=[],
+                patterns_to_disallow=[],
+                state_updates=[],
+                decisions=already_handled_decisions,
+            )
+
         try:
-            decisions = consolidator.analyse_reply_threads(threads)
+            decisions = consolidator.analyse_reply_threads(threads_for_ai)
+            decisions += already_handled_decisions
         except Exception:
             _log.exception(
                 "[REVUE-112] analyse_reply_threads failed for PR #%d. Thread count=%d",
                 pr_number,
-                len(threads),
+                len(threads_for_ai),
             )
             return ClassificationResult(
                 patterns_to_allow=[],
@@ -501,6 +516,10 @@ class WontFixReplyService:
 
     # Appended to every bot reply so respond() can detect it already ran on a thread.
     _BOT_ACK_SENTINEL = "[//]: # (revue:ack)"
+    # Appended in addition to _BOT_ACK_SENTINEL for terminal decisions (wont-fix,
+    # acknowledged_fixed, acknowledged_deferred). Allows respond() to call
+    # resolve_comment on a re-run if the thread was not resolved on the first pass.
+    _BOT_RESOLVED_SENTINEL = "[//]: # (revue:resolved)"
 
     def respond(self, result: "ClassificationResult", pr_number: int) -> None:
         """I/O phase: act on the classified decisions (REVUE-112 Phase 2, AC14).
@@ -535,7 +554,35 @@ class WontFixReplyService:
             reply_draft = decision.get("reply_draft", "")
 
             if dec == "already_handled":
-                print(f"[revue]   💬  respond(): skip {fingerprint_val} — already handled", flush=True)
+                # If the bot's last reply carried revue:resolved, the thread was a
+                # terminal decision that may not have been resolved yet (e.g. posted
+                # manually, or resolve_comment failed on the previous run). Retry.
+                terminal_thread = thread_by_fp.get(fingerprint_val)
+                if terminal_thread and terminal_thread.get("already_terminal"):
+                    t_comment_id = terminal_thread.get("platform_comment_id", "")
+                    t_thread_id = terminal_thread.get("thread_id")
+                    try:
+                        ok = self._adapter.resolve_comment(
+                            self._repo_owner, self._repo_name, pr_number,
+                            t_comment_id, t_thread_id,
+                        )
+                        if ok:
+                            print(
+                                f"[revue]   💬  respond(): resolved terminal thread {t_comment_id} (recovery)",
+                                flush=True,
+                            )
+                        else:
+                            _log.warning(
+                                "[REVUE-112] resolve_comment returned False for terminal recovery, comment %s",
+                                t_comment_id,
+                            )
+                    except Exception:
+                        _log.exception(
+                            "[REVUE-112] resolve_comment failed for terminal recovery, comment %s",
+                            t_comment_id,
+                        )
+                else:
+                    print(f"[revue]   💬  respond(): skip {fingerprint_val} — already handled", flush=True)
                 continue
 
             thread_entry = thread_by_fp.get(fingerprint_val)
@@ -546,9 +593,12 @@ class WontFixReplyService:
                 )
                 continue
 
-            # Idempotency guard: skip if bot already acknowledged this thread
+            # Idempotency guard: skip if bot's LAST reply contains the sentinel.
+            # Using last-reply only means a new developer reply after the sentinel
+            # will re-enable re-evaluation on the next classify/respond cycle.
             existing_replies = thread_entry.get("replies", [])
-            if any(self._BOT_ACK_SENTINEL in r for r in existing_replies):
+            last_reply = existing_replies[-1] if existing_replies else ""
+            if self._BOT_ACK_SENTINEL in last_reply or self._BOT_RESOLVED_SENTINEL in last_reply:
                 print(
                     f"[revue]   💬  respond(): skip {thread_entry.get('platform_comment_id')} ({dec}) — already acknowledged",
                     flush=True,
@@ -556,6 +606,7 @@ class WontFixReplyService:
                 continue
 
             comment_id = thread_entry.get("platform_comment_id", "")
+            thread_id = thread_entry.get("thread_id")
             file_path = thread_entry.get("file_path", "")
             print(f"[revue]   💬  respond(): fp={fingerprint_val} dec={dec} comment_id={comment_id}", flush=True)
 
@@ -573,9 +624,9 @@ class WontFixReplyService:
                             pr_number, pattern, rationale, dec
                         )
                     else:
-                        self._commit_pattern_to_lessons_branch(
-                            pr_number, pattern, rationale, dec
-                        )
+                        # Adapter handles idempotency (finds existing PR, appends pattern).
+                        # Call again rather than the removed _commit_pattern_to_lessons_branch.
+                        self._ensure_lessons_pr(pr_number, pattern, rationale, dec)
                     final_reply = reply_draft.replace("[LESSONS_PR_URL]", lessons_pr_url)
                 except Exception:
                     _log.warning(
@@ -604,15 +655,15 @@ class WontFixReplyService:
                     reason=f"{dec}: {pattern}",
                 )
 
-                # (c) Post reply (sentinel appended for idempotency on re-runs)
+                # (c) Post reply (both sentinels: ack for idempotency, resolved for recovery)
                 try:
                     self._adapter.post_reply(
                         self._repo_owner,
                         self._repo_name,
                         pr_number,
                         comment_id,
-                        None,
-                        final_reply + f"\n\n{self._BOT_ACK_SENTINEL}",
+                        thread_id,
+                        final_reply + f"\n\n{self._BOT_ACK_SENTINEL}\n{self._BOT_RESOLVED_SENTINEL}",
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
@@ -628,6 +679,7 @@ class WontFixReplyService:
                         self._repo_name,
                         pr_number,
                         comment_id,
+                        thread_id,
                     )
                     if ok:
                         print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
@@ -644,13 +696,20 @@ class WontFixReplyService:
 
             elif dec == "reason_missing":
                 # AC8: post reply asking for reason, do NOT update state
+                if not reply_draft:
+                    reply_draft = (
+                        "Thanks for the reply. Revue needs a clear reason to record "
+                        "this decision — could you briefly explain why this finding is "
+                        "acceptable or out of scope? Once a reason is provided, Revue "
+                        "will record it and won't flag this pattern again."
+                    )
                 try:
                     self._adapter.post_reply(
                         self._repo_owner,
                         self._repo_name,
                         pr_number,
                         comment_id,
-                        None,
+                        thread_id,
                         reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}",
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
@@ -668,7 +727,7 @@ class WontFixReplyService:
                         self._repo_name,
                         pr_number,
                         comment_id,
-                        None,
+                        thread_id,
                         reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}",
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
@@ -689,8 +748,8 @@ class WontFixReplyService:
                             self._repo_name,
                             pr_number,
                             comment_id,
-                            None,
-                            reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}",
+                            thread_id,
+                            reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}\n{self._BOT_RESOLVED_SENTINEL}",
                         )
                         print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                     except Exception:
@@ -704,6 +763,7 @@ class WontFixReplyService:
                         self._repo_name,
                         pr_number,
                         comment_id,
+                        thread_id,
                     )
                     if ok:
                         print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
@@ -734,8 +794,8 @@ class WontFixReplyService:
                         self._repo_name,
                         pr_number,
                         comment_id,
-                        None,
-                        reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}",
+                        thread_id,
+                        reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}\n{self._BOT_RESOLVED_SENTINEL}",
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
@@ -749,6 +809,7 @@ class WontFixReplyService:
                         self._repo_name,
                         pr_number,
                         comment_id,
+                        thread_id,
                     )
                     if ok:
                         print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
@@ -870,6 +931,18 @@ class WontFixReplyService:
             fp = comment_id_to_fp.get(comment_id, comment_id)
             # inline may be a bool (GitHub: True) or a dict (Bitbucket: {"path": ..., "to": ...})
             inline_dict = inline if isinstance(inline, dict) else {}
+            reply_texts = [r.get("content", {}).get("raw", "") for r in replies]
+            # If the bot's sentinel is in the LAST reply, no new developer input has
+            # arrived since we last responded — skip the AI call for this thread.
+            last_reply_text = reply_texts[-1] if reply_texts else ""
+            sentinel_is_last = bool(reply_texts) and (
+                self._BOT_ACK_SENTINEL in last_reply_text
+                or self._BOT_RESOLVED_SENTINEL in last_reply_text
+            )
+            # Terminal flag: the last reply contains revue:resolved, meaning a
+            # definitive won't-fix decision was posted. respond() will attempt to
+            # resolve the thread on the next run if it wasn't resolved already.
+            terminal_is_last = bool(reply_texts) and self._BOT_RESOLVED_SENTINEL in last_reply_text
             threads.append({
                 "fingerprint": fp,
                 "file_path": inline_dict.get("path", ""),
@@ -877,8 +950,11 @@ class WontFixReplyService:
                 "issue_type": self._issue_type_from_body(body),
                 "severity": self._severity_from_body(body),
                 "original_finding_summary": body[:300],
-                "replies": [r.get("content", {}).get("raw", "") for r in replies],
+                "replies": reply_texts,
                 "platform_comment_id": comment_id,
+                "thread_id": finding.get("thread_id"),
+                "already_handled": sentinel_is_last,
+                "already_terminal": terminal_is_last,
             })
 
         return threads
@@ -940,66 +1016,15 @@ class WontFixReplyService:
         rationale: str,
         decision: str,
     ) -> str:
-        """Create lessons PR if it doesn't exist, else update it. Returns PR URL."""
-        branch = self._lessons_branch_name(pr_number)
+        """Delegate lessons PR creation/update to the platform adapter. Returns PR/MR URL.
 
-        # Check if PR already exists
-        existing_url = self._find_open_lessons_pr(branch)
-        if existing_url:
-            self._commit_pattern_to_lessons_branch(pr_number, pattern, rationale, decision)
-            return existing_url
-
-        # Create the branch and commit
-        self._commit_pattern_to_lessons_branch(pr_number, pattern, rationale, decision)
-
-        # Fetch PR template
-        pr_body = self._fetch_pr_template()
-
-        # Create the PR
-        pr_url = self._create_bitbucket_pr(
-            branch=branch,
-            title=f"chore: Revue lessons learned from PR #{pr_number}",
-            description=pr_body,
-        )
-        return pr_url
-
-    def _find_open_lessons_pr(self, branch: str) -> Optional[str]:
-        """Return the URL of an open PR for the given branch, or None."""
-        url = (
-            f"{self._base_url}/repositories/{self._repo_owner}/{self._repo_name}"
-            f"/pullrequests?q=source.branch.name=\"{branch}\" AND state=\"OPEN\""
-        )
-        try:
-            resp = httpx.get(url, **self._adapter._auth_kwargs())
-            resp.raise_for_status()
-            values = resp.json().get("values", [])
-            if values:
-                return values[0].get("links", {}).get("html", {}).get("href", "")
-        except Exception:
-            _log.exception("[REVUE-112] Failed to search for existing lessons PR")
-        return None
-
-    def _commit_pattern_to_lessons_branch(
-        self,
-        pr_number: int,
-        pattern: str,
-        rationale: str,
-        decision: str,
-    ) -> None:
-        """Commit updated .revue.yml to the lessons branch via Bitbucket Source Files API.
-
-        Uses POST /2.0/repositories/{workspace}/{repo}/src (multipart form) so the
-        local git working tree is never modified. Safe to call during a CI review run.
+        Reads the already-updated .revue.yml from disk and passes its content
+        to the adapter along with a commit message and PR metadata. The adapter
+        owns all platform-specific API logic (AC4, AC5, AC6, REVUE-120).
         """
         branch = self._lessons_branch_name(pr_number)
         revue_yml = self._revue_yml_path()
-
-        # Read current .revue.yml content (from local file — already updated by _append_pattern_to_config)
-        if revue_yml.exists():
-            with open(revue_yml, "r", encoding="utf-8") as f:
-                content = f.read()
-        else:
-            content = ""
+        content = revue_yml.read_text(encoding="utf-8") if revue_yml.exists() else ""
 
         section_label = "allowed_pattern" if decision == "allowed_pattern" else "disallowed_pattern"
         short_pattern = pattern[:60] + ("…" if len(pattern) > 60 else "")
@@ -1008,60 +1033,16 @@ class WontFixReplyService:
             f"{rationale}. Recorded via Revue won't-fix reply on PR #{pr_number}."
         )
 
-        url = f"{self._base_url}/repositories/{self._repo_owner}/{self._repo_name}/src"
+        template = self._adapter.get_pr_template(self._repo_owner, self._repo_name)
+        pr_description = template if template else _DEFAULT_LESSONS_PR_BODY
 
-        # Bitbucket src API uses multipart/form-data
-        response = httpx.post(
-            url,
-            data={
-                "message": commit_msg,
-                "branch": branch,
-                ".revue.yml": content,
-            },
-            **self._adapter._auth_kwargs(),
+        return self._adapter.ensure_lessons_pr(
+            repo_owner=self._repo_owner,
+            repo_name=self._repo_name,
+            pr_number=pr_number,
+            branch=branch,
+            revue_yml_content=content,
+            commit_message=commit_msg,
+            pr_title=f"chore: Revue lessons learned from PR #{pr_number}",
+            pr_description=pr_description,
         )
-        response.raise_for_status()
-
-    def _fetch_pr_template(self) -> str:
-        """Fetch Bitbucket PR template. Falls back to default on 404."""
-        url = (
-            f"{self._base_url}/repositories/{self._repo_owner}/{self._repo_name}"
-            f"/src/HEAD/{_BB_PR_TEMPLATE_PATH}"
-        )
-        try:
-            resp = httpx.get(url, **self._adapter._auth_kwargs())
-            if resp.status_code == 200:
-                return resp.text
-            if resp.status_code == 404:
-                _log.debug("[REVUE-112] PR template not found at %s — using default", url)
-            else:
-                resp.raise_for_status()
-        except Exception:
-            _log.exception("[REVUE-112] Could not fetch PR template")
-        return _DEFAULT_LESSONS_PR_BODY
-
-    def _create_bitbucket_pr(
-        self,
-        branch: str,
-        title: str,
-        description: str,
-    ) -> str:
-        """Create a Bitbucket PR and return its URL."""
-        url = (
-            f"{self._base_url}/repositories/{self._repo_owner}/{self._repo_name}"
-            "/pullrequests"
-        )
-        payload = {
-            "title": title,
-            "description": description,
-            "source": {"branch": {"name": branch}},
-            "destination": {"branch": {"name": "main"}},
-            "close_source_branch": True,
-        }
-        resp = httpx.post(
-            url,
-            json=payload,
-            **self._adapter._auth_kwargs(),
-        )
-        resp.raise_for_status()
-        return resp.json().get("links", {}).get("html", {}).get("href", "")

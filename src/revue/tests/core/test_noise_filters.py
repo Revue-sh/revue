@@ -44,9 +44,18 @@ def test_test_file_suppresses_non_critical():
 
 
 def test_test_file_keeps_critical():
-    critical = _review(file_path="tests/test_app.py", severity="critical")
-    result = apply_noise_filters([critical], filters=[TestFileFilter()])
+    high = _review(file_path="tests/test_app.py", severity="high")
+    result = apply_noise_filters([high], filters=[TestFileFilter()])
     assert result.kept_count == 1
+
+
+def test_test_file_keeps_high_severity():
+    """B2 regression: TestFileFilter must guard on 'high' (normalised), not 'critical'."""
+    high = _review(file_path="tests/test_app.py", severity="high")
+    result = apply_noise_filters([high], filters=[TestFileFilter()])
+    assert result.kept_count == 1, (
+        "High-severity findings in test files must NOT be suppressed"
+    )
 
 
 def test_generated_file_suppressed():

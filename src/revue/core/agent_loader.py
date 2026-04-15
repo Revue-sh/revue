@@ -24,6 +24,21 @@ from .models import FileChange, AIReview
 
 logger = logging.getLogger(__name__)
 
+# Four canonical category values that cli._CATEGORY_MAP recognises.
+_KNOWN_CATEGORIES: frozenset[str] = frozenset({
+    "architecture", "security", "performance", "code-quality"
+})
+
+# Fallback canonical category keyed by agent definition name.
+# Used when the AI omits the category field or returns an unrecognised string,
+# preventing agent names from leaking into the summary Quality Breakdown.
+_AGENT_CANONICAL_CATEGORY: dict[str, str] = {
+    "leo": "architecture",
+    "zara": "security",
+    "kai": "performance",
+    "maya": "code-quality",
+}
+
 
 # ---------------------------------------------------------------------------
 # Agent definition dataclass
@@ -41,6 +56,19 @@ class AgentDefinition:
     severity_default: str = "minor"
     enabled: bool = True
     version: str = "1.0"
+
+
+def _normalise_category(raw: str, agent_name: str) -> str:
+    """Return a canonical category string safe for cli._CATEGORY_MAP lookup.
+
+    If *raw* (what the AI returned) is already a known canonical value, use it.
+    Otherwise fall back to the agent's own canonical from _AGENT_CANONICAL_CATEGORY,
+    defaulting to 'code-quality' for unknown agents.
+    """
+    normalised = raw.lower().strip()
+    if normalised in _KNOWN_CATEGORIES:
+        return normalised
+    return _AGENT_CANONICAL_CATEGORY.get(agent_name, "code-quality")
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +172,9 @@ class LoadedAgent:
                     issue=item.get("issue", ""),
                     suggestion=item.get("suggestion", ""),
                     confidence=float(item.get("confidence", 0.7)),
-                    category=item.get("category", self._def.name),
+                    category=_normalise_category(
+                        item.get("category", ""), self._def.name
+                    ),
                 ))
             print(
                 f"[revue]     [{self._def.name}] parsed {len(reviews)} finding(s)",

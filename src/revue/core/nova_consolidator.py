@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -157,6 +158,9 @@ def _parse_thread_decisions(raw: str) -> list[dict]:
             inner_lines = inner_lines[:-1]
         clean = "\n".join(inner_lines).strip()
 
+    # Strip trailing commas before } or ] — AI models sometimes emit them.
+    clean = re.sub(r",\s*([}\]])", r"\1", clean)
+
     try:
         data = json.loads(clean)
     except json.JSONDecodeError as exc:
@@ -206,7 +210,7 @@ class SimilarIssueStrategy:
         return overlap >= self._OVERLAP_THRESHOLD
 
 
-_SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2, "suggestion": 3, "info": 4}
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 
 _DEFAULT_STRATEGIES: list[DeduplicationStrategy] = [
     SameFileLineStrategy(),
