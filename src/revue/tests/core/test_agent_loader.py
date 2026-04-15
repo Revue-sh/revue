@@ -155,6 +155,16 @@ def test_loaded_agent_analyse_returns_reviews():
     assert results[0].category == "security"  # normalised from agent name fallback
 
 
+def test_loaded_agent_analyse_sets_agent_name_on_findings():
+    """REVUE-149: agent_name is threaded through to each AIReview finding."""
+    defn = AgentDefinition(name="maya", display_name="Maya", role="code-quality",
+                           system_prompt="Review code quality.")
+    agent = LoadedAgent(defn, _mock_client())
+    results = agent.analyse([_fc()])
+    assert len(results) == 1
+    assert results[0].agent_name == "maya"
+
+
 def test_loaded_agent_analyse_propagates_client_error():
     """REVUE-103: Fatal client errors (RuntimeError) now propagate — not swallowed."""
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",

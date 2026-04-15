@@ -175,6 +175,7 @@ class LoadedAgent:
                     category=_normalise_category(
                         item.get("category", ""), self._def.name
                     ),
+                    agent_name=self._def.name,
                 ))
             print(
                 f"[revue]     [{self._def.name}] parsed {len(reviews)} finding(s)",

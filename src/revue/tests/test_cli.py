@@ -477,3 +477,59 @@ def test_cli_pr_context_built_when_description_file_and_pr_id_both_passed(tmp_pa
     assert pr_context.pr_number == 43
     assert pr_context.repo_owner == "cbscd"
     assert pr_context.repo_name == "revue"
+
+
+# ---------------------------------------------------------------------------
+# REVUE-149: Agent name alongside area label in finding comments
+# ---------------------------------------------------------------------------
+
+from revue.cli import _format_finding
+
+
+def test_format_finding_shows_agent_name_and_category() -> None:
+    """Known agent produces 'Maya · Code Quality' label."""
+    f = {
+        "severity": "low",
+        "issue": "Missing type hint",
+        "category": "code-quality",
+        "agent_name": "maya",
+    }
+    result = _format_finding(f)
+    assert "Maya · Code Quality" in result
+
+
+def test_format_finding_shows_agent_name_for_all_builtin_agents() -> None:
+    """Each built-in agent gets its display name prefixed to the area label."""
+    from revue.cli import _AGENT_DISPLAY_NAMES, _CATEGORY_MAP
+    cases = [
+        ("maya", "code-quality", "Maya · Code Quality"),
+        ("zara", "security", "Zara · Security"),
+        ("kai", "performance", "Kai · Performance"),
+        ("leo", "architecture", "Leo · Architecture"),
+    ]
+    for agent_name, category, expected_label in cases:
+        f = {"severity": "low", "issue": "x", "category": category, "agent_name": agent_name}
+        result = _format_finding(f)
+        assert expected_label in result, f"Expected '{expected_label}' in output for agent '{agent_name}'"
+
+
+def test_format_finding_falls_back_gracefully_for_unknown_agent() -> None:
+    """Unknown agent name shows category only — no crash, no 'None ·' prefix."""
+    f = {
+        "severity": "low",
+        "issue": "Some issue",
+        "category": "code-quality",
+        "agent_name": "custom-agent-xyz",
+    }
+    result = _format_finding(f)
+    assert "Code Quality" in result
+    assert "None" not in result
+    assert "·" not in result
+
+
+def test_format_finding_category_only_when_no_agent_name() -> None:
+    """Finding without agent_name shows area label only (backward compat)."""
+    f = {"severity": "low", "issue": "x", "category": "security"}
+    result = _format_finding(f)
+    assert "Security" in result
+    assert "·" not in result

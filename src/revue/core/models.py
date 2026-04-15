@@ -38,6 +38,7 @@ class AIReview:
     suggestion: str
     confidence: float
     category: str = "general"
+    agent_name: str = ""  # name of the agent that produced this finding (e.g. "maya")
 
 
 @dataclass

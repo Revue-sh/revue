@@ -380,6 +380,12 @@ _CATEGORY_MAP = {
     "performance": "Performance",
     "code-quality": "Code Quality",
 }
+_AGENT_DISPLAY_NAMES: dict[str, str] = {
+    "leo": "Leo",
+    "zara": "Zara",
+    "kai": "Kai",
+    "maya": "Maya",
+}
 _CATEGORY_CLEAN_LABELS = {
     "Architecture": "SOLID compliant, no structural issues",
     "Security": "No vulnerabilities detected",
@@ -608,7 +614,10 @@ def _format_finding(f: dict) -> str:
 
     lines = [f"#### {emoji} {issue}"]
     if cat:
-        lines.append(f"*{cat.replace('-', ' ').title()}*  ")
+        display_cat = cat.replace('-', ' ').title()
+        display_agent = _AGENT_DISPLAY_NAMES.get(f.get("agent_name", ""), "")
+        label = f"{display_agent} · {display_cat}" if display_agent else display_cat
+        lines.append(f"*{label}*  ")
     if details:
         lines.append(f"\n{details}")
     if rec:
@@ -877,7 +886,10 @@ def _run_per_issue_dedup(
 
             body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
             if cat:
-                body_parts.append(f"*{cat.replace('-', ' ').title()}*")
+                display_cat = cat.replace('-', ' ').title()
+                display_agent = _AGENT_DISPLAY_NAMES.get(f.get("agent_name", ""), "")
+                label = f"{display_agent} · {display_cat}" if display_agent else display_cat
+                body_parts.append(f"*{label}*")
             if details:
                 body_parts.append(f"\n{details}")
             if rec:
