@@ -49,9 +49,11 @@ jobs:
 
       - name: AI Code Review
         env:
-          AI_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          AI_PROVIDER: anthropic
-          AI_MODEL: claude-sonnet-4-5-20250929
+          # Provider and model are read from .revue.yml — no CLI flags needed.
+          # Set the API key matching your configured provider:
+          #   anthropic → ANTHROPIC_API_KEY
+          #   openai    → OPENAI_API_KEY  (see REVUE-148 for per-provider key docs)
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           REVUE_TIER_OVERRIDE: ${{ vars.REVUE_TIER_OVERRIDE }}
           GITHUB_TOKEN: ${{ secrets.REVUE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
@@ -62,8 +64,6 @@ jobs:
             --diff /tmp/revue_pr.diff \
             --platform github \
             --pr-id "${{ github.event.pull_request.number }}" \
-            --provider "${AI_PROVIDER}" \
-            --model "${AI_MODEL}" \
             --config .revue.yml \
             --comment-style per-issue \
             --pr-description-file /tmp/revue_pr_description.txt

@@ -241,6 +241,47 @@ output:
 
 ---
 
+## API key resolution
+
+Revue resolves the API key at startup using the following priority order (first match wins):
+
+1. `api_key` — value set directly in code (not supported via `.revue.yml`; internal use only).
+2. `api_key_env` — name of the environment variable to read. Use this when your CI secret has a non-standard name.
+3. Provider default env var — Revue looks up the standard env var for your `provider` automatically if `api_key_env` is omitted.
+
+### Provider default env vars
+
+| Provider | Default env var |
+|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `openai` | `OPENAI_API_KEY` |
+| `azure` | `AZURE_OPENAI_API_KEY` |
+| `openrouter` | `OPENROUTER_API_KEY` |
+| `custom` | `REVUE_API_KEY` |
+
+**`api_key_env` is optional for standard setups.** If you name your CI secret after the provider default (e.g. `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`), you can omit `api_key_env` entirely and Revue will find the key automatically.
+
+```yaml
+# api_key_env omitted — Revue auto-resolves OPENAI_API_KEY from the environment
+ai:
+  provider: openai
+  model: gpt-4o-mini
+```
+
+Use `api_key_env` only when your CI secret name differs from the provider default:
+
+```yaml
+# Custom CI secret name
+ai:
+  provider: openai
+  model: gpt-4o-mini
+  api_key_env: MY_CORP_AI_KEY   # reads $MY_CORP_AI_KEY instead of $OPENAI_API_KEY
+```
+
+> **Multi-provider key support (post-MVP):** When Revue adds fallback provider support (REVUE-147, REVUE-148), each provider in the chain will have its own `api_key_env` field. Until then, `api_key_env` applies to the single configured provider.
+
+---
+
 ## Environment variable precedence
 
 Revue merges configuration in this order (later sources win):
