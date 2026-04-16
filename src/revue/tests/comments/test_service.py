@@ -16,7 +16,7 @@ import pytest
 
 from revue.comments.models import CommentState
 from revue.comments.json_store import PerPRCommentStore
-from revue.core.nova_consolidator import NovaConsolidator, _parse_thread_decisions
+from revue.core.dedup_consolidator import NovaConsolidator, _parse_thread_decisions
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +672,7 @@ def test_classify_returns_classification_result(tmp_path) -> None:
     """
     from revue.comments.service import WontFixReplyService
     from revue.core.models import ClassificationResult
-    from revue.core.nova_consolidator import NovaConsolidator
+    from revue.core.dedup_consolidator import NovaConsolidator
 
     api_comments = [
         {
@@ -743,7 +743,7 @@ def test_classify_performs_no_writes(tmp_path) -> None:
     """TC19: classify() must not call _append_pattern_to_config, post_reply,
     or _ensure_lessons_pr — it is provably side-effect free (AC21)."""
     from revue.comments.service import WontFixReplyService
-    from revue.core.nova_consolidator import NovaConsolidator
+    from revue.core.dedup_consolidator import NovaConsolidator
 
     store = PerPRCommentStore(tmp_path)
     store.save_finding("bitbucket", 42, "a.py", "fp0001", "101", 5, "Finding A")
@@ -801,7 +801,7 @@ def test_classify_empty_threads_returns_empty_result(tmp_path) -> None:
     """TC20: No threads with replies → empty ClassificationResult, AI never called."""
     from revue.comments.service import WontFixReplyService
     from revue.core.models import ClassificationResult
-    from revue.core.nova_consolidator import NovaConsolidator
+    from revue.core.dedup_consolidator import NovaConsolidator
 
     with patch("revue.comments.service.BitbucketAdapter") as MockAdapter, \
          patch.object(NovaConsolidator, "analyse_reply_threads") as mock_ai:
@@ -836,7 +836,7 @@ def test_classify_api_driven_no_store_no_n_plus_one(tmp_path) -> None:
     - get_comment_replies never called (N+1 eliminated)
     """
     from revue.comments.service import WontFixReplyService
-    from revue.core.nova_consolidator import NovaConsolidator
+    from revue.core.dedup_consolidator import NovaConsolidator
 
     api_comments = [
         {
@@ -1856,7 +1856,7 @@ def test_classify_skips_ai_for_sentinel_last_threads(tmp_path) -> None:
 
     svc = _sentinel_svc(tmp_path, mock_adapter)
 
-    with patch("revue.core.nova_consolidator.NovaConsolidator.analyse_reply_threads") as mock_ai_call:
+    with patch("revue.core.dedup_consolidator.NovaConsolidator.analyse_reply_threads") as mock_ai_call:
         result = svc.classify(1)
 
     mock_ai_call.assert_not_called()

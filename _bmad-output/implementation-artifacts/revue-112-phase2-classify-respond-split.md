@@ -18,7 +18,7 @@ As Revue's pipeline, I need to classify developer replies **before** running age
 - `BitbucketAdapter.resolve_comment`, `get_comment_replies`, `post_reply` fixes
 - `PRContext` dataclass in `core/models.py`
 - `WontFixReplyService` + `process_wont_fix_replies()` in `comments/service.py`
-- `NovaConsolidator.analyse_reply_threads()` in `core/nova_consolidator.py`
+- `NovaConsolidator.analyse_reply_threads()` in `core/dedup_consolidator.py`
 - `cli.py` `resolved_pr_id` unconditional assignment fix (commit `d2676ab`)
 - Tests TC1a–TC17 (741/741 passing)
 - SOLID clause in `docs/story-dod-checklist.md`
@@ -94,7 +94,7 @@ As Revue's pipeline, I need to classify developer replies **before** running age
 - `WontFixReplyService.process_wont_fix_replies` → `src/revue/comments/service.py:390`
 - Pipeline reply tracking → `src/revue/core/pipeline.py:497` (`_run_wont_fix_reply_tracking`)
 - `PRContext` dataclass → `src/revue/core/models.py`
-- Thread analysis → `src/revue/core/nova_consolidator.py`
+- Thread analysis → `src/revue/core/dedup_consolidator.py`
 
 ### Respond-phase placement
 The respond phase (lessons PR, thread replies, thread resolution) runs at the END of `pipeline.run()` — after the usage tracking fire-and-forget, after the findings phase, and after any comment posting done by `cli.py`. The `cli.py` calls `CommentService.post_comments()` *after* `pipeline.run()` returns, so `respond` must also run in `cli.py` after `post_comments`, OR at the end of `pipeline.run()` before returning results (current `_run_wont_fix_reply_tracking` position is correct for this).

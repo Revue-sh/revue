@@ -784,7 +784,7 @@ def _cascade_orch(agents: list, run_side_effect=None):
     Returns (OrchestrationModules, mock_run) so callers can inspect/modify mock_run.
     """
     from revue.core.agent_runner import ParallelRunResult
-    from revue.core.nova_consolidator import ConsolidationResult
+    from revue.core.dedup_consolidator import ConsolidationResult
     from revue.core.shared_analysis import SharedAnalysisResult
     from revue.core.pipeline import OrchestrationModules
 

@@ -208,9 +208,9 @@ Markdown was considered (agents already produce markdown-flavoured output). TOML
 
 | File | Functions |
 |------|-----------|
-| `src/revue/core/nova_consolidator.py` | `_batch_synthesise()`, `_build_batch_prompt()`, `_parse_batch_response()` |
-| `src/revue/core/nova_consolidator.py` | `_merge_group()` (per-group fallback), `_build_synthesis_prompt()` (per-group prompt) |
-| `src/revue/core/nova_consolidator.py` | `consolidate()` — public entry point, orchestrates grouping + synthesis + secondary dedup |
+| `src/revue/core/dedup_consolidator.py` | `_batch_synthesise()`, `_build_batch_prompt()`, `_parse_batch_response()` |
+| `src/revue/core/dedup_consolidator.py` | `_merge_group()` (per-group fallback), `_build_synthesis_prompt()` (per-group prompt) |
+| `src/revue/core/dedup_consolidator.py` | `consolidate()` — public entry point, orchestrates grouping + synthesis + secondary dedup |
 | `src/revue/core/pipeline.py` | Passes `ai_client` to `consolidate()` via dependency injection |
 
 ### Dependency Injection

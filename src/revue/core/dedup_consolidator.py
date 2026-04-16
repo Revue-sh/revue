@@ -1,7 +1,7 @@
 """
-Nova consolidation — deduplicate and prioritise findings (Story [007]).
+Deduplication consolidation — deduplicate and prioritise findings (Story [007]).
 
-SRP: consolidation only.
+Part of Nova consolidation phase. SRP: deduplication only.
 OCP: deduplication strategies are pluggable.
 """
 from __future__ import annotations

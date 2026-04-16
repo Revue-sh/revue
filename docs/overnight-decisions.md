@@ -85,7 +85,7 @@ AIReviewer/core/shared_analysis.py      — [003] upfront AI classification
 AIReviewer/core/agent_runner.py         — [004] parallel agent execution
 AIReviewer/core/contradiction_detector.py — [005] contradiction detection
 AIReviewer/core/contradiction_resolver.py — [006] contradiction resolution
-AIReviewer/core/nova_consolidator.py    — [007] Nova deduplication
+AIReviewer/core/dedup_consolidator.py   — [007] Nova deduplication
 AIReviewer/core/noise_filters.py        — [008] noise suppression
 + corresponding test files for each
 ```

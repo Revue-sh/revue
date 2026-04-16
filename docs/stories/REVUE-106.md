@@ -79,13 +79,13 @@ cd src && PYTHONPATH=$(pwd) python -c "from revue.core.pipeline import ReviewPip
 # Change all:
 from AIReviewer.core.agent_loader   import load_all_agents
 from AIReviewer.core.agent_runner   import run_agents_parallel
-from AIReviewer.core.nova_consolidator import consolidate
+from AIReviewer.core.dedup_consolidator import consolidate
 from AIReviewer.core.shared_analysis import run_shared_analysis
 from AIReviewer.core.cleo_router    import route
 # To:
 from revue.core.agent_loader        import load_all_agents
 from revue.core.agent_runner        import run_agents_parallel
-from revue.core.nova_consolidator   import consolidate
+from revue.core.dedup_consolidator   import consolidate
 from revue.core.shared_analysis     import run_shared_analysis
 from revue.core.cleo_router         import route
 ```

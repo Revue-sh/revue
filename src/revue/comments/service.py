@@ -402,7 +402,7 @@ class WontFixReplyService:
             Exception: Any exception from the AI call is re-raised (AC10).
         """
         from revue.core.models import ClassificationResult
-        from revue.core.nova_consolidator import NovaConsolidator
+        from revue.core.dedup_consolidator import NovaConsolidator
 
         consolidator = NovaConsolidator(self._client)
 

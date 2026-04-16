@@ -245,7 +245,7 @@ def _import_orchestration() -> "OrchestrationModules":
     try:
         from revue.core.agent_loader import load_all_agents
         from revue.core.agent_runner import run_agents_parallel, ParallelRunResult
-        from revue.core.nova_consolidator import consolidate
+        from revue.core.dedup_consolidator import consolidate
         from revue.core.shared_analysis import run_shared_analysis
         from revue.core.formatting import format_selection_message
         from revue.core.cleo_router import route, assign_files_to_agents

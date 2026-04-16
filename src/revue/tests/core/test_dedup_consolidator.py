@@ -1,9 +1,9 @@
-"""Tests for Nova consolidation."""
+"""Tests for deduplication consolidation."""
 from __future__ import annotations
 
 import pytest
 
-from revue.core.nova_consolidator import consolidate, ConsolidationResult, SameFileLineStrategy
+from revue.core.dedup_consolidator import consolidate, ConsolidationResult, SameFileLineStrategy
 from revue.core.models import AIReview
 
 
