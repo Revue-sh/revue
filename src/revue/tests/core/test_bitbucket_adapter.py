@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from revue.core.bitbucket_adapter import BitbucketAdapter
+from revue.core.bitbucket_adapter import BitbucketAdapter, _line_in_diff
 from revue.core.models import FileChange
 from revue.core.vcs_adapter import DiffPosition, VCSAdapter
 
@@ -280,6 +280,84 @@ def test_resolve_position_returns_file_and_line() -> None:
     assert pos.file_path == "src/main.py"
     assert pos.line_number == 10
     assert pos.side == "RIGHT"
+
+
+def test_resolve_position_line_in_hunk_returns_position_1() -> None:
+    """resolve_position() sets position=1 when line falls within a diff hunk."""
+    adapter = make_adapter()
+    # SAMPLE_DIFF hunk: @@ -1,3 +1,4 @@ — new-file lines 1-4 are valid
+    for line in (1, 2, 3, 4):
+        pos = adapter.resolve_position("src/main.py", line, SAMPLE_DIFF)
+        assert pos.position == 1, f"line {line} should be in diff"
+
+
+def test_resolve_position_line_outside_hunk_returns_position_0() -> None:
+    """resolve_position() sets position=0 when line falls outside all diff hunks."""
+    adapter = make_adapter()
+    pos = adapter.resolve_position("src/main.py", 99, SAMPLE_DIFF)
+    assert pos.position == 0
+
+
+def test_resolve_position_file_not_in_diff_returns_position_0() -> None:
+    """resolve_position() sets position=0 when the file is not in the diff at all."""
+    adapter = make_adapter()
+    pos = adapter.resolve_position("other_file.py", 1, SAMPLE_DIFF)
+    assert pos.position == 0
+
+
+def test_resolve_position_empty_diff_returns_position_0() -> None:
+    """resolve_position() sets position=0 when the diff is empty."""
+    adapter = make_adapter()
+    pos = adapter.resolve_position("src/main.py", 1, "")
+    assert pos.position == 0
+
+
+# =====================================================================
+# _line_in_diff unit tests
+# =====================================================================
+
+
+def test_line_in_diff_first_line_of_hunk() -> None:
+    """_line_in_diff() returns True for the first line of a hunk."""
+    assert _line_in_diff(1, "src/main.py", SAMPLE_DIFF) is True
+
+
+def test_line_in_diff_last_line_of_hunk() -> None:
+    """_line_in_diff() returns True for the last line of a hunk."""
+    # @@ -1,3 +1,4 @@ — last new-file line is 4
+    assert _line_in_diff(4, "src/main.py", SAMPLE_DIFF) is True
+
+
+def test_line_in_diff_one_past_end_of_hunk() -> None:
+    """_line_in_diff() returns False for line just past the hunk boundary."""
+    assert _line_in_diff(5, "src/main.py", SAMPLE_DIFF) is False
+
+
+def test_line_in_diff_wrong_file() -> None:
+    """_line_in_diff() returns False when file is not in the diff."""
+    assert _line_in_diff(1, "not_in_diff.py", SAMPLE_DIFF) is False
+
+
+def test_line_in_diff_multiple_hunks() -> None:
+    """_line_in_diff() returns True for lines in any hunk of a multi-hunk diff."""
+    multi_hunk_diff = """\
+diff --git a/src/main.py b/src/main.py
+index abc..def 100644
+--- a/src/main.py
++++ b/src/main.py
+@@ -1,2 +1,2 @@
+-old line
++new line
+ context
+@@ -20,2 +20,3 @@
+ unchanged
++added line
+ end
+"""
+    assert _line_in_diff(1, "src/main.py", multi_hunk_diff) is True
+    assert _line_in_diff(20, "src/main.py", multi_hunk_diff) is True
+    assert _line_in_diff(22, "src/main.py", multi_hunk_diff) is True
+    assert _line_in_diff(10, "src/main.py", multi_hunk_diff) is False  # between hunks
 
 
 # =====================================================================

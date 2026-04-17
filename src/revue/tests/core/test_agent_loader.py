@@ -622,11 +622,12 @@ def test_disallowed_patterns_injected_into_system_prompt():
 # ---------------------------------------------------------------------------
 
 def test_loaded_agent_analyse_passes_system_separately():
-    """TC2 (REVUE-115): analyse() passes system_prompt as the system kwarg, not embedded in user message.
+    """TC2 (D1 updated): analyse() passes system as a list [diff_block, agent_prompt_block].
 
-    Passing system separately lets AnthropicClient add cache_control to the system
-    block (provider-agnostic: OpenAI also accepts a system param).  The user message
-    must NOT contain the system prompt text.
+    D1 restructure: system is a 2-element list where:
+    - system[0]: diff text with cache_control (shared cached prefix)
+    - system[1]: agent system_prompt without cache_control
+    The user message must NOT contain the diff or system prompt text.
     """
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
@@ -636,8 +637,17 @@ def test_loaded_agent_analyse_passes_system_separately():
 
     call_args = client.complete.call_args
     kwargs = call_args[1] if call_args[1] else {}
-    # system kwarg must be passed with the agent's system prompt
-    assert kwargs.get("system") == "Find security issues."
+    # system must be a list: [diff_block, agent_prompt_block]
+    system = kwargs.get("system", [])
+    assert isinstance(system, list) and len(system) == 2, (
+        f"system should be a 2-element list; got {system}"
+    )
+    # system[0]: diff with cache_control
+    assert system[0].get("cache_control") == {"type": "ephemeral"}
+    # system[1]: agent prompt without cache_control; includes bridge prefix
+    assert system[1].get("text", "").endswith("Find security issues.")
+    assert system[1].get("text", "").startswith("The code diff above is what you must review.")
+    assert "cache_control" not in system[1]
     # system prompt text must NOT appear inside the user message
     messages = call_args[0][0]
     for msg in messages:
@@ -726,3 +736,116 @@ def test_applies_to_case_insensitive():
     inject_patterns([leo], allowed_patterns=[scoped], disallowed_patterns=[])
 
     assert "Architecture note" in leo._def.system_prompt
+
+
+# ---------------------------------------------------------------------------
+# REVUE-151: D1 — LoadedAgent.analyse() restructure (TC_D1_3, TC_D1_4, TC_D1_5)
+# ---------------------------------------------------------------------------
+
+def test_analyse_places_diff_in_system_block_first() -> None:
+    """TC_D1_3: analyse() constructs system as [diff_block, agent_instructions_block].
+
+    After D1, the diff is system[0] with cache_control (cached prefix),
+    and agent instructions are system[1] without cache_control.
+    """
+    from unittest.mock import MagicMock
+
+    agent_def = AgentDefinition(
+        name="test", display_name="Test", role="test",
+        system_prompt="You are a test agent."
+    )
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '[]'  # Empty findings
+    agent = LoadedAgent(agent_def, mock_client)
+
+    changes = [FileChange(
+        file_path="test.py",
+        change_type="M",
+        additions=5,
+        deletions=3,
+        diff="--- old\n+++ new\n",
+    )]
+    agent.analyse(changes)
+
+    # Check the system argument passed to client.complete
+    call_args = mock_client.complete.call_args
+    system_blocks = call_args[1].get("system", [])
+    assert isinstance(system_blocks, list) and len(system_blocks) >= 1
+    assert system_blocks[0].get("cache_control") == {"type": "ephemeral"}, (
+        f"system[0] should have cache_control; got {system_blocks[0]}"
+    )
+
+
+def test_analyse_agent_instructions_uncached_in_system_block() -> None:
+    """TC_D1_4: analyse() places agent instructions in system[1] without cache_control."""
+    from unittest.mock import MagicMock
+
+    agent_def = AgentDefinition(
+        name="test", display_name="Test", role="test",
+        system_prompt="You are a test agent."
+    )
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '[]'  # Empty findings
+    agent = LoadedAgent(agent_def, mock_client)
+
+    changes = [FileChange(
+        file_path="test.py",
+        change_type="M",
+        additions=5,
+        deletions=3,
+        diff="--- old\n+++ new\n",
+    )]
+    agent.analyse(changes)
+
+    call_args = mock_client.complete.call_args
+    system_blocks = call_args[1].get("system", [])
+    assert len(system_blocks) >= 2, f"Expected at least 2 system blocks, got {len(system_blocks)}"
+    assert "cache_control" not in system_blocks[1], (
+        f"system[1] (agent instructions) should NOT have cache_control; got {system_blocks[1]}"
+    )
+    assert "The code diff above is what you must review." in system_blocks[1].get("text", ""), (
+        f"system[1] must contain the bridge phrase; got: {system_blocks[1].get('text', '')!r}"
+    )
+
+
+def test_analyse_shared_context_in_user_message_not_system() -> None:
+    """TC_D1_5: when shared analysis is provided, shared_context goes in user message."""
+    from unittest.mock import MagicMock
+    from revue.core.shared_analysis import SharedAnalysisResult
+
+    agent_def = AgentDefinition(
+        name="test", display_name="Test", role="test",
+        system_prompt="You are a test agent."
+    )
+    mock_client = MagicMock()
+    mock_client.complete.return_value = '[]'  # Empty findings
+    agent = LoadedAgent(agent_def, mock_client)
+
+    changes = [FileChange(
+        file_path="test.py",
+        change_type="M",
+        additions=5,
+        deletions=3,
+        diff="--- old\n+++ new\n",
+    )]
+    shared = SharedAnalysisResult(
+        languages=["python"],
+        risk_areas=["security"],
+        suggested_agents=["zara"],
+        summary="Test summary",
+        raw_response="{}",
+    )
+    agent.analyse(changes, shared=shared)
+
+    call_args = mock_client.complete.call_args
+    messages = call_args[0][0] if call_args[0] else []
+    user_content = messages[-1].get("content") if messages else ""
+
+    # The user message should contain the shared_context (part of the instructions)
+    # and NOT appear in the system blocks
+    system_blocks = call_args[1].get("system", [])
+    for block in system_blocks:
+        text = block.get("text", "")
+        assert "Test summary" not in text, (
+            f"shared_context summary should not be in system blocks; found in: {text}"
+        )

@@ -529,6 +529,71 @@ def test_gitlab_fixed_finding_triggers_auto_resolve(tmp_path) -> None:
 
 
 # =====================================================================
+# Out-of-diff guard — Bitbucket and GitHub skip, GitLab snaps
+# =====================================================================
+
+
+def test_bitbucket_skips_finding_when_line_outside_diff(tmp_path) -> None:
+    """Bitbucket: position=0 from resolve_position → post_review_comment NOT called."""
+    from revue.core.vcs_adapter import DiffPosition
+
+    adapter = MagicMock()
+    adapter.post_review_comment.return_value = "new-id"
+    adapter.resolve_position.return_value = DiffPosition(
+        file_path="src/app.py", line_number=99, position=0
+    )
+
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([_FINDING_A]),
+        )
+    ]
+    _run(_make_args(), review_results, tmp_path=tmp_path, adapter=adapter)
+
+    adapter.post_review_comment.assert_not_called()
+
+
+def test_bitbucket_posts_finding_when_line_in_diff(tmp_path) -> None:
+    """Bitbucket: position=1 from resolve_position → post_review_comment IS called."""
+    from revue.core.vcs_adapter import DiffPosition
+
+    adapter = MagicMock()
+    adapter.post_review_comment.return_value = "new-id"
+    adapter.resolve_position.return_value = DiffPosition(
+        file_path="src/app.py", line_number=10, position=1
+    )
+
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([_FINDING_A]),
+        )
+    ]
+    _run(_make_args(), review_results, tmp_path=tmp_path, adapter=adapter)
+
+    adapter.post_review_comment.assert_called_once()
+
+
+def test_gitlab_posts_finding_even_when_line_outside_diff_hunks(tmp_path) -> None:
+    """GitLab: guard does NOT fire — compute_gitlab_line_code snaps to nearest hunk line."""
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            # Line 999 is far outside any real diff — GitLab snaps, not skips
+            response=_make_review_response([{
+                "severity": "high", "issue": "SQL injection", "line": 999,
+                "details": "Details", "recommendation": "Fix it",
+            }]),
+        )
+    ]
+    adapter = _run_gitlab(review_results, tmp_path=tmp_path)
+
+    # GitLab snaps the position — the comment must still be posted
+    adapter.post_review_comment.assert_called_once()
+
+
+# =====================================================================
 # Comment posting order: summary last (newest-first platforms)
 # Bitbucket and GitLab display activity newest-first — summary must be
 # posted LAST so it lands at the top of the thread (most visible).

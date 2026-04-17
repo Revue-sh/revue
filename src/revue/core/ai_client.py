@@ -23,6 +23,9 @@ from .ai_config import AIConfig
 # Shared timeout used by all clients
 _TIMEOUT = httpx.Timeout(connect=60.0, read=600.0, write=600.0, pool=600.0)
 
+# Cache tier for the diff prefix. Change to "persistent" when D2 (1-hour tier) ships.
+_CACHE_TIER = "ephemeral"
+
 
 # ---------------------------------------------------------------------------
 # Protocol
@@ -221,39 +224,6 @@ class OpenAIClient:
         return _with_retry(_call, max_attempts=self._max_attempts)
 
 
-def _anthropic_messages_with_cache(
-    messages: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Return *messages* with cache_control on the last user message content block.
-
-    Anthropic Prompt Caching is prefix-based: the SDK caches all tokens up to
-    and including the block marked with ``cache_control``.  Adding a breakpoint
-    on the last user message ensures the system-prompt + full diff prefix is
-    cached for re-reviews of the same PR (cache_read on subsequent runs).
-
-    Minimum cacheable prefix: 1,024 tokens (Sonnet 4.6).  For tiny diffs the
-    threshold may not be reached; Anthropic silently skips the cache write in
-    that case — this is expected and harmless.
-    """
-    if not messages:
-        return messages
-    result = list(messages)
-    last = result[-1]
-    content = last.get("content")
-    if isinstance(content, str):
-        result[-1] = {
-            **last,
-            "content": [
-                {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
-            ],
-        }
-    elif isinstance(content, list) and content:
-        blocks = list(content)
-        if "cache_control" not in blocks[-1]:
-            blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
-        result[-1] = {**last, "content": blocks}
-    return result
-
 
 class AnthropicClient:
     """Native Anthropic SDK client.
@@ -291,21 +261,15 @@ class AnthropicClient:
         def _call() -> str:
             kwargs: dict[str, Any] = {
                 "model": self._model,
-                "messages": _anthropic_messages_with_cache(messages),
+                "messages": messages,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
             }
             if system is not None:
                 if isinstance(system, str):
-                    kwargs["system"] = [
-                        {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
-                    ]
+                    kwargs["system"] = [{"type": "text", "text": system}]
                 else:
-                    # Already a list — ensure the last block has cache_control
-                    blocks = list(system)
-                    if blocks and "cache_control" not in blocks[-1]:
-                        blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
-                    kwargs["system"] = blocks
+                    kwargs["system"] = list(system)
             resp = self._client.messages.create(**kwargs)
             usage = resp.usage
             _log.debug(
@@ -447,6 +411,14 @@ _PROVIDER_REGISTRY: dict[str, type] = {
     "openrouter": OpenRouterClient,
     "custom": CustomGatewayClient,
 }
+
+# Providers that natively support response_format={"type": "json_object"}.
+# Callers omit prompt-engineering JSON suffixes for these. Co-located here so
+# adding a new provider to _PROVIDER_REGISTRY is the only edit needed.
+# REVUE-107: extend AIClient.complete() to forward response_format for this set.
+_JSON_FORMAT_PROVIDERS: frozenset[str] = frozenset({
+    "openai", "azure", "openrouter", "custom", "google", "groq",
+})
 
 
 def register_provider(name: str, cls: type) -> None:

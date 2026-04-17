@@ -352,35 +352,40 @@ def test_detect_provider_unknown():
 
 
 def test_anthropic_provider_appends_json_suffix():
-    """Anthropic provider appends JSON instruction to prompt."""
+    """Anthropic provider appends JSON instruction to system block (D1)."""
     c = _mock_client(_VALID_ORCHESTRATOR_JSON)
     run_shared_analysis([_fc("app.py")], c, provider="anthropic")
-    prompt_sent = c.complete.call_args[0][0][0]["content"]
-    assert "Respond with raw JSON only" in prompt_sent
+    system_blocks = c.complete.call_args[1].get("system", [])
+    # JSON suffix is in system[1] (orchestrator_instructions)
+    instructions_text = system_blocks[1].get("text", "") if len(system_blocks) > 1 else ""
+    assert "Respond with raw JSON only" in instructions_text
 
 
 def test_openai_provider_no_json_suffix():
-    """OpenAI provider does NOT append the Anthropic JSON suffix."""
+    """OpenAI provider does NOT append the Anthropic JSON suffix to system block."""
     c = _mock_client(_VALID_ORCHESTRATOR_JSON)
     run_shared_analysis([_fc("app.py")], c, provider="openai")
-    prompt_sent = c.complete.call_args[0][0][0]["content"]
-    assert "Respond with raw JSON only" not in prompt_sent
+    system_blocks = c.complete.call_args[1].get("system", [])
+    instructions_text = system_blocks[1].get("text", "") if len(system_blocks) > 1 else ""
+    assert "Respond with raw JSON only" not in instructions_text
 
 
 def test_google_provider_no_json_suffix():
-    """Google provider does NOT append the Anthropic JSON suffix."""
+    """Google provider does NOT append the Anthropic JSON suffix to system block."""
     c = _mock_client(_VALID_ORCHESTRATOR_JSON)
     run_shared_analysis([_fc("app.py")], c, provider="google")
-    prompt_sent = c.complete.call_args[0][0][0]["content"]
-    assert "Respond with raw JSON only" not in prompt_sent
+    system_blocks = c.complete.call_args[1].get("system", [])
+    instructions_text = system_blocks[1].get("text", "") if len(system_blocks) > 1 else ""
+    assert "Respond with raw JSON only" not in instructions_text
 
 
 def test_groq_provider_no_json_suffix():
-    """Groq provider does NOT append the Anthropic JSON suffix."""
+    """Groq provider does NOT append the Anthropic JSON suffix to system block."""
     c = _mock_client(_VALID_ORCHESTRATOR_JSON)
     run_shared_analysis([_fc("app.py")], c, provider="groq")
-    prompt_sent = c.complete.call_args[0][0][0]["content"]
-    assert "Respond with raw JSON only" not in prompt_sent
+    system_blocks = c.complete.call_args[1].get("system", [])
+    instructions_text = system_blocks[1].get("text", "") if len(system_blocks) > 1 else ""
+    assert "Respond with raw JSON only" not in instructions_text
 
 
 # ---------------------------------------------------------------------------
@@ -409,12 +414,13 @@ def test_run_shared_analysis_strips_plain_fences():
 
 
 def test_unknown_provider_appends_json_suffix():
-    """Unknown providers get the prompt engineering fallback."""
+    """Unknown providers get the prompt engineering fallback (in system block D1)."""
     c = _mock_client(_VALID_ORCHESTRATOR_JSON)
     run_shared_analysis([_fc("app.py")], c, provider="")
-    prompt_sent = c.complete.call_args[0][0][0]["content"]
-    # MagicMock class name isn't in _JSON_FORMAT_PROVIDERS → suffix appended
-    assert "Respond with raw JSON only" in prompt_sent
+    system_blocks = c.complete.call_args[1].get("system", [])
+    # Empty string provider isn't in _JSON_FORMAT_PROVIDERS → suffix appended to system[1]
+    instructions_text = system_blocks[1].get("text", "") if len(system_blocks) > 1 else ""
+    assert "Respond with raw JSON only" in instructions_text
 
 
 # ---------------------------------------------------------------------------
@@ -637,3 +643,40 @@ def test_cleo_missing_files_field_graceful():
     assert result.orchestrator_response is not None
     agent = result.orchestrator_response.selected_agents[0]
     assert agent.files == []
+
+
+# ---------------------------------------------------------------------------
+# REVUE-151: D1 — run_shared_analysis() restructure (TC_D1_6)
+# ---------------------------------------------------------------------------
+
+def test_shared_analysis_places_diff_summary_in_system_block() -> None:
+    """TC_D1_6: run_shared_analysis() calls client.complete() with system=[diff_summary_block].
+
+    After D1, the diff summary is system[0] with cache_control (shared cached prefix
+    for the orchestrator analysis). The orchestrator instructions are system[1] without
+    cache_control.
+    """
+    from unittest.mock import MagicMock
+
+    mock_client = MagicMock()
+    mock_client.complete.return_value = _VALID_JSON
+
+    result = run_shared_analysis([_fc("test.py")], mock_client)
+
+    call_args = mock_client.complete.call_args
+    system = call_args[1].get("system", [])
+    assert isinstance(system, list) and len(system) >= 1, (
+        f"system should be a list with at least 1 element; got {system}"
+    )
+    # system[0] must have the diff summary with cache_control
+    assert system[0].get("cache_control") == {"type": "ephemeral"}, (
+        f"system[0] should have cache_control; got {system[0]}"
+    )
+    # The diff summary should be in system[0]'s text
+    summary_text = system[0].get("text", "")
+    assert "Diff summary:" in summary_text, "system[0] text should contain the diff summary"
+    # system[1] must have the bridge phrase pointing back to system[0]
+    assert len(system) >= 2, "system should have at least 2 blocks"
+    assert "The diff summary above is what you must analyse." in system[1].get("text", ""), (
+        f"system[1] must contain the bridge phrase; got: {system[1].get('text', '')!r}"
+    )

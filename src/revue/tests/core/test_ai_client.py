@@ -15,6 +15,7 @@ from revue.core.ai_client import (
     CustomGatewayClient,
     OpenAIClient,
     OpenRouterClient,
+    _openai_messages,
     _with_retry,
     create_ai_client,
     register_provider,
@@ -291,12 +292,15 @@ def test_anthropic_complete_ignores_cache_key(mock_anthropic_cls: MagicMock) -> 
 
 @patch("revue.core.ai_client.anthropic.Anthropic")
 def test_anthropic_complete_caches_via_content_blocks(mock_anthropic_cls: MagicMock) -> None:
-    """TC1: messages.create() uses per-block cache_control, not an invalid top-level param.
+    """TC1 (D1): client is a transparent passthrough — caller owns cache_control placement.
 
-    The correct Anthropic caching mechanism requires cache_control inside content
-    blocks (system blocks and/or message content blocks), NOT as a top-level kwarg
-    to messages.create().  A top-level cache_control is silently ignored by the API
-    and produces zero cache_creation/cache_read tokens (confirmed by usage CSV).
+    D1 contract: AnthropicClient.complete() must NOT mutate the system list or add
+    cache_control anywhere.  The caller (LoadedAgent.analyse / run_shared_analysis)
+    is responsible for placing cache_control on system[0] (the diff block).
+
+    - system[0] carries cache_control (placed by the caller, passed through unchanged)
+    - system[1] has NO cache_control (agent instructions — uncached)
+    - User message content has NO cache_control (shared_context is not byte-stable)
     """
     mock_msg = MagicMock()
     mock_msg.content = [MagicMock(text="result")]
@@ -310,24 +314,99 @@ def test_anthropic_complete_caches_via_content_blocks(mock_anthropic_cls: MagicM
 
     config = _make_config(provider="anthropic")
     client = AnthropicClient(config)
+    caller_system = [
+        {"type": "text", "text": "diff content here", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "You are a security expert."},
+    ]
     result = client.complete(
         [{"role": "user", "content": "review this diff"}],
-        system="You are a security expert.",
+        system=caller_system,
     )
 
     assert result == "result"
     call_kwargs = mock_anthropic_cls.return_value.messages.create.call_args[1]
     # No invalid top-level cache_control kwarg
     assert "cache_control" not in call_kwargs
-    # system must be a list with cache_control on the last block
+    # system[0] (diff block) must carry the caller-provided cache_control
     system_blocks = call_kwargs.get("system", [])
-    assert isinstance(system_blocks, list) and system_blocks
-    assert system_blocks[-1].get("cache_control") == {"type": "ephemeral"}
-    # Last user message content must also have cache_control
+    assert isinstance(system_blocks, list) and len(system_blocks) == 2
+    assert system_blocks[0].get("cache_control") == {"type": "ephemeral"}
+    # system[1] (agent instructions) must NOT have cache_control added by the client
+    assert "cache_control" not in system_blocks[1]
+    # User message content must NOT have cache_control (no _anthropic_messages_with_cache)
     messages = call_kwargs.get("messages", [])
-    last_content = messages[-1].get("content", [])
-    assert isinstance(last_content, list) and last_content
-    assert last_content[-1].get("cache_control") == {"type": "ephemeral"}
+    last_content = messages[-1].get("content")
+    if isinstance(last_content, list):
+        for block in last_content:
+            assert "cache_control" not in block
+    # plain string content is fine — no cache_control either way
+
+
+# ---------------------------------------------------------------------------
+# REVUE-151: D1 — client is a transparent passthrough (TC_D1_1, TC_D1_2)
+# ---------------------------------------------------------------------------
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_does_not_mutate_caller_system_list(mock_anthropic_cls: MagicMock) -> None:
+    """TC_D1_1: complete() passes the system list through unchanged — no mutation.
+
+    The caller provides cache_control on system[0].  The client must not add,
+    remove, or reorder cache_control on any block.
+    """
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="ok")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        input_tokens=100,
+        output_tokens=10,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+
+    config = _make_config(provider="anthropic")
+    client = AnthropicClient(config)
+    caller_system = [
+        {"type": "text", "text": "diff", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "instructions"},
+    ]
+    client.complete([{"role": "user", "content": "go"}], system=caller_system)
+
+    call_kwargs = mock_anthropic_cls.return_value.messages.create.call_args[1]
+    sent_system = call_kwargs.get("system", [])
+    # Exact passthrough — same two blocks, same order, no extra cache_control
+    assert sent_system == caller_system
+
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_no_user_message_cache_breakpoint(mock_anthropic_cls: MagicMock) -> None:
+    """TC_D1_2: complete() does NOT add cache_control to the user message content.
+
+    After D1, _anthropic_messages_with_cache() must not be called.  User message
+    content is passed through as-is (string or list) with no cache_control injected.
+    """
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="ok")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        input_tokens=100,
+        output_tokens=10,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+
+    config = _make_config(provider="anthropic")
+    client = AnthropicClient(config)
+    client.complete([{"role": "user", "content": "plain string content"}])
+
+    call_kwargs = mock_anthropic_cls.return_value.messages.create.call_args[1]
+    messages = call_kwargs.get("messages", [])
+    last_content = messages[-1].get("content")
+    # Must not have been converted to a list with cache_control
+    if isinstance(last_content, list):
+        for block in last_content:
+            assert "cache_control" not in block, (
+                f"client must not inject cache_control into user message: {block}"
+            )
 
 
 @patch("revue.core.ai_client.anthropic.Anthropic")
@@ -353,3 +432,30 @@ def test_anthropic_complete_logs_cache_usage(mock_anthropic_cls: MagicMock) -> N
         log_args = mock_log.debug.call_args[0]
         assert "cache_creation" in log_args[0]
         assert "cache_read" in log_args[0]
+
+
+# ---------------------------------------------------------------------------
+# REVUE-151: D1 — OpenAI path with D1-style system list (TC_D1_openai)
+# ---------------------------------------------------------------------------
+
+def test_openai_messages_flattens_d1_system_list() -> None:
+    """TC_D1_openai: _openai_messages() correctly flattens a D1-style system list.
+
+    When callers pass a list with cache_control markers (Anthropic D1 structure),
+    the OpenAI path must flatten to a plain string system message with no
+    cache_control artifacts in the content.
+    """
+    d1_system = [
+        {"type": "text", "text": "diff content", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "agent instructions"},
+    ]
+    messages = [{"role": "user", "content": "review this"}]
+    result = _openai_messages(messages, d1_system)
+
+    assert result[0]["role"] == "system"
+    system_content = result[0]["content"]
+    assert isinstance(system_content, str), "system content must be a plain string for OpenAI"
+    assert "diff content" in system_content
+    assert "agent instructions" in system_content
+    assert "cache_control" not in system_content
+    assert "ephemeral" not in system_content

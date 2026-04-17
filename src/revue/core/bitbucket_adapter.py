@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +26,26 @@ from revue.core.vcs_adapter import DiffPosition
 _LOG = logging.getLogger(__name__)
 
 _BB_API = "https://api.bitbucket.org/2.0"
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def _line_in_diff(line_number: int, file_path: str, diff: str) -> bool:
+    """Return True if line_number falls within any new-file hunk range for file_path."""
+    in_file = False
+    for line in diff.splitlines():
+        if line.startswith("diff --git"):
+            in_file = f" b/{file_path}" in line
+            continue
+        if not in_file:
+            continue
+        m = _HUNK_RE.match(line)
+        if m:
+            new_start = int(m.group(1))
+            new_count = int(m.group(2)) if m.group(2) is not None else 1
+            if new_start <= line_number < new_start + new_count:
+                return True
+    return False
 
 
 class BitbucketAdapter:
@@ -96,8 +117,13 @@ class BitbucketAdapter:
                 return raw
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
+                try:
+                    body = exc.read(1024).decode("utf-8", errors="replace")
+                except Exception:
+                    body = "<unreadable>"
+                _LOG.debug("Bitbucket %d response body: %s", exc.code, body)
                 raise ValueError(
-                    f"Bitbucket auth error {exc.code}: {exc.reason}"
+                    f"Bitbucket auth error {exc.code}: {exc.reason} — {body}"
                 ) from exc
             if exc.code == 404:
                 raise RuntimeError(
@@ -240,13 +266,17 @@ class BitbucketAdapter:
     ) -> DiffPosition:
         """Return a DiffPosition for Bitbucket.
 
-        Bitbucket inline comments use file path + line number directly —
-        no sequential position index or line_code needed.
+        Validates line_number against diff hunk ranges. position=1 means the
+        line is in the diff; position=0 means it falls outside all hunks and
+        the caller should skip posting (Bitbucket returns 403 for out-of-range
+        lines, matching the same sentinel used by the GitHub path).
         """
+        valid = _line_in_diff(line_number, file_path, diff)
         return DiffPosition(
             file_path=file_path,
             line_number=line_number,
             side="RIGHT",
+            position=1 if valid else 0,
         )
 
     def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
@@ -301,7 +331,7 @@ class BitbucketAdapter:
             _LOG.info("Posted resolution reply to comment %s on PR %s", comment_id, pr_id)
             return True
         except Exception as exc:
-            _LOG.warning("resolve_inline_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
+            _LOG.warning("resolve_inline_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
             return False
 
     # ------------------------------------------------------------------

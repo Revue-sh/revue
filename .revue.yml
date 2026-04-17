@@ -2,9 +2,9 @@
 version: "1"
 
 ai:
-  provider: openai
-  model: gpt-4o-mini
-  api_key_env: OPENAI_API_KEY
+  provider: anthropic
+  model: claude-haiku-4-5-20251001
+  api_key_env: ANTHROPIC_API_KEY
 
 review:
   max_diff_lines: 10000  # TODO: REVUE-96 - make this dynamic based on model context window

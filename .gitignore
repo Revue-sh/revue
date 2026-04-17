@@ -37,3 +37,10 @@ postgres-data/
 # Web app
 src/web/revue.db
 src/web/.venv/
+
+# Git worktrees (managed via git worktree, not tracked)
+.worktrees/
+.claude/worktrees/
+
+# BMad planning artifacts (working docs, not deliverables)
+_bmad-output/

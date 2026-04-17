@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .ai_config import AIConfig
     from .shared_analysis import SharedAnalysisResult
 
+from .ai_client import _CACHE_TIER
 from .models import FileChange, AIReview
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,23 @@ _AGENT_CANONICAL_CATEGORY: dict[str, str] = {
     "zara": "security",
     "kai": "performance",
     "maya": "code-quality",
+}
+
+_REVIEW_INSTRUCTIONS = (
+    "Respond with a JSON array of findings (no markdown fences, raw JSON only):\n"
+    '[{"file_path": "...", "line_number": 1, "severity": "high|medium|low|info", '
+    '"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}]'
+)
+
+_SEV_MAP: dict[str, str] = {
+    "critical": "high",
+    "major": "medium",
+    "minor": "low",
+    "suggestion": "info",
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "info": "info",
 }
 
 
@@ -111,37 +129,26 @@ class LoadedAgent:
 
         diff_text = _build_diff_text(changes)
         shared_context = _build_shared_context(shared) if shared else ""
-        _INSTRUCTIONS = (
-            "Respond with a JSON array of findings (no markdown fences, raw JSON only):\n"
-            '[{"file_path": "...", "line_number": 1, "severity": "high|medium|low|info", '
-            '"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}]'
-        )
-
-        # Severity vocabulary used by revue agents → cli.py display names
-        _SEV_MAP = {
-            "critical": "high",
-            "major": "medium",
-            "minor": "low",
-            "suggestion": "info",
-            # Pass-through for agents already using the display vocab
-            "high": "high",
-            "medium": "medium",
-            "low": "low",
-            "info": "info",
-        }
         # Stable 16-char routing key for this diff — passed as prompt_cache_key
         # to OpenAI-compatible clients so re-reviews of the same PR land on the
         # same cache server and hit the cached prefix. Anthropic ignores it.
         diff_hash = hashlib.sha256(diff_text.encode()).hexdigest()[:16]
         try:
-            user_prompt = (
+            # D1: diff is system[0] with cache_control (shared cached prefix across agents)
+            # agent instructions are system[1] uncached (agent-specific)
+            system_blocks = [
+                {"type": "text", "text": diff_text, "cache_control": {"type": _CACHE_TIER}},
+                {"type": "text", "text": f"The code diff above is what you must review. {self._def.system_prompt}"},
+            ]
+            user_content = (
                 f"{shared_context}"
-                f"Review the following diff:\n\n{diff_text}\n\n"
-                f"{_INSTRUCTIONS}"
+                "Carefully review the code diff for bugs, security issues, performance "
+                "problems, and code quality concerns. "
+                f"{_REVIEW_INSTRUCTIONS}"
             )
             raw = self._client.complete(
-                [{"role": "user", "content": user_prompt}],
-                system=self._def.system_prompt,
+                [{"role": "user", "content": user_content}],
+                system=system_blocks,
                 cache_key=diff_hash,
             )
             print(

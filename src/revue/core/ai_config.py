@@ -94,6 +94,8 @@ class AIConfig:
     @classmethod
     def from_env(cls) -> "AIConfig":
         """Create configuration from environment variables."""
+        provider = os.getenv("REVUE_PROVIDER", "anthropic")
+        provider_key_env = PROVIDER_DEFAULT_ENV_VARS.get(provider, "")
         return cls(
             # GitLab Configuration with fallbacks
             gitlab_url=os.getenv("GITLAB_URL", os.getenv("CI_SERVER_URL", "")),
@@ -108,9 +110,9 @@ class AIConfig:
             ai_temp=DEFAULT_AI_TEMPERATURE,
             ai_confidence=DEFAULT_AI_CONFIDENCE,
             ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", str(DEFAULT_AI_MAX_TOKENS))),
-            # Multi-provider fields
-            provider=os.getenv("REVUE_PROVIDER", "anthropic"),  # type: ignore[arg-type]
-            api_key=os.getenv("OPENAI_API_KEY", ""),
+            # Multi-provider fields — api_key resolved from the active provider's default env var
+            provider=provider,  # type: ignore[arg-type]
+            api_key=os.getenv(provider_key_env, "") if provider_key_env else "",
             api_key_env=os.getenv("REVUE_API_KEY_ENV", ""),
             base_url=os.getenv("REVUE_BASE_URL", os.getenv("GENAI_GATEWAY_URL", "")),
             model=os.getenv("REVUE_MODEL", "claude-sonnet-4-5-20250929"),

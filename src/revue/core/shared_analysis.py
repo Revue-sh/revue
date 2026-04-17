@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .ai_client import AIClient
 
+from .ai_client import _CACHE_TIER, _JSON_FORMAT_PROVIDERS
 from .models import FileChange
 
 _log = logging.getLogger(__name__)
@@ -28,23 +29,8 @@ _EXT_TO_LANG: dict[str, str] = {
     ".sh": "shell", ".bash": "shell",
 }
 
-# Providers that natively support response_format={"type": "json_object"}.
-# NOTE: The AIClient protocol does not yet pass response_format through to
-# the underlying SDK, so json_object mode is *not* actually sent today.
-# For providers in this set we omit the prompt-engineering JSON suffix
-# (they reliably return JSON from the structured prompt alone).
-# For all other providers (Anthropic, unknown) the suffix is appended.
-# REVUE-107: Extend AIClient.complete() to accept and forward response_format
-#            for OpenAI-compatible providers.
-_JSON_FORMAT_PROVIDERS = frozenset({
-    "openai", "azure", "openrouter", "custom", "google", "groq",
-})
-
-SHARED_ANALYSIS_PROMPT = """\
+SHARED_ANALYSIS_PROMPT_INSTRUCTIONS = """\
 You are a code review orchestrator. Analyse this diff and respond with valid JSON only.
-
-Diff summary:
-{diff_summary}
 
 You MUST respond using ONLY this exact JSON schema — no other format is accepted:
 
@@ -77,6 +63,15 @@ EXAMPLE:
   "risk_areas": ["authentication", "database", "api-boundary"],
   "summary": "This diff updates the login flow, migrates the users table, and adds rate limiting to API endpoints."
 }}"""
+
+# Legacy prompt template (for reference; prefer building system as list in run_shared_analysis)
+SHARED_ANALYSIS_PROMPT = f"""\
+You are a code review orchestrator. Analyse this diff and respond with valid JSON only.
+
+Diff summary:
+{{diff_summary}}
+
+{SHARED_ANALYSIS_PROMPT_INSTRUCTIONS}"""
 
 _ANTHROPIC_JSON_SUFFIX = "\n\nRespond with raw JSON only. No markdown formatting. No code fences."
 
@@ -240,11 +235,19 @@ def run_shared_analysis(
         # AC5: Provider-specific JSON handling
         resolved_provider = provider or _detect_provider(client)
 
-        prompt = SHARED_ANALYSIS_PROMPT.format(diff_summary=diff_summary)
+        # D1: diff_summary in system[0] with cache_control (shared cached prefix)
+        # orchestrator_instructions in system[1] without cache_control
+        orchestrator_instructions = SHARED_ANALYSIS_PROMPT_INSTRUCTIONS
         if resolved_provider not in _JSON_FORMAT_PROVIDERS:
-            prompt += _ANTHROPIC_JSON_SUFFIX
+            orchestrator_instructions += _ANTHROPIC_JSON_SUFFIX
+
+        system_blocks = [
+            {"type": "text", "text": f"Diff summary:\n{diff_summary}", "cache_control": {"type": _CACHE_TIER}},
+            {"type": "text", "text": f"The diff summary above is what you must analyse. {orchestrator_instructions}"},
+        ]
         raw = client.complete(
-            [{"role": "user", "content": prompt}],
+            [{"role": "user", "content": "Analyse the diff above and respond with valid JSON."}],
+            system=system_blocks,
             cache_key=diff_hash,
         )
         _log.debug("Shared analysis raw response (%d chars): %.300r", len(raw), raw)

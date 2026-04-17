@@ -912,9 +912,9 @@ def _run_per_issue_dedup(
             else:
                 position = adapter.resolve_position(rr.file_path, line, diff_content)
 
-            # GitHub requires a valid diff position; position=0 means the line is
-            # outside the diff hunk — posting would return a 500 from the API.
-            if platform_str == "github" and position.position == 0:
+            # position=0 is the sentinel for "line outside diff hunks" on both
+            # GitHub (500) and Bitbucket (403). Skip rather than attempt to post.
+            if platform_str in ("github", "bitbucket") and position.position == 0:
                 skipped += 1
                 continue
 
