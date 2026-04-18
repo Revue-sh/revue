@@ -438,10 +438,6 @@ def test_anthropic_complete_logs_cache_usage(mock_anthropic_cls: MagicMock) -> N
 
 
 # ---------------------------------------------------------------------------
-# REVUE-151: D1 — OpenAI path with D1-style system list (TC_D1_openai)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # REVUE-155: CompletionResult + TokenUsage (RED — TokenUsage/CompletionResult
 # do not exist yet; these tests drive the implementation)
 # ---------------------------------------------------------------------------
