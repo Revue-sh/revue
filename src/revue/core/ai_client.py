@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Any, Callable, Final, Protocol
 
 _log = logging.getLogger(__name__)
@@ -36,6 +37,24 @@ _CACHE_CONTROL_1H: Final = {"type": "ephemeral", "ttl": "1h"}
 
 
 # ---------------------------------------------------------------------------
+# Domain types — REVUE-155
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TokenUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+
+
+@dataclass
+class CompletionResult:
+    text: str
+    usage: TokenUsage = field(default_factory=TokenUsage)
+
+
+# ---------------------------------------------------------------------------
 # Protocol
 # ---------------------------------------------------------------------------
 
@@ -50,7 +69,7 @@ class AIClient(Protocol):
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
-    ) -> str: ...
+    ) -> CompletionResult: ...
 
 
 # ---------------------------------------------------------------------------
@@ -181,19 +200,6 @@ def _openai_messages(
     return out
 
 
-def _log_openai_usage(usage: Any) -> None:
-    """Log OpenAI token usage including cached_tokens for cache observability."""
-    if usage is None:
-        return
-    details = getattr(usage, "prompt_tokens_details", None)
-    cached = getattr(details, "cached_tokens", 0) if details else 0
-    _log.debug(
-        "[openai] cached=%s prompt=%s completion=%s",
-        cached,
-        getattr(usage, "prompt_tokens", 0),
-        getattr(usage, "completion_tokens", 0),
-    )
-
 
 class OpenAIClient:
     """OpenAI-compatible client (api.openai.com or custom base_url)."""
@@ -215,8 +221,8 @@ class OpenAIClient:
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
-    ) -> str:
-        def _call() -> str:
+    ) -> CompletionResult:
+        def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
                 "model": self._model,
                 "messages": _openai_messages(messages, system),
@@ -226,11 +232,25 @@ class OpenAIClient:
             if cache_key is not None:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
-            _log_openai_usage(resp.usage)
-            return resp.choices[0].message.content or ""
+            usage = resp.usage
+            details = getattr(usage, "prompt_tokens_details", None) if usage else None
+            cached = getattr(details, "cached_tokens", 0) if details else 0
+            token_usage = TokenUsage(
+                input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+            )
+            _log.debug(
+                "[openai] cached=%s prompt=%s completion=%s",
+                cached,
+                token_usage.input_tokens,
+                token_usage.output_tokens,
+            )
+            return CompletionResult(
+                text=resp.choices[0].message.content or "",
+                usage=token_usage,
+            )
 
         return _with_retry(_call, max_attempts=self._max_attempts)
-
 
 
 class AnthropicClient:
@@ -265,8 +285,8 @@ class AnthropicClient:
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,  # accepted but unused — Anthropic uses cache_control
-    ) -> str:
-        def _call() -> str:
+    ) -> CompletionResult:
+        def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
                 "model": self._model,
                 "messages": messages,
@@ -280,14 +300,20 @@ class AnthropicClient:
                     kwargs["system"] = list(system)
             resp = self._client.messages.create(**kwargs)
             usage = resp.usage
+            token_usage = TokenUsage(
+                cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0),
+                cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0),
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+            )
             _log.debug(
                 "[anthropic] cache_creation=%s cache_read=%s input=%s output=%s",
-                getattr(usage, "cache_creation_input_tokens", 0),
-                getattr(usage, "cache_read_input_tokens", 0),
-                usage.input_tokens,
-                usage.output_tokens,
+                token_usage.cache_creation_input_tokens,
+                token_usage.cache_read_input_tokens,
+                token_usage.input_tokens,
+                token_usage.output_tokens,
             )
-            return resp.content[0].text  # type: ignore[union-attr]
+            return CompletionResult(text=resp.content[0].text, usage=token_usage)  # type: ignore[union-attr]
 
         return _with_retry(_call, max_attempts=self._max_attempts)
 
@@ -313,8 +339,8 @@ class AzureOpenAIClient:
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
-    ) -> str:
-        def _call() -> str:
+    ) -> CompletionResult:
+        def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
                 "model": self._model,
                 "messages": _openai_messages(messages, system),
@@ -324,8 +350,20 @@ class AzureOpenAIClient:
             if cache_key is not None:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
-            _log_openai_usage(resp.usage)
-            return resp.choices[0].message.content or ""
+            usage = resp.usage
+            token_usage = TokenUsage(
+                input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+            )
+            _log.debug(
+                "[azure] prompt=%s completion=%s",
+                token_usage.input_tokens,
+                token_usage.output_tokens,
+            )
+            return CompletionResult(
+                text=resp.choices[0].message.content or "",
+                usage=token_usage,
+            )
 
         return _with_retry(_call, max_attempts=self._max_attempts)
 
@@ -354,8 +392,8 @@ class OpenRouterClient:
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
-    ) -> str:
-        def _call() -> str:
+    ) -> CompletionResult:
+        def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
                 "model": self._model,
                 "messages": _openai_messages(messages, system),
@@ -365,8 +403,20 @@ class OpenRouterClient:
             if cache_key is not None:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
-            _log_openai_usage(resp.usage)
-            return resp.choices[0].message.content or ""
+            usage = resp.usage
+            token_usage = TokenUsage(
+                input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+            )
+            _log.debug(
+                "[openrouter] prompt=%s completion=%s",
+                token_usage.input_tokens,
+                token_usage.output_tokens,
+            )
+            return CompletionResult(
+                text=resp.choices[0].message.content or "",
+                usage=token_usage,
+            )
 
         return _with_retry(_call, max_attempts=self._max_attempts)
 
@@ -391,8 +441,8 @@ class CustomGatewayClient:
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
-    ) -> str:
-        def _call() -> str:
+    ) -> CompletionResult:
+        def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
                 "model": self._model,
                 "messages": _openai_messages(messages, system),
@@ -402,8 +452,20 @@ class CustomGatewayClient:
             if cache_key is not None:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
-            _log_openai_usage(resp.usage)
-            return resp.choices[0].message.content or ""
+            usage = resp.usage
+            token_usage = TokenUsage(
+                input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+            )
+            _log.debug(
+                "[custom] prompt=%s completion=%s",
+                token_usage.input_tokens,
+                token_usage.output_tokens,
+            )
+            return CompletionResult(
+                text=resp.choices[0].message.content or "",
+                usage=token_usage,
+            )
 
         return _with_retry(_call, max_attempts=self._max_attempts)
 

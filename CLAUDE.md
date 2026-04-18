@@ -54,6 +54,12 @@ Read `ARCHITECTURE.md` before any structural change. Non-negotiable:
 - Mock repositories extend the real class (LSP-compliant)
 - IMPORTANT: pipeline and cross-platform stories need live CI log evidence + error-path simulation. Unit tests alone are insufficient.
 
+## Internal flags
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `REVUE_METRICS_ENABLED` | off | Enables `JsonlMetricsCollector`; writes per-run token usage to `.revue/metrics.jsonl`. Never document on any public surface — see `docs/architecture/pipeline-metrics.md` ADR D6. |
+
 ## Key references
 
 | Area | Where to look |

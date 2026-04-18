@@ -12,9 +12,11 @@ import pytest
 from revue.core.ai_client import (
     AnthropicClient,
     AzureOpenAIClient,
+    CompletionResult,
     CustomGatewayClient,
     OpenAIClient,
     OpenRouterClient,
+    TokenUsage,
     _CACHE_CONTROL_1H,
     _openai_messages,
     _with_retry,
@@ -226,7 +228,7 @@ def test_openai_complete_logs_cached_tokens(mock_openai_cls: MagicMock) -> None:
 
     with patch("revue.core.ai_client._log") as mock_log:
         result = client.complete([{"role": "user", "content": "test"}])
-        assert result == "result"
+        assert result.text == "result"
         mock_log.debug.assert_called_once()
         log_args = mock_log.debug.call_args[0]
         assert "cached" in log_args[0]
@@ -324,7 +326,7 @@ def test_anthropic_complete_caches_via_content_blocks(mock_anthropic_cls: MagicM
         system=caller_system,
     )
 
-    assert result == "result"
+    assert result.text == "result"
     call_kwargs = mock_anthropic_cls.return_value.messages.create.call_args[1]
     # No invalid top-level cache_control kwarg
     assert "cache_control" not in call_kwargs
@@ -433,6 +435,145 @@ def test_anthropic_complete_logs_cache_usage(mock_anthropic_cls: MagicMock) -> N
         log_args = mock_log.debug.call_args[0]
         assert "cache_creation" in log_args[0]
         assert "cache_read" in log_args[0]
+
+
+# ---------------------------------------------------------------------------
+# REVUE-151: D1 — OpenAI path with D1-style system list (TC_D1_openai)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# REVUE-155: CompletionResult + TokenUsage (RED — TokenUsage/CompletionResult
+# do not exist yet; these tests drive the implementation)
+# ---------------------------------------------------------------------------
+
+def test_token_usage_defaults_to_zero() -> None:
+    """All four TokenUsage fields default to 0 when not supplied."""
+    from revue.core.ai_client import TokenUsage
+    u = TokenUsage()
+    assert u.input_tokens == 0
+    assert u.output_tokens == 0
+    assert u.cache_creation_input_tokens == 0
+    assert u.cache_read_input_tokens == 0
+
+
+def test_completion_result_fields() -> None:
+    """CompletionResult exposes .text and .usage correctly."""
+    from revue.core.ai_client import CompletionResult, TokenUsage
+    r = CompletionResult(text="hello", usage=TokenUsage())
+    assert r.text == "hello"
+    assert isinstance(r.usage, TokenUsage)
+
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_returns_completion_result(mock_anthropic_cls: MagicMock) -> None:
+    """AnthropicClient.complete() returns a CompletionResult instance."""
+    from revue.core.ai_client import CompletionResult
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="answer")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        input_tokens=100,
+        output_tokens=10,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+    client = AnthropicClient(_make_config(provider="anthropic"))
+    result = client.complete([{"role": "user", "content": "hi"}])
+    assert isinstance(result, CompletionResult)
+    assert result.text == "answer"
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openai_returns_completion_result(mock_openai_cls: MagicMock) -> None:
+    """OpenAIClient.complete() returns a CompletionResult instance."""
+    from revue.core.ai_client import CompletionResult
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "answer"
+    mock_resp.usage = MagicMock(prompt_tokens=50, completion_tokens=10)
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+    client = OpenAIClient(_make_config(provider="openai"))
+    result = client.complete([{"role": "user", "content": "hi"}])
+    assert isinstance(result, CompletionResult)
+    assert result.text == "answer"
+
+
+@patch("revue.core.ai_client.openai.AzureOpenAI")
+def test_azure_returns_completion_result(mock_azure_cls: MagicMock) -> None:
+    """AzureOpenAIClient.complete() returns a CompletionResult instance."""
+    from revue.core.ai_client import CompletionResult
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "answer"
+    mock_resp.usage = MagicMock(prompt_tokens=50, completion_tokens=10)
+    mock_azure_cls.return_value.chat.completions.create.return_value = mock_resp
+    client = AzureOpenAIClient(_make_config(provider="azure", azure_endpoint="https://x.openai.azure.com"))
+    result = client.complete([{"role": "user", "content": "hi"}])
+    assert isinstance(result, CompletionResult)
+    assert result.text == "answer"
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openrouter_returns_completion_result(mock_openai_cls: MagicMock) -> None:
+    """OpenRouterClient.complete() returns a CompletionResult instance."""
+    from revue.core.ai_client import CompletionResult
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "answer"
+    mock_resp.usage = MagicMock(prompt_tokens=50, completion_tokens=10)
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+    client = OpenRouterClient(_make_config(provider="openrouter"))
+    result = client.complete([{"role": "user", "content": "hi"}])
+    assert isinstance(result, CompletionResult)
+    assert result.text == "answer"
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_custom_returns_completion_result(mock_openai_cls: MagicMock) -> None:
+    """CustomGatewayClient.complete() returns a CompletionResult instance."""
+    from revue.core.ai_client import CompletionResult
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "answer"
+    mock_resp.usage = MagicMock(prompt_tokens=50, completion_tokens=10)
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+    client = CustomGatewayClient(_make_config(provider="custom", base_url="https://gw.example.com"))
+    result = client.complete([{"role": "user", "content": "hi"}])
+    assert isinstance(result, CompletionResult)
+    assert result.text == "answer"
+
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_populates_all_usage_fields(mock_anthropic_cls: MagicMock) -> None:
+    """AnthropicClient populates all four TokenUsage fields from resp.usage."""
+    from revue.core.ai_client import TokenUsage
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="ok")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=1234,
+        cache_read_input_tokens=567,
+        input_tokens=2000,
+        output_tokens=80,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+    client = AnthropicClient(_make_config(provider="anthropic"))
+    result = client.complete([{"role": "user", "content": "hi"}])
+    assert result.usage.cache_creation_input_tokens == 1234
+    assert result.usage.cache_read_input_tokens == 567
+    assert result.usage.input_tokens == 2000
+    assert result.usage.output_tokens == 80
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openai_maps_prompt_tokens_to_input_tokens(mock_openai_cls: MagicMock) -> None:
+    """OpenAIClient maps prompt_tokens→input_tokens, completion_tokens→output_tokens; cache fields=0."""
+    from revue.core.ai_client import TokenUsage
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "ok"
+    mock_resp.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+    client = OpenAIClient(_make_config(provider="openai"))
+    result = client.complete([{"role": "user", "content": "hi"}])
+    assert result.usage.input_tokens == 100
+    assert result.usage.output_tokens == 50
+    assert result.usage.cache_creation_input_tokens == 0
+    assert result.usage.cache_read_input_tokens == 0
 
 
 # ---------------------------------------------------------------------------

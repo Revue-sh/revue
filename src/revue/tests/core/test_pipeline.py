@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from revue.core.ai_client import CompletionResult, TokenUsage
 from revue.core.ai_config import AIConfig
 from revue.core.license_validator import LicenseInfo
 from revue.core.models import FileChange
@@ -54,12 +55,16 @@ def _fc(path: str, additions: int = 5, deletions: int = 2) -> FileChange:
     )
 
 
+def _cr(text: str) -> CompletionResult:
+    return CompletionResult(text=text, usage=TokenUsage())
+
+
 def _pipeline(config: AIConfig | None = None, client=None, **li_kwargs) -> ReviewPipeline:
     """Build a pipeline with mocked license and usage tracking."""
     cfg = config or _config()
     mc = client or MagicMock()
     if client is None:
-        mc.complete.return_value = "ok"
+        mc.complete.return_value = _cr("ok")
     return ReviewPipeline(cfg, client=mc, license_info=_license_info(**li_kwargs))
 
 
@@ -70,7 +75,7 @@ def _pipeline(config: AIConfig | None = None, client=None, **li_kwargs) -> Revie
 def test_pipeline_uses_injected_client():
     """Injected mock client is used — not the real one (DIP)."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config()
     pipeline = ReviewPipeline(config, client=mock_client, license_info=_license_info())
 
@@ -85,7 +90,7 @@ def test_pipeline_uses_injected_client():
 def test_pipeline_runs_included_files():
     """complete() called once per included file."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = "ok"
+    mock_client.complete.return_value = _cr("ok")
     config = _config()
     pipeline = ReviewPipeline(config, client=mock_client, license_info=_license_info())
 
@@ -102,7 +107,7 @@ def test_pipeline_runs_included_files():
 def test_pipeline_excludes_filtered_files():
     """Files matching ignore_patterns are excluded — complete() not called for them."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = "ok"
+    mock_client.complete.return_value = _cr("ok")
     config = _config(ignore_patterns=["*.md"])
     pipeline = ReviewPipeline(config, client=mock_client, license_info=_license_info())
 
@@ -119,7 +124,7 @@ def test_pipeline_excludes_filtered_files():
 def test_pipeline_returns_excluded_list():
     """Excluded files returned as second element of tuple."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = "ok"
+    mock_client.complete.return_value = _cr("ok")
     config = _config(ignore_patterns=["*.lock"])
     pipeline = ReviewPipeline(config, client=mock_client, license_info=_license_info())
 
@@ -200,7 +205,7 @@ def test_pipeline_raises_when_reviews_exhausted():
 def test_pipeline_proceeds_when_reviews_left_positive():
     """Pipeline runs normally when reviews_left > 0."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = "ok"
+    mock_client.complete.return_value = _cr("ok")
     config = _config()
     pipeline = ReviewPipeline(
         config, client=mock_client,
@@ -217,7 +222,7 @@ def test_pipeline_proceeds_when_reviews_left_positive():
 def test_pipeline_calls_track_after_review():
     """track_usage is called after a successful review."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = "ok"
+    mock_client.complete.return_value = _cr("ok")
     config = _config()
     pipeline = ReviewPipeline(config, client=mock_client, license_info=_license_info())
 
@@ -235,7 +240,7 @@ def test_pipeline_calls_validate_license_when_none_injected(monkeypatch):
     """When no license_info injected, validate_license() is called."""
     monkeypatch.setenv("REVUE_LICENSE_KEY", "env-key")
     mock_client = MagicMock()
-    mock_client.complete.return_value = "ok"
+    mock_client.complete.return_value = _cr("ok")
     config = _config()
     pipeline = ReviewPipeline(config, client=mock_client)
 
@@ -255,7 +260,7 @@ def test_pipeline_calls_validate_license_when_none_injected(monkeypatch):
 def test_pipeline_respects_free_tier_agents_allowed():
     """Free tier: only orchestrator, code-quality-expert, consolidator allowed."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config()
     
     free_license = _license_info(
@@ -290,7 +295,7 @@ def test_pipeline_respects_pro_tier_agents_allowed():
     3. track_usage was called
     """
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config()
 
     pro_license = _license_info(
@@ -325,7 +330,7 @@ def test_pipeline_uses_simplified_path_for_free_tier():
     directly); orchestration path does NOT call client.complete() directly.
     """
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config()
 
     free_license = _license_info(
@@ -345,7 +350,7 @@ def test_pipeline_uses_simplified_path_for_free_tier():
 def test_pipeline_uses_orchestration_path_for_pro_tier(capsys):
     """Pro tier triggers orchestration path — log says 'orchestrated'."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config()
 
     pro_license = _license_info(
@@ -369,7 +374,7 @@ def test_pipeline_uses_orchestration_path_for_pro_tier(capsys):
 def test_pipeline_orchestration_falls_back_when_no_agents_match():
     """If no loaded agents match agents_allowed, falls back to simplified review."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config()
 
     # Premium tier BUT with an agent name that doesn't exist in the agents dir
@@ -391,7 +396,7 @@ def test_pipeline_orchestration_falls_back_when_no_agents_match():
 def test_pipeline_logs_active_agents(capsys):
     """Pipeline logs active agents after license validation."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config()
     
     license_info = _license_info(
@@ -420,7 +425,7 @@ def test_pipeline_run_accepts_pr_description_param():
     from revue.core.pr_description_adapter import PRDescription
 
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     pipeline = _pipeline(client=mock_client)
 
     pr = PRDescription(
@@ -439,7 +444,7 @@ def test_pipeline_run_accepts_pr_description_param():
 def test_pipeline_run_no_pr_description_unaffected():
     """pipeline.run() without pr_description behaves identically to before (AC4 backward compat)."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     pipeline = _pipeline(client=mock_client)
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
@@ -528,7 +533,7 @@ def test_pipeline_free_tier_ignores_pr_description(capsys):
     from revue.core.pr_description_adapter import PRDescription
 
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     free_license = _license_info(
         tier="free",
         agents_allowed=["orchestrator", "code-quality-expert", "consolidator"],
@@ -620,7 +625,7 @@ def test_partial_failure_does_not_abort_agent_runner():
 def test_pipeline_passes_max_parallel_agents_to_runner(capsys):
     """Pipeline passes config.max_parallel_agents as max_workers to run_agents_parallel."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config(max_parallel_agents=2)
 
     pro_license = _license_info(
@@ -652,7 +657,7 @@ def test_pipeline_passes_max_parallel_agents_to_runner(capsys):
 def test_pipeline_sequential_mode_logged(capsys):
     """When max_parallel_agents=1, pipeline logs 'sequentially' not 'in parallel'."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = '{"findings": []}'
+    mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config(max_parallel_agents=1)
 
     pro_license = _license_info(

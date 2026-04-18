@@ -249,7 +249,7 @@ def run_shared_analysis(
             [{"role": "user", "content": "Analyse the diff above and respond with valid JSON."}],
             system=system_blocks,
             cache_key=diff_hash,
-        )
+        ).text
         _log.debug("Shared analysis raw response (%d chars): %.300r", len(raw), raw)
         # Strip markdown code fences that LLMs often wrap responses in
         clean = raw.strip()

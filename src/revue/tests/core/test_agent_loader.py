@@ -13,7 +13,7 @@ from revue.core.agent_loader import (
     load_agent_definition, load_agents_from_dir,
     load_custom_agents, load_all_agents,
 )
-from revue.core.ai_client import _CACHE_CONTROL_1H
+from revue.core.ai_client import _CACHE_CONTROL_1H, CompletionResult, TokenUsage
 from revue.core.ai_config import AIConfig
 from revue.core.models import FileChange, AIReview
 
@@ -61,13 +61,17 @@ def _fc(path: str = "app.py") -> FileChange:
                       additions=5, deletions=2, diff="@@ -1 +1 @@\n-old\n+new")
 
 
+def _cr(text: str) -> CompletionResult:
+    return CompletionResult(text=text, usage=TokenUsage())
+
+
 def _mock_client(response=None) -> MagicMock:
     c = MagicMock()
-    c.complete.return_value = response or json.dumps([{
+    c.complete.return_value = _cr(response or json.dumps([{
         "file_path": "app.py", "line_number": 5,
         "severity": "minor", "issue": "test finding",
         "suggestion": "fix it", "confidence": 0.8,
-    }])
+    }]))
     return c
 
 
@@ -530,7 +534,7 @@ def test_analyse_graceful_on_empty_response():
     defn = AgentDefinition(name="leo", display_name="Leo", role="arch",
                            system_prompt="Find issues.")
     c = MagicMock()
-    c.complete.return_value = ""  # Explicitly set empty string directly — _mock_client("") is falsy and would use the default non-empty response
+    c.complete.return_value = _cr("")  # empty text — _mock_client("") is falsy and would use the default non-empty response
     agent = LoadedAgent(defn, c)
     results = agent.analyse([_fc()])
     assert results == []
@@ -756,7 +760,7 @@ def test_analyse_places_diff_in_system_block_first() -> None:
         system_prompt="You are a test agent."
     )
     mock_client = MagicMock()
-    mock_client.complete.return_value = '[]'  # Empty findings
+    mock_client.complete.return_value = _cr('[]')
     agent = LoadedAgent(agent_def, mock_client)
 
     changes = [FileChange(
@@ -786,7 +790,7 @@ def test_analyse_agent_instructions_uncached_in_system_block() -> None:
         system_prompt="You are a test agent."
     )
     mock_client = MagicMock()
-    mock_client.complete.return_value = '[]'  # Empty findings
+    mock_client.complete.return_value = _cr('[]')
     agent = LoadedAgent(agent_def, mock_client)
 
     changes = [FileChange(
@@ -819,7 +823,7 @@ def test_analyse_shared_context_in_user_message_not_system() -> None:
         system_prompt="You are a test agent."
     )
     mock_client = MagicMock()
-    mock_client.complete.return_value = '[]'  # Empty findings
+    mock_client.complete.return_value = _cr('[]')
     agent = LoadedAgent(agent_def, mock_client)
 
     changes = [FileChange(
@@ -873,3 +877,19 @@ def test_agent_loader_uses_1h_cache_for_diff() -> None:
     assert system[0].get("cache_control") == _CACHE_CONTROL_1H, (
         f"diff block cache tier; got {system[0].get('cache_control')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-155: agent_loader uses result.text (RED — CompletionResult not yet returned)
+# ---------------------------------------------------------------------------
+
+def test_agent_loader_uses_result_text() -> None:
+    """LoadedAgent.analyse() extracts .text from CompletionResult — behaviour unchanged."""
+    from revue.core.ai_client import CompletionResult, TokenUsage
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find issues.")
+    mock_client = MagicMock()
+    mock_client.complete.return_value = CompletionResult(text="[]", usage=TokenUsage())
+    agent = LoadedAgent(defn, mock_client)
+    result = agent.analyse([_fc()])
+    assert result == []

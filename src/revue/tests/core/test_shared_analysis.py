@@ -15,7 +15,7 @@ from revue.core.shared_analysis import (
     _parse_orchestrator_response,
     _detect_provider,
 )
-from revue.core.ai_client import _CACHE_CONTROL_1H
+from revue.core.ai_client import _CACHE_CONTROL_1H, CompletionResult, TokenUsage
 from revue.core.formatting import format_selection_message
 from revue.core.models import FileChange
 
@@ -28,9 +28,13 @@ def _fc(path: str) -> FileChange:
     )
 
 
+def _cr(text: str) -> CompletionResult:
+    return CompletionResult(text=text, usage=TokenUsage())
+
+
 def _mock_client(response: str) -> MagicMock:
     c = MagicMock()
-    c.complete.return_value = response
+    c.complete.return_value = _cr(response)
     return c
 
 
@@ -136,10 +140,10 @@ def test_shared_analysis_same_call_structure_for_anthropic_and_openai():
     from revue.core.ai_client import AnthropicClient, OpenAIClient
 
     anthropic_mock = MagicMock(spec=AnthropicClient)
-    anthropic_mock.complete.return_value = _VALID_JSON
+    anthropic_mock.complete.return_value = _cr(_VALID_JSON)
 
     openai_mock = MagicMock(spec=OpenAIClient)
-    openai_mock.complete.return_value = _VALID_JSON
+    openai_mock.complete.return_value = _cr(_VALID_JSON)
 
     run_shared_analysis([_fc("app.py")], anthropic_mock, provider="anthropic")
     run_shared_analysis([_fc("app.py")], openai_mock, provider="openai")
@@ -606,7 +610,7 @@ def test_cleo_response_includes_files_per_agent():
 
     class _Client:
         def complete(self, *a, **kw):
-            return raw
+            return _cr(raw)
 
     result = run_shared_analysis([_fc("app/auth.py")], _Client())
     assert result.orchestrator_response is not None
@@ -638,7 +642,7 @@ def test_cleo_missing_files_field_graceful():
 
     class _Client:
         def complete(self, *a, **kw):
-            return raw
+            return _cr(raw)
 
     result = run_shared_analysis([_fc("app.py")], _Client())
     assert result.orchestrator_response is not None
@@ -660,7 +664,7 @@ def test_shared_analysis_places_diff_summary_in_system_block() -> None:
     from unittest.mock import MagicMock
 
     mock_client = MagicMock()
-    mock_client.complete.return_value = _VALID_JSON
+    mock_client.complete.return_value = _cr(_VALID_JSON)
 
     result = run_shared_analysis([_fc("test.py")], mock_client)
 
@@ -691,7 +695,7 @@ def test_shared_analysis_uses_1h_cache_for_diff() -> None:
     from unittest.mock import MagicMock
 
     mock_client = MagicMock()
-    mock_client.complete.return_value = _VALID_JSON
+    mock_client.complete.return_value = _cr(_VALID_JSON)
 
     result = run_shared_analysis([_fc("test.py")], mock_client)
 
@@ -702,3 +706,16 @@ def test_shared_analysis_uses_1h_cache_for_diff() -> None:
     assert system[0].get("cache_control") == _CACHE_CONTROL_1H, (
         f"diff summary block cache tier; got {system[0].get('cache_control')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-155: shared_analysis uses result.text (RED — CompletionResult not yet returned)
+# ---------------------------------------------------------------------------
+
+def test_shared_analysis_uses_result_text() -> None:
+    """run_shared_analysis() extracts .text from CompletionResult — behaviour unchanged."""
+    from revue.core.ai_client import CompletionResult, TokenUsage
+    mock_client = MagicMock()
+    mock_client.complete.return_value = CompletionResult(text=_VALID_JSON, usage=TokenUsage())
+    result = run_shared_analysis([_fc("app.py")], mock_client)
+    assert isinstance(result, SharedAnalysisResult)

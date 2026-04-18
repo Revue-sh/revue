@@ -601,7 +601,7 @@ class ReviewPipeline:
                     [{"role": "user", "content": prompt}],
                     max_tokens=self.config.ai_max_tokens,
                     temperature=self.config.ai_temp,
-                )
+                ).text
                 results.append(ReviewResult(file_path=fc.file_path, response=response))
                 print(f"[revue]   ✓ {fc.file_path}", flush=True)
 
