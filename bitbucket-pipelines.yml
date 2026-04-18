@@ -1,22 +1,39 @@
 image: python:3.12-slim
 
+clone:
+  depth: 1
+
 definitions:
+  caches:
+    ci-venv:
+      key:
+        files:
+          - requirements-ci.txt
+          - src/pyproject.toml
+      path: .venv
+
   steps:
     - step: &run-tests
         name: "Run Tests"
         caches:
-          - pip
+          - ci-venv
         script:
-          - pip install openai anthropic httpx pyyaml tomli-w pytest --quiet
-          - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q --log-cli-level=DEBUG
+          - test -x .venv/bin/python || python3 -m venv .venv
+          - export PATH="$PWD/.venv/bin:$PATH"
+          - python3 -c "import anthropic, openai, httpx, yaml, tomli_w, pytest" 2>/dev/null || pip install --quiet -r requirements-ci.txt
+          - python3 -c "import revue" 2>/dev/null || pip install --quiet --no-deps -e src/
+          - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q --log-cli-level=WARNING
 
     - step: &revue-review
         name: "Revue.io AI Code Review"
         image: python:3.12
         caches:
-          - pip
+          - ci-venv
         script:
-          - pip install openai anthropic httpx pyyaml tomli-w --quiet
+          - test -x .venv/bin/python || python3 -m venv .venv
+          - export PATH="$PWD/.venv/bin:$PATH"
+          - python3 -c "import anthropic, openai, httpx, yaml, tomli_w, pytest" 2>/dev/null || pip install --quiet -r requirements-ci.txt
+          - python3 -c "import revue" 2>/dev/null || pip install --quiet --no-deps -e src/
           - git diff origin/${BITBUCKET_PR_DESTINATION_BRANCH}...HEAD > /tmp/revue_pr.diff
           - echo "[revue] Diff size $(wc -l < /tmp/revue_pr.diff) lines"
           - echo "[revue] Fetching PR description for context filtering..."
