@@ -124,7 +124,7 @@ class NovaConsolidator:
         )
 
         try:
-            raw = self._client.complete(
+            result = self._client.complete(
                 [{"role": "user", "content": user_content}],
                 system=_REPLY_THREAD_SYSTEM_PROMPT,
                 max_tokens=4096,
@@ -139,7 +139,7 @@ class NovaConsolidator:
             )
             raise
 
-        return _parse_thread_decisions(raw)
+        return _parse_thread_decisions(result.text)
 
 
 def _parse_thread_decisions(raw: str) -> list[dict]:

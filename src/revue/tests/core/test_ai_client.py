@@ -597,3 +597,55 @@ def test_openai_messages_flattens_d1_system_list() -> None:
     assert "agent instructions" in system_content
     assert "cache_control" not in system_content
     assert "ephemeral" not in system_content
+
+# ---------------------------------------------------------------------------
+# REVUE-154: MetricsCollector integration
+# ---------------------------------------------------------------------------
+
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_client_records_usage_after_complete(mock_anthropic_cls: MagicMock) -> None:
+    """AnthropicClient records MetricsEvent after complete() using token data from usage."""
+
+    def _test():
+        from revue.core.metrics import CapturingMetricsCollector, MetricsEvent
+        from revue.core.ai_client import CompletionResult, TokenUsage
+
+        # Setup: Mock Anthropic response with usage data
+        mock_resp = MagicMock()
+        mock_resp.content = [MagicMock(text="response text")]
+        mock_resp.usage.input_tokens = 100
+        mock_resp.usage.output_tokens = 50
+        mock_resp.usage.cache_creation_input_tokens = 0
+        mock_resp.usage.cache_read_input_tokens = 0
+
+        mock_anthropic_instance = MagicMock()
+        mock_anthropic_instance.messages.create.return_value = mock_resp
+        mock_anthropic_cls.return_value = mock_anthropic_instance
+
+        # Create client with metrics collector
+        collector = CapturingMetricsCollector()
+        config = _make_config(provider="anthropic")
+        client = AnthropicClient(config, metrics=collector)
+
+        # Call complete()
+        result = client.complete(
+            messages=[{"role": "user", "content": "test"}],
+            system="test system",
+        )
+
+        # Verify result is CompletionResult with text
+        assert isinstance(result, CompletionResult)
+        assert result.text == "response text"
+
+        # Verify metrics event was recorded
+        assert len(collector.events) == 1
+        event = collector.events[0]
+        assert event.event_type == "agent_call"
+        assert event.provider == "anthropic"
+        assert event.input_tokens == 100
+        assert event.output_tokens == 50
+        assert event.cache_creation_tokens == 0
+        assert event.cache_read_tokens == 0
+
+    _test()

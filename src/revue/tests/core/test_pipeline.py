@@ -1591,3 +1591,79 @@ def test_apply_location_strategy_github_integer_position_no_crash() -> None:
     )
     # Non-Revue comment filtered by FINDING_HEADER_RE → no entry
     assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# REVUE-154: ReviewPipeline metrics integration
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_metrics_disabled_by_default() -> None:
+    """Without REVUE_METRICS_ENABLED, pipeline uses NullMetricsCollector."""
+    import os
+    from unittest.mock import patch
+
+    # Ensure env var not set
+    with patch.dict(os.environ, {}, clear=False):
+        if "REVUE_METRICS_ENABLED" in os.environ:
+            del os.environ["REVUE_METRICS_ENABLED"]
+
+        config = _config()
+        pipeline = ReviewPipeline(config, license_info=_license_info())
+
+        # Verify null collector is used
+        from revue.core.metrics import NullMetricsCollector
+        assert isinstance(pipeline._metrics, NullMetricsCollector)
+
+
+def test_pipeline_metrics_enabled_creates_jsonl_collector() -> None:
+    """With REVUE_METRICS_ENABLED, pipeline uses JsonlMetricsCollector."""
+    import os
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {"REVUE_METRICS_ENABLED": "1"}):
+        config = _config()
+        pipeline = ReviewPipeline(config, license_info=_license_info())
+
+        # Verify JSON collector is used
+        from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+        assert isinstance(pipeline._metrics, JsonlMetricsCollector)
+
+
+def test_pipeline_failure_produces_no_metrics_artefact() -> None:
+    """AC6: AllAgentsFailedError raised before flush() — no metrics.jsonl created."""
+    import tempfile
+    from unittest.mock import MagicMock, patch
+    from pathlib import Path
+    from revue.core.pipeline import AllAgentsFailedError
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    mock_client = MagicMock()
+    mock_client.complete.side_effect = RuntimeError("api error")
+
+    pro_license = _license_info(
+        tier="pro",
+        agents_allowed=[
+            "orchestrator", "code-quality-expert", "security-expert",
+            "performance-expert", "architecture-expert", "consolidator",
+            "sage", "cleo", "nova",
+        ],
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        config = _config()
+        pipeline = ReviewPipeline(
+            config,
+            client=mock_client,
+            license_info=pro_license,
+            metrics=collector,
+        )
+
+        with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+             patch("revue.core.pipeline.track_usage"):
+            with pytest.raises(AllAgentsFailedError):
+                pipeline.run("fake.diff")
+
+        # flush() was never reached — no artefact
+        assert not (Path(tmpdir) / ".revue" / "metrics.jsonl").exists()

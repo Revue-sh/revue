@@ -10,13 +10,16 @@ Tier routing:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
 from typing import NamedTuple, Optional
+from uuid import uuid4
 
 from .ai_config import AIConfig
 from .ai_client import AIClient, create_ai_client
+from .metrics import MetricsCollector, NullMetricsCollector
 from .diff_parser import parse_diff_file, filter_changes
 from .diff_limit import check_diff_limit, DiffLimitResult
 from .license_validator import LicenseInfo, validate as validate_license
@@ -357,14 +360,27 @@ class ReviewPipeline:
     Pass license_info= to inject a pre-validated LicenseInfo (avoids API call in tests).
     """
 
+    @staticmethod
+    def _build_metrics_collector() -> MetricsCollector:
+        """Build metrics collector based on REVUE_METRICS_ENABLED env var."""
+        if os.getenv("REVUE_METRICS_ENABLED"):
+            from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+            return JsonlMetricsCollector()
+        return NullMetricsCollector()
+
     def __init__(
         self,
         config: AIConfig,
         client: AIClient | None = None,
         license_info: LicenseInfo | None = None,
+        metrics: MetricsCollector | None = None,
     ) -> None:
         self.config = config
-        self._client: AIClient = client if client is not None else create_ai_client(config)
+        self._metrics = metrics or self._build_metrics_collector()
+        self._client: AIClient = (
+            client if client is not None
+            else create_ai_client(config, metrics=self._metrics)
+        )
         self._license_info: LicenseInfo | None = license_info
         # REVUE-117: set by _run_orchestration(); readable by CLI after run()
         self.last_fallback_mode: str = _FB_NORMAL
@@ -569,6 +585,10 @@ class ReviewPipeline:
                     parts.append(f"{not_acked} reaffirmed")
                 summary = ", ".join(parts) if parts else "no state changes"
                 print(f"[revue]   💬 Won't-fix reply tracking complete — {summary}.", flush=True)
+
+        # Flush metrics at end of run
+        run_id = str(uuid4())
+        self._metrics.flush(run_id)
 
         return results, excluded, len(included), failed_agents
 

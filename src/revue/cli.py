@@ -34,6 +34,29 @@ from revue.core.models import PRContext
 
 
 # ---------------------------------------------------------------------------
+# Metrics helpers
+# ---------------------------------------------------------------------------
+
+def _print_metrics_summary(pipeline: ReviewPipeline) -> None:
+    """Print cache metrics summary using in-memory totals from the collector."""
+    metrics_collector = getattr(pipeline, "_metrics", None)
+    if not metrics_collector:
+        return
+    totals = metrics_collector.verbose_summary()
+    if totals is None:
+        return
+    write_tokens = totals.get("cache_creation_tokens", 0)
+    read_tokens = totals.get("cache_read_tokens", 0)
+    total_cached = write_tokens + read_tokens
+    hit_rate = (read_tokens / total_cached * 100) if total_cached > 0 else 0
+    print(
+        f"[revue] cache  write: {write_tokens:,} tokens  read: {read_tokens:,} tokens  "
+        f"({hit_rate:.0f}% cache hit rate this run)",
+        flush=True,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
 
@@ -112,6 +135,12 @@ def build_parser() -> argparse.ArgumentParser:
             "(curl / gh / gitlab API) and write it to a file; the CLI stays platform-agnostic. "
             "Example: --pr-description-file /tmp/pr_description.txt"
         ),
+    )
+    review.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Print cache metrics summary after review completes (requires REVUE_METRICS_ENABLED)",
     )
 
     review.set_defaults(func=cmd_review)
@@ -301,6 +330,11 @@ def cmd_review(
             pr_context=_pr_context,
         )
         fallback_mode = getattr(pipeline, "last_fallback_mode", "normal")
+
+        # Print cache metrics summary if --verbose enabled
+        verbose = getattr(args, "verbose", False)
+        if verbose:
+            _print_metrics_summary(pipeline)
     except AllAgentsFailedError:
         print(
             "\n[revue] ❌ All agents failed — review aborted.\n"

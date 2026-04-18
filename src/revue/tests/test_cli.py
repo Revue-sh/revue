@@ -533,3 +533,112 @@ def test_format_finding_category_only_when_no_agent_name() -> None:
     result = _format_finding(f)
     assert "Security" in result
     assert "·" not in result
+
+
+# ---------------------------------------------------------------------------
+# T5 — CLI --verbose flag tests
+# ---------------------------------------------------------------------------
+
+def _make_test_config(**overrides):
+    """Create an AIConfig for testing with sensible defaults."""
+    from revue.core.ai_config import AIConfig
+    defaults = dict(
+        gitlab_url="https://gitlab.example.com",
+        gitlab_token="glpat-test",
+        gitlab_project_id="42",
+        gitlab_project_path="org/repo",
+        gitlab_project_url="https://gitlab.example.com/org/repo",
+        genai_gateway_url="https://gateway.example.com/v1",
+        openai_api_key="sk-test",
+        gen_ai_gateway_model="claude-sonnet-4-5-20250929",
+        ai_temp=0.3,
+        ai_confidence=70,
+        ai_max_tokens=50000,
+        provider="anthropic",
+        api_key="sk-test",
+        api_key_env="",
+        base_url="",
+        model="gpt-4o",
+        azure_endpoint="",
+        azure_deployment="",
+        azure_api_version="2024-02-01",
+    )
+    defaults.update(overrides)
+    return AIConfig(**defaults)
+
+
+def test_cli_verbose_flag_parsed() -> None:
+    """--verbose flag is recognized by the parser."""
+    from revue.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["review", "--diff=test.diff", "--verbose"])
+    assert hasattr(args, "verbose")
+    assert args.verbose is True
+
+
+def test_cli_verbose_flag_defaults_false() -> None:
+    """--verbose defaults to False when not provided."""
+    from revue.cli import build_parser
+    parser = build_parser()
+    args = parser.parse_args(["review", "--diff=test.diff"])
+    assert hasattr(args, "verbose")
+    assert args.verbose is False
+
+
+def test_print_metrics_summary_no_collector() -> None:
+    """_print_metrics_summary handles pipeline without metrics collector gracefully."""
+    from revue.cli import _print_metrics_summary
+    from revue.core.pipeline import ReviewPipeline
+
+    config = _make_test_config()
+    pipeline = ReviewPipeline(config)
+    # Should not raise exception
+    _print_metrics_summary(pipeline)
+
+
+def test_print_metrics_summary_with_null_collector() -> None:
+    """_print_metrics_summary skips output when NullMetricsCollector is used."""
+    from revue.cli import _print_metrics_summary
+    from revue.core.pipeline import ReviewPipeline
+    from revue.core.metrics import NullMetricsCollector
+
+    config = _make_test_config()
+    pipeline = ReviewPipeline(config, metrics=NullMetricsCollector())
+    # Should not raise exception
+    _print_metrics_summary(pipeline)
+
+
+def test_print_metrics_summary_with_jsonl_collector(capsys) -> None:
+    """_print_metrics_summary prints cache totals from in-memory verbose_summary()."""
+    import tempfile
+    from revue.cli import _print_metrics_summary
+    from revue.core.metrics import MetricsEvent
+    from revue.core.pipeline import ReviewPipeline
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = _make_test_config()
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        pipeline = ReviewPipeline(config, metrics=collector)
+
+        # Populate via record/flush — the ADR D4 path
+        collector.record(MetricsEvent(
+            event_type="agent_call",
+            timestamp="2026-04-18T10:00:00Z",
+            agent_name="zara",
+            provider="anthropic",
+            model="claude-opus-4-7",
+            cache_creation_tokens=1000,
+            cache_read_tokens=3000,
+            input_tokens=4000,
+            output_tokens=500,
+        ))
+        collector.flush("test-run")
+
+        _print_metrics_summary(pipeline)
+
+        captured = capsys.readouterr()
+        assert "cache" in captured.out
+        assert "1,000" in captured.out  # write tokens
+        assert "3,000" in captured.out  # read tokens
+        assert "75" in captured.out  # hit rate (3000 / 4000 = 75%)

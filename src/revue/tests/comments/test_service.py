@@ -17,6 +17,11 @@ import pytest
 from revue.comments.models import CommentState
 from revue.comments.json_store import PerPRCommentStore
 from revue.core.dedup_consolidator import NovaConsolidator, _parse_thread_decisions
+from revue.core.ai_client import CompletionResult, TokenUsage
+
+
+def _cr(text: str) -> CompletionResult:
+    return CompletionResult(text=text, usage=TokenUsage())
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +46,7 @@ def _make_threads(n: int = 1) -> list[dict]:
 def _ai_client_returning(payload: Any) -> MagicMock:
     """Return a mock AI client that returns the JSON-serialised payload."""
     client = MagicMock()
-    client.complete.return_value = json.dumps(payload)
+    client.complete.return_value = _cr(json.dumps(payload))
     return client
 
 
@@ -153,7 +158,7 @@ def test_parse_thread_decisions_strips_trailing_commas() -> None:
 def test_analyse_reply_threads_invalid_json_raises() -> None:
     """TC4: Malformed AI response → ValueError raised (pipeline fails)."""
     client = MagicMock()
-    client.complete.return_value = "this is not json at all"
+    client.complete.return_value = _cr("this is not json at all")
     nova = NovaConsolidator(client)
 
     with pytest.raises(ValueError, match="malformed JSON"):
@@ -167,7 +172,7 @@ def test_analyse_reply_threads_invalid_json_raises() -> None:
 def test_analyse_reply_threads_non_list_json_raises() -> None:
     """TC5: AI returns object instead of array → ValueError raised."""
     client = MagicMock()
-    client.complete.return_value = '{"error": "unexpected"}'
+    client.complete.return_value = _cr('{"error": "unexpected"}')
     nova = NovaConsolidator(client)
 
     with pytest.raises(ValueError, match="non-list JSON"):
@@ -195,7 +200,7 @@ def test_analyse_reply_threads_reraises_ai_exception() -> None:
 def test_analyse_reply_threads_uses_system_param() -> None:
     """TC7: AC11 — the call uses the system= parameter, not merged content."""
     client = MagicMock()
-    client.complete.return_value = "[]"
+    client.complete.return_value = _cr("[]")
     nova = NovaConsolidator(client)
 
     nova.analyse_reply_threads(_make_threads(1))

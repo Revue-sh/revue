@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Final, Protocol
 
 _log = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ import httpx
 import openai
 
 from .ai_config import AIConfig
+from .metrics import MetricsCollector, MetricsEvent, NullMetricsCollector
 
 # Shared timeout used by all clients
 _TIMEOUT = httpx.Timeout(connect=60.0, read=600.0, write=600.0, pool=600.0)
@@ -269,13 +271,18 @@ class AnthropicClient:
     Minimum cacheable prefix: 1,024 tokens (Sonnet 4.6).
     """
 
-    def __init__(self, config: AIConfig) -> None:
+    def __init__(
+        self,
+        config: AIConfig,
+        metrics: MetricsCollector | None = None,
+    ) -> None:
         self._model = config.model
         self._max_attempts = 3 if config.retry_on_rate_limit else 1
         self._client = anthropic.Anthropic(
             api_key=config.resolve_api_key(),
             timeout=_TIMEOUT,
         )
+        self._metrics = metrics or NullMetricsCollector()
 
     def complete(
         self,
@@ -313,7 +320,21 @@ class AnthropicClient:
                 token_usage.input_tokens,
                 token_usage.output_tokens,
             )
-            return CompletionResult(text=resp.content[0].text, usage=token_usage)  # type: ignore[union-attr]
+            result = CompletionResult(text=resp.content[0].text, usage=token_usage)  # type: ignore[union-attr]
+            self._metrics.record(
+                MetricsEvent(
+                    event_type="agent_call",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    agent_name=None,
+                    provider="anthropic",
+                    model=self._model,
+                    cache_creation_tokens=token_usage.cache_creation_input_tokens,
+                    cache_read_tokens=token_usage.cache_read_input_tokens,
+                    input_tokens=token_usage.input_tokens,
+                    output_tokens=token_usage.output_tokens,
+                )
+            )
+            return result
 
         return _with_retry(_call, max_attempts=self._max_attempts)
 
@@ -490,13 +511,19 @@ _JSON_FORMAT_PROVIDERS: frozenset[str] = frozenset({
     "openai", "azure", "openrouter", "custom", "google", "groq",
 })
 
+# Providers whose constructors accept a `metrics` keyword argument.
+_METRICS_AWARE_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
+
 
 def register_provider(name: str, cls: type) -> None:
     """Register a new provider class. Enables extension without modifying this file."""
     _PROVIDER_REGISTRY[name] = cls
 
 
-def create_ai_client(config: AIConfig) -> AIClient:
+def create_ai_client(
+    config: AIConfig,
+    metrics: MetricsCollector | None = None,
+) -> AIClient:
     """Instantiate the correct AI client based on config.provider."""
     cls = _PROVIDER_REGISTRY.get(config.provider)
     if cls is None:
@@ -504,4 +531,6 @@ def create_ai_client(config: AIConfig) -> AIClient:
             f"Unknown provider: {config.provider!r}. "
             f"Known providers: {sorted(_PROVIDER_REGISTRY.keys())}"
         )
+    if metrics is not None and config.provider in _METRICS_AWARE_PROVIDERS:
+        return cls(config, metrics=metrics)
     return cls(config)
