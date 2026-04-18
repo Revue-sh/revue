@@ -360,6 +360,34 @@ index abc..def 100644
     assert _line_in_diff(10, "src/main.py", multi_hunk_diff) is False  # between hunks
 
 
+def test_line_in_diff_per_file_hunk_only() -> None:
+    """_line_in_diff() works with a per-file hunk diff (no diff --git header).
+
+    When diff_by_file is used in _run_per_issue_dedup, FileChange.diff
+    contains only hunk content — the diff --git header is stripped by
+    _parse_single_file_diff. Without this fix, in_file never becomes True
+    and all findings are skipped (regression: 0 inline comments posted).
+    """
+    per_file_diff = (
+        "@@ -1,3 +1,4 @@\n"
+        " def hello():\n"
+        "-    pass\n"
+        "+    return 'hello'\n"
+        "+\n"
+        " # end\n"
+    )
+    assert _line_in_diff(1, "src/main.py", per_file_diff) is True
+    assert _line_in_diff(4, "src/main.py", per_file_diff) is True
+    assert _line_in_diff(5, "src/main.py", per_file_diff) is False
+
+
+def test_line_in_diff_per_file_hunk_only_ignores_file_path() -> None:
+    """Per-file diffs have no git header — file_path is unused; callers own the filtering."""
+    per_file_diff = "@@ -1,3 +1,4 @@\n def hello():\n-    pass\n+    return 'hello'\n+\n # end\n"
+    # file_path is not validated for per-file diffs; caller ensures correct diff is passed
+    assert _line_in_diff(1, "any_file.py", per_file_diff) is True
+
+
 # =====================================================================
 # verify_webhook_signature
 # =====================================================================

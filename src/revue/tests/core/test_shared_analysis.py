@@ -15,6 +15,7 @@ from revue.core.shared_analysis import (
     _parse_orchestrator_response,
     _detect_provider,
 )
+from revue.core.ai_client import _CACHE_CONTROL_1H
 from revue.core.formatting import format_selection_message
 from revue.core.models import FileChange
 
@@ -669,7 +670,7 @@ def test_shared_analysis_places_diff_summary_in_system_block() -> None:
         f"system should be a list with at least 1 element; got {system}"
     )
     # system[0] must have the diff summary with cache_control
-    assert system[0].get("cache_control") == {"type": "ephemeral"}, (
+    assert system[0].get("cache_control") == _CACHE_CONTROL_1H, (
         f"system[0] should have cache_control; got {system[0]}"
     )
     # The diff summary should be in system[0]'s text
@@ -679,4 +680,25 @@ def test_shared_analysis_places_diff_summary_in_system_block() -> None:
     assert len(system) >= 2, "system should have at least 2 blocks"
     assert "The diff summary above is what you must analyse." in system[1].get("text", ""), (
         f"system[1] must contain the bridge phrase; got: {system[1].get('text', '')!r}"
+    )
+
+
+def test_shared_analysis_uses_1h_cache_for_diff() -> None:
+    """D2: diff summary block uses ephemeral type with 1-hour TTL.
+
+    See test_agent_loader_uses_1h_cache_for_diff for rationale.
+    """
+    from unittest.mock import MagicMock
+
+    mock_client = MagicMock()
+    mock_client.complete.return_value = _VALID_JSON
+
+    result = run_shared_analysis([_fc("test.py")], mock_client)
+
+    call_args = mock_client.complete.call_args
+    system = call_args[1].get("system", [])
+    assert isinstance(system, list) and len(system) >= 1
+    # D2: correct form is _CACHE_CONTROL_1H
+    assert system[0].get("cache_control") == _CACHE_CONTROL_1H, (
+        f"diff summary block cache tier; got {system[0].get('cache_control')}"
     )

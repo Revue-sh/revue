@@ -87,9 +87,9 @@ Within a single parallel run, agents 2–4 still likely miss the cache on the fi
 
 Use the 1-hour cache tier for the diff prefix. Re-reviews within an hour (the typical fix → re-review cycle) will hit the cache for all agents.
 
-> **Implementation note**: The exact `cache_control` type string for the 1-hour tier must be verified against the current Anthropic SDK before implementation. The billing dashboard distinguishes `cache_write_5m` from `cache_write_1h` as separate columns, confirming the API supports both. The candidate value is `"persistent"`; verify before shipping.
+> **Implementation (2026-04-18) — ACTIVE**: D2 is fully shipped. The 1-hour tier is `{"type": "ephemeral", "ttl": "1h"}` per `CacheControlEphemeralParam` in the Anthropic SDK (v0.94.0+). The `"persistent"` type does not exist — the API rejected it. Anthropic changed the default TTL from 1h → 5m on 2026-03-06; the explicit `ttl` field is required to opt into the 1-hour tier.
 >
-> **D2 fallback**: D1 delivers cache hits independently of the TTL tier. If the 1-hour type string requires a beta header or SDK version not yet available, ship D1 with the existing `"ephemeral"` (5-minute) tier and track D2 as a follow-up. The write-count reduction comes from D1; D2 only extends the re-review window.
+> Follow-up **REVUE-157** tracks whether the `anthropic-beta: extended-cache-ttl` header is needed for longer tiers (>1h). D2 as shipped already achieves the 1-hour window through the explicit `ttl` field alone.
 
 ### D3 — Agent instructions stay uncached
 

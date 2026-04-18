@@ -31,12 +31,26 @@ _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
 def _line_in_diff(line_number: int, file_path: str, diff: str) -> bool:
-    """Return True if line_number falls within any new-file hunk range for file_path."""
-    in_file = False
+    """Return True if line_number falls within any new-file hunk range for file_path.
+
+    Handles both full multi-file diffs (with 'diff --git' headers) and
+    per-file hunk-only diffs (FileChange.diff from diff_by_file, which
+    strips the header in _parse_single_file_diff).
+
+    For per-file diffs (no git header), ``file_path`` is not validated —
+    callers must supply the correct per-file diff via ``diff_by_file.get(file_path)``.
+    """
+    if not diff:
+        return False
+    in_file: bool | None = None  # None = not yet determined
     for line in diff.splitlines():
         if line.startswith("diff --git"):
+            if in_file is None:
+                in_file = False  # full diff — start locked out until we find our file
             in_file = f" b/{file_path}" in line
             continue
+        if in_file is None:
+            in_file = True  # first line is a hunk header — per-file diff, treat as in file
         if not in_file:
             continue
         m = _HUNK_RE.match(line)

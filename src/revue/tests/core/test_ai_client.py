@@ -15,6 +15,7 @@ from revue.core.ai_client import (
     CustomGatewayClient,
     OpenAIClient,
     OpenRouterClient,
+    _CACHE_CONTROL_1H,
     _openai_messages,
     _with_retry,
     create_ai_client,
@@ -315,7 +316,7 @@ def test_anthropic_complete_caches_via_content_blocks(mock_anthropic_cls: MagicM
     config = _make_config(provider="anthropic")
     client = AnthropicClient(config)
     caller_system = [
-        {"type": "text", "text": "diff content here", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "diff content here", "cache_control": _CACHE_CONTROL_1H},
         {"type": "text", "text": "You are a security expert."},
     ]
     result = client.complete(
@@ -330,7 +331,7 @@ def test_anthropic_complete_caches_via_content_blocks(mock_anthropic_cls: MagicM
     # system[0] (diff block) must carry the caller-provided cache_control
     system_blocks = call_kwargs.get("system", [])
     assert isinstance(system_blocks, list) and len(system_blocks) == 2
-    assert system_blocks[0].get("cache_control") == {"type": "ephemeral"}
+    assert system_blocks[0].get("cache_control") == _CACHE_CONTROL_1H
     # system[1] (agent instructions) must NOT have cache_control added by the client
     assert "cache_control" not in system_blocks[1]
     # User message content must NOT have cache_control (no _anthropic_messages_with_cache)
@@ -366,7 +367,7 @@ def test_anthropic_does_not_mutate_caller_system_list(mock_anthropic_cls: MagicM
     config = _make_config(provider="anthropic")
     client = AnthropicClient(config)
     caller_system = [
-        {"type": "text", "text": "diff", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "diff", "cache_control": _CACHE_CONTROL_1H},
         {"type": "text", "text": "instructions"},
     ]
     client.complete([{"role": "user", "content": "go"}], system=caller_system)
@@ -446,7 +447,7 @@ def test_openai_messages_flattens_d1_system_list() -> None:
     cache_control artifacts in the content.
     """
     d1_system = [
-        {"type": "text", "text": "diff content", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "diff content", "cache_control": _CACHE_CONTROL_1H},
         {"type": "text", "text": "agent instructions"},
     ]
     messages = [{"role": "user", "content": "review this"}]

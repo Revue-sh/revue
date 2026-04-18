@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from .ai_config import AIConfig
     from .shared_analysis import SharedAnalysisResult
 
-from .ai_client import _CACHE_TIER
+from .ai_client import _CACHE_CONTROL_1H
 from .models import FileChange, AIReview
 
 logger = logging.getLogger(__name__)
@@ -137,7 +137,7 @@ class LoadedAgent:
             # D1: diff is system[0] with cache_control (shared cached prefix across agents)
             # agent instructions are system[1] uncached (agent-specific)
             system_blocks = [
-                {"type": "text", "text": diff_text, "cache_control": {"type": _CACHE_TIER}},
+                {"type": "text", "text": diff_text, "cache_control": _CACHE_CONTROL_1H},
                 {"type": "text", "text": f"The code diff above is what you must review. {self._def.system_prompt}"},
             ]
             user_content = (

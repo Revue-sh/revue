@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .ai_client import AIClient
 
-from .ai_client import _CACHE_TIER, _JSON_FORMAT_PROVIDERS
+from .ai_client import _CACHE_CONTROL_1H, _JSON_FORMAT_PROVIDERS
 from .models import FileChange
 
 _log = logging.getLogger(__name__)
@@ -242,7 +242,7 @@ def run_shared_analysis(
             orchestrator_instructions += _ANTHROPIC_JSON_SUFFIX
 
         system_blocks = [
-            {"type": "text", "text": f"Diff summary:\n{diff_summary}", "cache_control": {"type": _CACHE_TIER}},
+            {"type": "text", "text": f"Diff summary:\n{diff_summary}", "cache_control": _CACHE_CONTROL_1H},
             {"type": "text", "text": f"The diff summary above is what you must analyse. {orchestrator_instructions}"},
         ]
         raw = client.complete(

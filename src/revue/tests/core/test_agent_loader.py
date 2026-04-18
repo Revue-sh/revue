@@ -13,6 +13,7 @@ from revue.core.agent_loader import (
     load_agent_definition, load_agents_from_dir,
     load_custom_agents, load_all_agents,
 )
+from revue.core.ai_client import _CACHE_CONTROL_1H
 from revue.core.ai_config import AIConfig
 from revue.core.models import FileChange, AIReview
 
@@ -643,7 +644,7 @@ def test_loaded_agent_analyse_passes_system_separately():
         f"system should be a 2-element list; got {system}"
     )
     # system[0]: diff with cache_control
-    assert system[0].get("cache_control") == {"type": "ephemeral"}
+    assert system[0].get("cache_control") == _CACHE_CONTROL_1H
     # system[1]: agent prompt without cache_control; includes bridge prefix
     assert system[1].get("text", "").endswith("Find security issues.")
     assert system[1].get("text", "").startswith("The code diff above is what you must review.")
@@ -771,7 +772,7 @@ def test_analyse_places_diff_in_system_block_first() -> None:
     call_args = mock_client.complete.call_args
     system_blocks = call_args[1].get("system", [])
     assert isinstance(system_blocks, list) and len(system_blocks) >= 1
-    assert system_blocks[0].get("cache_control") == {"type": "ephemeral"}, (
+    assert system_blocks[0].get("cache_control") == _CACHE_CONTROL_1H, (
         f"system[0] should have cache_control; got {system_blocks[0]}"
     )
 
@@ -849,3 +850,26 @@ def test_analyse_shared_context_in_user_message_not_system() -> None:
         assert "Test summary" not in text, (
             f"shared_context summary should not be in system blocks; found in: {text}"
         )
+
+
+def test_agent_loader_uses_1h_cache_for_diff() -> None:
+    """D2: diff block uses ephemeral type with 1-hour TTL.
+
+    "persistent" is not a valid type. The 1-hour tier is expressed as
+    _CACHE_CONTROL_1H per the Anthropic SDK (CacheControlEphemeralParam).
+    Anthropic changed the default TTL from 1h to 5m on 2026-03-06; explicit ttl is required.
+    """
+    defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                           system_prompt="Find security issues.")
+    client = _mock_client()
+    agent = LoadedAgent(defn, client)
+    agent.analyse([_fc()])
+
+    call_args = client.complete.call_args
+    kwargs = call_args[1] if call_args[1] else {}
+    system = kwargs.get("system", [])
+    assert isinstance(system, list) and len(system) >= 1
+    # D2: correct form is _CACHE_CONTROL_1H — no separate "persistent" type
+    assert system[0].get("cache_control") == _CACHE_CONTROL_1H, (
+        f"diff block cache tier; got {system[0].get('cache_control')}"
+    )

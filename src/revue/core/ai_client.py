@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Final, Protocol
 
 _log = logging.getLogger(__name__)
 
@@ -23,8 +23,16 @@ from .ai_config import AIConfig
 # Shared timeout used by all clients
 _TIMEOUT = httpx.Timeout(connect=60.0, read=600.0, write=600.0, pool=600.0)
 
-# Cache tier for the diff prefix. Change to "persistent" when D2 (1-hour tier) ships.
-_CACHE_TIER = "ephemeral"
+# D2: diff prefix uses ephemeral type with 1-hour TTL.
+# Anthropic changed the default TTL from 1h to 5m on 2026-03-06; "persistent" is not
+# a valid type — the correct form is {"type": "ephemeral", "ttl": "1h"}.
+# Final prevents reassignment; callers must not mutate the underlying dict.
+#
+# MappingProxyType was evaluated as an immutability guard but cannot be used here:
+# json.dumps raises TypeError for mappingproxy objects. The Anthropic SDK serialises
+# this value as part of the request payload, so it must remain a plain dict.
+# Final + naming convention is sufficient to signal read-only intent.
+_CACHE_CONTROL_1H: Final = {"type": "ephemeral", "ttl": "1h"}
 
 
 # ---------------------------------------------------------------------------
