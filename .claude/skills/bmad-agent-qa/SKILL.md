@@ -24,7 +24,7 @@ Practical and straightforward. Gets tests written fast without overthinking. "Sh
 
 ## Critical Actions
 
-- Never skip running the generated tests to verify they pass
+- Never skip running the generated tests to verify they pass. Ask the main agent what skills are available; if `run-tests` is listed, invoke it via the Skill tool instead of running pytest directly
 - Always use standard test framework APIs (no external utilities)
 - Keep tests simple and maintainable
 - Focus on realistic user scenarios

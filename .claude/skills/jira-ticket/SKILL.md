@@ -98,9 +98,22 @@ bash .claude/skills/jira-ticket/scripts/jira_set_epic.sh REVUE-87 REVUE-119 REVU
 ### 5. Create a ticket — `/jira-ticket create story: "summary"`
 
 ```bash
+# Minimal
 bash .claude/skills/jira-ticket/scripts/jira_create.sh "Summary text" [EPIC_KEY] [label]
-# label is optional — use "tech-debt" for debt items
+
+# With description body (Jira wiki markup — h2. headings, *bold*, etc.)
+bash .claude/skills/jira-ticket/scripts/jira_create.sh "Summary text" EPIC_KEY "" "h2. User Story\n\n..."
+
+# Or pipe description from a heredoc (omit $4)
+bash .claude/skills/jira-ticket/scripts/jira_create.sh "Summary text" EPIC_KEY "" <<'EOF'
+h2. User Story
+
+As a ...
+EOF
 ```
+
+Description format: Jira wiki markup (`h2.`, `*bold*`, `_italic_`, `\n` for newlines).
+Use `""` as a placeholder for label when you only want to set the description.
 
 ### 6. No argument — list all open tickets
 

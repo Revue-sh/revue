@@ -34,6 +34,10 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
 
 - `project_context` = `**/project-context.md` (load if exists)
 
+### Available Skills
+
+Ask the main agent: "What skills are currently available in this session?" Store the list as `{{available_skills}}`. If `run-tests` is listed, use it via the Skill tool for every test run in this workflow — never invoke pytest directly when the skill is available.
+
 ---
 
 ## EXECUTION
@@ -299,7 +303,7 @@ Load config from `{project-root}/_bmad/bmm/config.yaml` and resolve:
   </step>
 
   <step n="7" goal="Run validations and tests">
-    <action>Determine how to run tests for this repo (infer test framework from project structure)</action>
+    <action>If `run-tests` is in `{{available_skills}}`, invoke it via the Skill tool; otherwise infer test command from project structure</action>
     <action>Run all existing tests to ensure no regressions</action>
     <action>Run the new tests to verify implementation correctness</action>
     <action>Run linting and code quality checks if configured in project</action>
