@@ -44,3 +44,4 @@ src/web/.venv/
 
 # BMad planning artifacts (working docs, not deliverables)
 _bmad-output/
+context/ai-code-review-service
