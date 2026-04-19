@@ -19,11 +19,13 @@ STATUS="${2:?Provide target status: done, in-progress, or todo}"
 STATUS_LOWER="$(echo "${STATUS}" | tr '[:upper:]' '[:lower:]')"
 
 case "${STATUS_LOWER}" in
-    done)        ID=31 ;;
-    in-progress) ID=21 ;;
-    todo)        ID=11 ;;
+    done)         ID=31 ;;
+    in-progress)  ID=21 ;;
+    todo)         ID=11 ;;
+    code-review)  ID=2  ;;
+    rejected)     ID=3  ;;
     *)
-        echo "Unknown status '${STATUS}'. Use: done, in-progress, todo" >&2
+        echo "Unknown status '${STATUS}'. Use: done, in-progress, todo, code-review, rejected" >&2
         exit 1
         ;;
 esac

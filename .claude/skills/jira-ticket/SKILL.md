@@ -35,7 +35,20 @@ themselves — no need to source it beforehand.
 |--------|----|
 | To Do | 10109 |
 | In Progress | 10110 |
-| Done | 10111 |
+| Code Review | 10111 |
+| Done | 10112 |
+
+## Transition IDs (used by jira_transition.sh)
+
+| Status | Transition ID |
+|--------|--------------|
+| todo | 11 |
+| in-progress | 21 |
+| code-review | 2 |
+| done | 31 |
+| rejected | 3 |
+
+**NEVER** call `done` manually — Bitbucket automation transitions to Done on merge.
 
 ## Common epic IDs
 
