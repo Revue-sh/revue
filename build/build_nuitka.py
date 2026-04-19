@@ -62,7 +62,7 @@ def main():
     core_dest = COMPILED_DIR / "core"
     core_dest.mkdir(parents=True, exist_ok=True)
 
-    py_files = sorted(CORE_DIR.glob("*.py"))
+    py_files = [f for f in sorted(CORE_DIR.glob("*.py")) if f.name != "__init__.py"]  # __init__.py copied separately — Nuitka --module rejects it
     if not py_files:
         print("ERROR: no .py files found in core/", file=sys.stderr)
         sys.exit(1)
@@ -83,6 +83,11 @@ def main():
     # __init__.py (package root)
     shutil.copy2(SRC_REVUE / "__init__.py", COMPILED_DIR / "__init__.py")
     print("  __init__.py")
+
+    # core/__init__.py copied as plain Python — passing an __init__.py path to
+    # Nuitka's --module flag is a fatal error; only the package directory is accepted.
+    shutil.copy2(CORE_DIR / "__init__.py", core_dest / "__init__.py")
+    print("  core/__init__.py")
 
     # agents/
     agents_src = SRC_REVUE / "agents"
