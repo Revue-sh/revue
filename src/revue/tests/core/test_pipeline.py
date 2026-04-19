@@ -1630,6 +1630,55 @@ def test_pipeline_metrics_enabled_creates_jsonl_collector() -> None:
         assert isinstance(pipeline._metrics, JsonlMetricsCollector)
 
 
+def test_infrastructure_only_routing_falls_back_to_all_reviewers(capsys):
+    """When Cleo routes to only infrastructure agents (e.g. nova for YAML/docs diffs),
+    the pipeline falls back to all non-infrastructure allowed agents so the diff is reviewed."""
+    from revue.core.pipeline import OrchestrationModules
+    from revue.core.agent_runner import ParallelRunResult
+    from revue.core.dedup_consolidator import ConsolidationResult
+    from revue.core.shared_analysis import SharedAnalysisResult
+
+    maya = _cascade_mock_agent("maya")
+    leo = _cascade_mock_agent("leo")
+    nova = _cascade_mock_agent("nova")
+
+    shared = SharedAnalysisResult.fallback(languages=["yaml"])
+    mock_run = MagicMock(side_effect=lambda ag, ch, sh, **kw: _ok_run(ag[0].name))
+
+    orch = OrchestrationModules(
+        load_all_agents=MagicMock(return_value=[maya, leo, nova]),
+        run_agents_parallel=mock_run,
+        consolidate=MagicMock(return_value=ConsolidationResult(
+            findings=[], duplicates_removed=0, original_count=0,
+        )),
+        run_shared_analysis=MagicMock(return_value=shared),
+        route=MagicMock(return_value=(MagicMock(), [nova])),  # Cleo returns only nova
+        format_selection_message=MagicMock(return_value=""),
+        assign_files_to_agents=MagicMock(return_value={}),
+        ParallelRunResult=ParallelRunResult,
+    )
+
+    pro_license = _license_info(
+        tier="pro",
+        agents_allowed=["orchestrator", "code-quality-expert", "architecture-expert",
+                        "consolidator", "cleo", "nova"],
+    )
+    pipeline = ReviewPipeline(_config(), client=MagicMock(), license_info=pro_license)
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("bitbucket-pipelines.yml")]), \
+         patch("revue.core.pipeline.track_usage"), \
+         patch("revue.core.pipeline._import_orchestration", return_value=orch):
+        pipeline.run("fake.diff")
+
+    out = capsys.readouterr().out
+    assert "infrastructure-only routing" in out
+    assert mock_run.called
+    called_agents = mock_run.call_args[0][0]
+    called_names = {a.name for a in called_agents}
+    assert "nova" not in called_names
+    assert called_names  # at least one non-infrastructure agent ran
+
+
 def test_pipeline_failure_produces_no_metrics_artefact() -> None:
     """AC6: AllAgentsFailedError raised before flush() — no metrics.jsonl created."""
     import tempfile

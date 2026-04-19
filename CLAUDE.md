@@ -22,6 +22,16 @@ Every PR **must** use `.bitbucket/pull_request_template.md` — fill in every se
 
 Commit and PR title format: `type(scope)[REVUE-XX]: description`
 
+### Jira ticket states — non-negotiable rules
+
+| When | Jira state | How |
+|------|-----------|-----|
+| Work starts on a story | → **In Progress** | Manual via `jira_transition.sh` |
+| PR opened | → **Code Review** | Manual via `jira_transition.sh` |
+| PR merged to main | → **Done** | **Automatic** — Bitbucket automation; never do this manually |
+
+**NEVER** call the Jira transition API to set Done. The Bitbucket→Jira automation handles it on merge. Calling it manually before merge is always wrong.
+
 ### CI reproduction (from bitbucket-pipelines.yml)
 ```bash
 pip install openai anthropic httpx pyyaml tomli-w pytest --quiet
@@ -53,6 +63,17 @@ Read `ARCHITECTURE.md` before any structural change. Non-negotiable:
 - Integration tests: `tests/` — gated with `@pytest.mark.integration`
 - Mock repositories extend the real class (LSP-compliant)
 - IMPORTANT: pipeline and cross-platform stories need live CI log evidence + error-path simulation. Unit tests alone are insufficient.
+
+### AC contract testing — mandatory before Code Review
+
+Every AC that specifies a data schema or output format **must** have a test that asserts every field in that schema — not just the fields that seem important at the time. Silently skipping fields (e.g. asserting token counts but not `agent_name`) allows data-flow bugs to pass tests and reach production.
+
+Before transitioning a ticket to Code Review:
+1. For every output schema in the ACs (JSONL, dataclass, API response), enumerate all fields.
+2. Confirm a test asserts each field by name, including optional/nullable ones.
+3. Confirm the end-to-end wiring is tested — not just that the writer accepts a value, but that the caller passes it.
+
+**Why:** REVUE-162 shipped with `agent_name=None` hardcoded in `AnthropicClient.complete()`. The test checked 5 token fields but skipped `agent_name`. The artifact schema looked valid until Daniel downloaded and inspected it manually. This must be caught in tests, not in production artifact inspection.
 
 ## Internal flags
 

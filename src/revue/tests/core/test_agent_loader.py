@@ -170,6 +170,24 @@ def test_loaded_agent_analyse_sets_agent_name_on_findings():
     assert results[0].agent_name == "maya"
 
 
+def test_loaded_agent_passes_own_name_to_complete():
+    """LoadedAgent must pass agent_name=self.name to complete() so MetricsEvent is per-agent.
+
+    Regression guard: AC5 of REVUE-162 requires named agents[] in metrics.jsonl.
+    If agent_name is not forwarded, all calls collapse into a single unnamed bucket.
+    """
+    defn = AgentDefinition(name="leo", display_name="Leo", role="architecture",
+                           system_prompt="Review architecture.")
+    mock_client = MagicMock()
+    mock_client.complete.return_value = MagicMock(text='[{"file_path":"a.py","line_number":1,"severity":"low","issue":"x","suggestion":"y","confidence":0.8,"category":"architecture"}]')
+    agent = LoadedAgent(defn, mock_client)
+    agent.analyse([_fc()])
+
+    mock_client.complete.assert_called_once()
+    call_kwargs = mock_client.complete.call_args[1]
+    assert call_kwargs.get("agent_name") == "leo"
+
+
 def test_loaded_agent_analyse_propagates_client_error():
     """REVUE-103: Fatal client errors (RuntimeError) now propagate — not swallowed."""
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",

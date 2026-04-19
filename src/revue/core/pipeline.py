@@ -782,6 +782,14 @@ class ReviewPipeline:
                 f"{', '.join(stripped)})",
                 flush=True,
             )
+        if not reviewer_agents:
+            # Cleo routed to infrastructure-only agents (e.g. nova for config/docs diffs).
+            # Fall back to all non-infrastructure allowed agents so the diff is always reviewed.
+            reviewer_agents = [a for a in allowed_agents if a.name not in _INFRASTRUCTURE_AGENTS]
+            print(
+                "[revue]   Fallback: infrastructure-only routing — running all reviewer agents.",
+                flush=True,
+            )
         max_parallel = self.config.max_parallel_agents
         mode_label = "sequentially" if max_parallel == 1 else f"in parallel (max {max_parallel})"
         print(f"[revue]   Running {len(reviewer_agents)} reviewer(s) {mode_label}...", flush=True)

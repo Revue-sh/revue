@@ -150,6 +150,7 @@ class LoadedAgent:
                 [{"role": "user", "content": user_content}],
                 system=system_blocks,
                 cache_key=diff_hash,
+                agent_name=self._def.name,
             ).text
             print(
                 f"[revue]     [{self._def.name}] raw response "

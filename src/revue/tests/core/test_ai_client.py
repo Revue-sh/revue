@@ -647,5 +647,34 @@ def test_anthropic_client_records_usage_after_complete(mock_anthropic_cls: Magic
         assert event.output_tokens == 50
         assert event.cache_creation_tokens == 0
         assert event.cache_read_tokens == 0
+        # agent_name must flow through — this is the AC5 schema contract
+        assert event.agent_name is None  # not passed → None
+
+    _test()
+
+
+@patch("revue.core.ai_client.anthropic.Anthropic")
+def test_anthropic_client_records_agent_name_when_passed(mock_anthropic_cls: MagicMock) -> None:
+    """agent_name kwarg is stored in the MetricsEvent — drives per-agent breakdown in metrics.jsonl."""
+
+    def _test():
+        from revue.core.metrics import CapturingMetricsCollector
+        from revue.core.ai_client import AnthropicClient
+
+        mock_resp = MagicMock()
+        mock_resp.content = [MagicMock(text="ok")]
+        mock_resp.usage.input_tokens = 10
+        mock_resp.usage.output_tokens = 5
+        mock_resp.usage.cache_creation_input_tokens = 0
+        mock_resp.usage.cache_read_input_tokens = 0
+        mock_anthropic_cls.return_value.messages.create.return_value = mock_resp
+
+        collector = CapturingMetricsCollector()
+        client = AnthropicClient(_make_config(provider="anthropic"), metrics=collector)
+
+        client.complete([{"role": "user", "content": "x"}], agent_name="kai")
+
+        assert len(collector.events) == 1
+        assert collector.events[0].agent_name == "kai"
 
     _test()

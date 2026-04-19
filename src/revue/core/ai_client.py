@@ -71,6 +71,7 @@ class AIClient(Protocol):
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
+        agent_name: "str | None" = None,
     ) -> CompletionResult: ...
 
 
@@ -223,6 +224,7 @@ class OpenAIClient:
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
+        agent_name: "str | None" = None,
     ) -> CompletionResult:
         def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
@@ -292,6 +294,7 @@ class AnthropicClient:
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,  # accepted but unused — Anthropic uses cache_control
+        agent_name: "str | None" = None,
     ) -> CompletionResult:
         def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
@@ -325,7 +328,7 @@ class AnthropicClient:
                 MetricsEvent(
                     event_type="agent_call",
                     timestamp=datetime.now(timezone.utc).isoformat(),
-                    agent_name=None,
+                    agent_name=agent_name,
                     provider="anthropic",
                     model=self._model,
                     cache_creation_tokens=token_usage.cache_creation_input_tokens,
@@ -360,6 +363,7 @@ class AzureOpenAIClient:
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
+        agent_name: "str | None" = None,
     ) -> CompletionResult:
         def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
@@ -413,6 +417,7 @@ class OpenRouterClient:
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
+        agent_name: "str | None" = None,
     ) -> CompletionResult:
         def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
@@ -462,6 +467,7 @@ class CustomGatewayClient:
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
+        agent_name: "str | None" = None,
     ) -> CompletionResult:
         def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
