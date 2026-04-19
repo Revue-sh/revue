@@ -1,0 +1,150 @@
+diff --git a/src/revue/cli.py b/src/revue/cli.py
+index 6e62d5d..3c13291 100644
+--- a/src/revue/cli.py
++++ b/src/revue/cli.py
+@@ -380,6 +380,12 @@ _CATEGORY_MAP = {
+     "performance": "Performance",
+     "code-quality": "Code Quality",
+ }
++_AGENT_DISPLAY_NAMES: dict[str, str] = {
++    "leo": "Leo",
++    "zara": "Zara",
++    "kai": "Kai",
++    "maya": "Maya",
++}
+ _CATEGORY_CLEAN_LABELS = {
+     "Architecture": "SOLID compliant, no structural issues",
+     "Security": "No vulnerabilities detected",
+@@ -608,7 +614,10 @@ def _format_finding(f: dict) -> str:
+ 
+     lines = [f"#### {emoji} {issue}"]
+     if cat:
+-        lines.append(f"*{cat.replace('-', ' ').title()}*  ")
++        display_cat = cat.replace('-', ' ').title()
++        display_agent = _AGENT_DISPLAY_NAMES.get(f.get("agent_name", ""), "")
++        label = f"{display_agent} · {display_cat}" if display_agent else display_cat
++        lines.append(f"*{label}*  ")
+     if details:
+         lines.append(f"\n{details}")
+     if rec:
+@@ -877,7 +886,10 @@ def _run_per_issue_dedup(
+ 
+             body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
+             if cat:
+-                body_parts.append(f"*{cat.replace('-', ' ').title()}*")
++                display_cat = cat.replace('-', ' ').title()
++                display_agent = _AGENT_DISPLAY_NAMES.get(f.get("agent_name", ""), "")
++                label = f"{display_agent} · {display_cat}" if display_agent else display_cat
++                body_parts.append(f"*{label}*")
+             if details:
+                 body_parts.append(f"\n{details}")
+             if rec:
+diff --git a/src/revue/core/agent_loader.py b/src/revue/core/agent_loader.py
+index db239df..70cfc8a 100644
+--- a/src/revue/core/agent_loader.py
++++ b/src/revue/core/agent_loader.py
+@@ -175,6 +175,7 @@ class LoadedAgent:
+                     category=_normalise_category(
+                         item.get("category", ""), self._def.name
+                     ),
++                    agent_name=self._def.name,
+                 ))
+             print(
+                 f"[revue]     [{self._def.name}] parsed {len(reviews)} finding(s)",
+diff --git a/src/revue/core/models.py b/src/revue/core/models.py
+index a20737d..f0c07a3 100644
+--- a/src/revue/core/models.py
++++ b/src/revue/core/models.py
+@@ -38,6 +38,7 @@ class AIReview:
+     suggestion: str
+     confidence: float
+     category: str = "general"
++    agent_name: str = ""  # name of the agent that produced this finding (e.g. "maya")
+ 
+ 
+ @dataclass
+diff --git a/src/revue/tests/core/test_agent_loader.py b/src/revue/tests/core/test_agent_loader.py
+index aa22b42..a526c4d 100644
+--- a/src/revue/tests/core/test_agent_loader.py
++++ b/src/revue/tests/core/test_agent_loader.py
+@@ -155,6 +155,16 @@ def test_loaded_agent_analyse_returns_reviews():
+     assert results[0].category == "security"  # normalised from agent name fallback
+ 
+ 
++def test_loaded_agent_analyse_sets_agent_name_on_findings():
++    """REVUE-149: agent_name is threaded through to each AIReview finding."""
++    defn = AgentDefinition(name="maya", display_name="Maya", role="code-quality",
++                           system_prompt="Review code quality.")
++    agent = LoadedAgent(defn, _mock_client())
++    results = agent.analyse([_fc()])
++    assert len(results) == 1
++    assert results[0].agent_name == "maya"
++
++
+ def test_loaded_agent_analyse_propagates_client_error():
+     """REVUE-103: Fatal client errors (RuntimeError) now propagate — not swallowed."""
+     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+diff --git a/src/revue/tests/test_cli.py b/src/revue/tests/test_cli.py
+index 916f34a..c3d8e55 100644
+--- a/src/revue/tests/test_cli.py
++++ b/src/revue/tests/test_cli.py
+@@ -477,3 +477,59 @@ def test_cli_pr_context_built_when_description_file_and_pr_id_both_passed(tmp_pa
+     assert pr_context.pr_number == 43
+     assert pr_context.repo_owner == "cbscd"
+     assert pr_context.repo_name == "revue"
++
++
++# ---------------------------------------------------------------------------
++# REVUE-149: Agent name alongside area label in finding comments
++# ---------------------------------------------------------------------------
++
++from revue.cli import _format_finding
++
++
++def test_format_finding_shows_agent_name_and_category() -> None:
++    """Known agent produces 'Maya · Code Quality' label."""
++    f = {
++        "severity": "low",
++        "issue": "Missing type hint",
++        "category": "code-quality",
++        "agent_name": "maya",
++    }
++    result = _format_finding(f)
++    assert "Maya · Code Quality" in result
++
++
++def test_format_finding_shows_agent_name_for_all_builtin_agents() -> None:
++    """Each built-in agent gets its display name prefixed to the area label."""
++    from revue.cli import _AGENT_DISPLAY_NAMES, _CATEGORY_MAP
++    cases = [
++        ("maya", "code-quality", "Maya · Code Quality"),
++        ("zara", "security", "Zara · Security"),
++        ("kai", "performance", "Kai · Performance"),
++        ("leo", "architecture", "Leo · Architecture"),
++    ]
++    for agent_name, category, expected_label in cases:
++        f = {"severity": "low", "issue": "x", "category": category, "agent_name": agent_name}
++        result = _format_finding(f)
++        assert expected_label in result, f"Expected '{expected_label}' in output for agent '{agent_name}'"
++
++
++def test_format_finding_falls_back_gracefully_for_unknown_agent() -> None:
++    """Unknown agent name shows category only — no crash, no 'None ·' prefix."""
++    f = {
++        "severity": "low",
++        "issue": "Some issue",
++        "category": "code-quality",
++        "agent_name": "custom-agent-xyz",
++    }
++    result = _format_finding(f)
++    assert "Code Quality" in result
++    assert "None" not in result
++    assert "·" not in result
++
++
++def test_format_finding_category_only_when_no_agent_name() -> None:
++    """Finding without agent_name shows area label only (backward compat)."""
++    f = {"severity": "low", "issue": "x", "category": "security"}
++    result = _format_finding(f)
++    assert "Security" in result
++    assert "·" not in result

@@ -1,0 +1,279 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 68c6cf0..1e35461 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -22,6 +22,16 @@ Every PR **must** use `.bitbucket/pull_request_template.md` — fill in every se
+ 
+ Commit and PR title format: `type(scope)[REVUE-XX]: description`
+ 
++### Jira ticket states — non-negotiable rules
++
++| When | Jira state | How |
++|------|-----------|-----|
++| Work starts on a story | → **In Progress** | Manual via `jira_transition.sh` |
++| PR opened | → **Code Review** | Manual via `jira_transition.sh` |
++| PR merged to main | → **Done** | **Automatic** — Bitbucket automation; never do this manually |
++
++**NEVER** call the Jira transition API to set Done. The Bitbucket→Jira automation handles it on merge. Calling it manually before merge is always wrong.
++
+ ### CI reproduction (from bitbucket-pipelines.yml)
+ ```bash
+ pip install openai anthropic httpx pyyaml tomli-w pytest --quiet
+@@ -54,6 +64,17 @@ Read `ARCHITECTURE.md` before any structural change. Non-negotiable:
+ - Mock repositories extend the real class (LSP-compliant)
+ - IMPORTANT: pipeline and cross-platform stories need live CI log evidence + error-path simulation. Unit tests alone are insufficient.
+ 
++### AC contract testing — mandatory before Code Review
++
++Every AC that specifies a data schema or output format **must** have a test that asserts every field in that schema — not just the fields that seem important at the time. Silently skipping fields (e.g. asserting token counts but not `agent_name`) allows data-flow bugs to pass tests and reach production.
++
++Before transitioning a ticket to Code Review:
++1. For every output schema in the ACs (JSONL, dataclass, API response), enumerate all fields.
++2. Confirm a test asserts each field by name, including optional/nullable ones.
++3. Confirm the end-to-end wiring is tested — not just that the writer accepts a value, but that the caller passes it.
++
++**Why:** REVUE-162 shipped with `agent_name=None` hardcoded in `AnthropicClient.complete()`. The test checked 5 token fields but skipped `agent_name`. The artifact schema looked valid until Daniel downloaded and inspected it manually. This must be caught in tests, not in production artifact inspection.
++
+ ## Internal flags
+ 
+ | Flag | Default | Purpose |
+diff --git a/bitbucket-pipelines.yml b/bitbucket-pipelines.yml
+index 12d937a..0dbf1c3 100644
+--- a/bitbucket-pipelines.yml
++++ b/bitbucket-pipelines.yml
+@@ -49,11 +49,14 @@ definitions:
+           - echo "[revue] Starting AI code review..."
+           - export PYTHONPATH="$(pwd)/src"
+           - export APP_ENV=staging  # Enable REVUE_TIER_OVERRIDE for CI
++          - export REVUE_METRICS_ENABLED=1
+           # Provider and model are read from .revue.yml — no --provider/--model flags needed.
+           # Set the API key CI variable matching your configured provider:
+           #   anthropic → ANTHROPIC_API_KEY   openai → OPENAI_API_KEY  (REVUE-148)
+-          - python3 -u src/revue/cli.py review --diff /tmp/revue_pr.diff --platform bitbucket --pr-id "$BITBUCKET_PR_ID" --workspace "$BITBUCKET_WORKSPACE" --repo-slug "$BITBUCKET_REPO_SLUG" --bb-username "$BITBUCKET_USERNAME" --bb-token "$BITBUCKET_API_TOKEN" --config .revue.yml --comment-style per-issue --pr-description-file /tmp/revue_pr_description.txt
++          - python3 -u src/revue/cli.py review --diff /tmp/revue_pr.diff --platform bitbucket --pr-id "$BITBUCKET_PR_ID" --workspace "$BITBUCKET_WORKSPACE" --repo-slug "$BITBUCKET_REPO_SLUG" --bb-username "$BITBUCKET_USERNAME" --bb-token "$BITBUCKET_API_TOKEN" --config .revue.yml --comment-style per-issue --pr-description-file /tmp/revue_pr_description.txt --verbose
+           - echo "[revue] Review complete"
++        artifacts:
++          - .revue/metrics.jsonl
+ 
+ pipelines:
+   branches:
+diff --git a/src/revue/core/agent_loader.py b/src/revue/core/agent_loader.py
+index c063706..f1e6572 100644
+--- a/src/revue/core/agent_loader.py
++++ b/src/revue/core/agent_loader.py
+@@ -150,6 +150,7 @@ class LoadedAgent:
+                 [{"role": "user", "content": user_content}],
+                 system=system_blocks,
+                 cache_key=diff_hash,
++                agent_name=self._def.name,
+             ).text
+             print(
+                 f"[revue]     [{self._def.name}] raw response "
+diff --git a/src/revue/core/ai_client.py b/src/revue/core/ai_client.py
+index 6390643..41cb8ae 100644
+--- a/src/revue/core/ai_client.py
++++ b/src/revue/core/ai_client.py
+@@ -71,6 +71,7 @@ class AIClient(Protocol):
+         temperature: float = 0.3,
+         system: "str | list[dict[str, Any]] | None" = None,
+         cache_key: "str | None" = None,
++        agent_name: "str | None" = None,
+     ) -> CompletionResult: ...
+ 
+ 
+@@ -223,6 +224,7 @@ class OpenAIClient:
+         temperature: float = 0.3,
+         system: "str | list[dict[str, Any]] | None" = None,
+         cache_key: "str | None" = None,
++        agent_name: "str | None" = None,
+     ) -> CompletionResult:
+         def _call() -> CompletionResult:
+             kwargs: dict[str, Any] = {
+@@ -292,6 +294,7 @@ class AnthropicClient:
+         temperature: float = 0.3,
+         system: "str | list[dict[str, Any]] | None" = None,
+         cache_key: "str | None" = None,  # accepted but unused — Anthropic uses cache_control
++        agent_name: "str | None" = None,
+     ) -> CompletionResult:
+         def _call() -> CompletionResult:
+             kwargs: dict[str, Any] = {
+@@ -325,7 +328,7 @@ class AnthropicClient:
+                 MetricsEvent(
+                     event_type="agent_call",
+                     timestamp=datetime.now(timezone.utc).isoformat(),
+-                    agent_name=None,
++                    agent_name=agent_name,
+                     provider="anthropic",
+                     model=self._model,
+                     cache_creation_tokens=token_usage.cache_creation_input_tokens,
+@@ -360,6 +363,7 @@ class AzureOpenAIClient:
+         temperature: float = 0.3,
+         system: "str | list[dict[str, Any]] | None" = None,
+         cache_key: "str | None" = None,
++        agent_name: "str | None" = None,
+     ) -> CompletionResult:
+         def _call() -> CompletionResult:
+             kwargs: dict[str, Any] = {
+@@ -413,6 +417,7 @@ class OpenRouterClient:
+         temperature: float = 0.3,
+         system: "str | list[dict[str, Any]] | None" = None,
+         cache_key: "str | None" = None,
++        agent_name: "str | None" = None,
+     ) -> CompletionResult:
+         def _call() -> CompletionResult:
+             kwargs: dict[str, Any] = {
+@@ -462,6 +467,7 @@ class CustomGatewayClient:
+         temperature: float = 0.3,
+         system: "str | list[dict[str, Any]] | None" = None,
+         cache_key: "str | None" = None,
++        agent_name: "str | None" = None,
+     ) -> CompletionResult:
+         def _call() -> CompletionResult:
+             kwargs: dict[str, Any] = {
+diff --git a/src/revue/core/pipeline.py b/src/revue/core/pipeline.py
+index 548a56a..510066e 100644
+--- a/src/revue/core/pipeline.py
++++ b/src/revue/core/pipeline.py
+@@ -782,6 +782,14 @@ class ReviewPipeline:
+                 f"{', '.join(stripped)})",
+                 flush=True,
+             )
++        if not reviewer_agents:
++            # Cleo routed to infrastructure-only agents (e.g. nova for config/docs diffs).
++            # Fall back to all non-infrastructure allowed agents so the diff is always reviewed.
++            reviewer_agents = [a for a in allowed_agents if a.name not in _INFRASTRUCTURE_AGENTS]
++            print(
++                "[revue]   Fallback: infrastructure-only routing — running all reviewer agents.",
++                flush=True,
++            )
+         max_parallel = self.config.max_parallel_agents
+         mode_label = "sequentially" if max_parallel == 1 else f"in parallel (max {max_parallel})"
+         print(f"[revue]   Running {len(reviewer_agents)} reviewer(s) {mode_label}...", flush=True)
+diff --git a/src/revue/tests/core/test_agent_loader.py b/src/revue/tests/core/test_agent_loader.py
+index 37a3c97..62221f1 100644
+--- a/src/revue/tests/core/test_agent_loader.py
++++ b/src/revue/tests/core/test_agent_loader.py
+@@ -170,6 +170,24 @@ def test_loaded_agent_analyse_sets_agent_name_on_findings():
+     assert results[0].agent_name == "maya"
+ 
+ 
++def test_loaded_agent_passes_own_name_to_complete():
++    """LoadedAgent must pass agent_name=self.name to complete() so MetricsEvent is per-agent.
++
++    Regression guard: AC5 of REVUE-162 requires named agents[] in metrics.jsonl.
++    If agent_name is not forwarded, all calls collapse into a single unnamed bucket.
++    """
++    defn = AgentDefinition(name="leo", display_name="Leo", role="architecture",
++                           system_prompt="Review architecture.")
++    mock_client = MagicMock()
++    mock_client.complete.return_value = MagicMock(text='[{"file_path":"a.py","line_number":1,"severity":"low","issue":"x","suggestion":"y","confidence":0.8,"category":"architecture"}]')
++    agent = LoadedAgent(defn, mock_client)
++    agent.analyse([_fc()])
++
++    mock_client.complete.assert_called_once()
++    call_kwargs = mock_client.complete.call_args[1]
++    assert call_kwargs.get("agent_name") == "leo"
++
++
+ def test_loaded_agent_analyse_propagates_client_error():
+     """REVUE-103: Fatal client errors (RuntimeError) now propagate — not swallowed."""
+     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+diff --git a/src/revue/tests/core/test_ai_client.py b/src/revue/tests/core/test_ai_client.py
+index 94f2057..c197af7 100644
+--- a/src/revue/tests/core/test_ai_client.py
++++ b/src/revue/tests/core/test_ai_client.py
+@@ -647,5 +647,34 @@ def test_anthropic_client_records_usage_after_complete(mock_anthropic_cls: Magic
+         assert event.output_tokens == 50
+         assert event.cache_creation_tokens == 0
+         assert event.cache_read_tokens == 0
++        # agent_name must flow through — this is the AC5 schema contract
++        assert event.agent_name is None  # not passed → None
++
++    _test()
++
++
++@patch("revue.core.ai_client.anthropic.Anthropic")
++def test_anthropic_client_records_agent_name_when_passed(mock_anthropic_cls: MagicMock) -> None:
++    """agent_name kwarg is stored in the MetricsEvent — drives per-agent breakdown in metrics.jsonl."""
++
++    def _test():
++        from revue.core.metrics import CapturingMetricsCollector
++        from revue.core.ai_client import AnthropicClient
++
++        mock_resp = MagicMock()
++        mock_resp.content = [MagicMock(text="ok")]
++        mock_resp.usage.input_tokens = 10
++        mock_resp.usage.output_tokens = 5
++        mock_resp.usage.cache_creation_input_tokens = 0
++        mock_resp.usage.cache_read_input_tokens = 0
++        mock_anthropic_cls.return_value.messages.create.return_value = mock_resp
++
++        collector = CapturingMetricsCollector()
++        client = AnthropicClient(_make_config(provider="anthropic"), metrics=collector)
++
++        client.complete([{"role": "user", "content": "x"}], agent_name="kai")
++
++        assert len(collector.events) == 1
++        assert collector.events[0].agent_name == "kai"
+ 
+     _test()
+diff --git a/src/revue/tests/core/test_pipeline.py b/src/revue/tests/core/test_pipeline.py
+index 1c1d19b..b2f4d03 100644
+--- a/src/revue/tests/core/test_pipeline.py
++++ b/src/revue/tests/core/test_pipeline.py
+@@ -1630,6 +1630,55 @@ def test_pipeline_metrics_enabled_creates_jsonl_collector() -> None:
+         assert isinstance(pipeline._metrics, JsonlMetricsCollector)
+ 
+ 
++def test_infrastructure_only_routing_falls_back_to_all_reviewers(capsys):
++    """When Cleo routes to only infrastructure agents (e.g. nova for YAML/docs diffs),
++    the pipeline falls back to all non-infrastructure allowed agents so the diff is reviewed."""
++    from revue.core.pipeline import OrchestrationModules
++    from revue.core.agent_runner import ParallelRunResult
++    from revue.core.dedup_consolidator import ConsolidationResult
++    from revue.core.shared_analysis import SharedAnalysisResult
++
++    maya = _cascade_mock_agent("maya")
++    leo = _cascade_mock_agent("leo")
++    nova = _cascade_mock_agent("nova")
++
++    shared = SharedAnalysisResult.fallback(languages=["yaml"])
++    mock_run = MagicMock(side_effect=lambda ag, ch, sh, **kw: _ok_run(ag[0].name))
++
++    orch = OrchestrationModules(
++        load_all_agents=MagicMock(return_value=[maya, leo, nova]),
++        run_agents_parallel=mock_run,
++        consolidate=MagicMock(return_value=ConsolidationResult(
++            findings=[], duplicates_removed=0, original_count=0,
++        )),
++        run_shared_analysis=MagicMock(return_value=shared),
++        route=MagicMock(return_value=(MagicMock(), [nova])),  # Cleo returns only nova
++        format_selection_message=MagicMock(return_value=""),
++        assign_files_to_agents=MagicMock(return_value={}),
++        ParallelRunResult=ParallelRunResult,
++    )
++
++    pro_license = _license_info(
++        tier="pro",
++        agents_allowed=["orchestrator", "code-quality-expert", "architecture-expert",
++                        "consolidator", "cleo", "nova"],
++    )
++    pipeline = ReviewPipeline(_config(), client=MagicMock(), license_info=pro_license)
++
++    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("bitbucket-pipelines.yml")]), \
++         patch("revue.core.pipeline.track_usage"), \
++         patch("revue.core.pipeline._import_orchestration", return_value=orch):
++        pipeline.run("fake.diff")
++
++    out = capsys.readouterr().out
++    assert "infrastructure-only routing" in out
++    assert mock_run.called
++    called_agents = mock_run.call_args[0][0]
++    called_names = {a.name for a in called_agents}
++    assert "nova" not in called_names
++    assert called_names  # at least one non-infrastructure agent ran
++
++
+ def test_pipeline_failure_produces_no_metrics_artefact() -> None:
+     """AC6: AllAgentsFailedError raised before flush() — no metrics.jsonl created."""
+     import tempfile

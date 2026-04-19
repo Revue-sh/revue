@@ -1,0 +1,14 @@
+[
+  {
+    "file": "src/revue/cli.py",
+    "review": "{\"findings\": [{\"file_path\": \"src/revue/cli.py\", \"line_number\": 768, \"severity\": \"medium\", \"issue\": \"Bare except clause swallows all exceptions during findings parsing, masking potential bugs and making debugging difficult. The exception could indicate malformed response data, parsing errors, or other issues that should be logged or handled explicitly.\", \"suggestion\": \"Replace bare `except Exception:` with specific exception handling and log the error. For example:\\n```python\\nexcept (KeyError, ValueError, TypeError) as e:\\n    print(f\\\"Warning: Failed to parse findings from review result: {e}\\\", file=sys.stderr)\\n    continue\\n```\\nOr at minimum log the exception:\\n```python\\nexcept Exception as e:\\n    print(f\\\"Warning: Error counting findings: {e}\\\", file=sys.stderr)\\n```\", \"confidence\": 0.85, \"category\": \"code-quality\", \"agent_name\": \"maya\"}]}"
+  },
+  {
+    "file": "src/revue/cli.py",
+    "review": "{\"findings\": [{\"file_path\": \"src/revue/cli.py\", \"line_number\": 768, \"severity\": \"low\", \"issue\": \"The pre-counting loop iterates through review_results and calls _parse_findings() again, but _run_per_issue_dedup() will parse the same findings again. This duplicates parsing work for every finding, which is inefficient.\", \"suggestion\": \"Consider refactoring to extract the findings once and pass them to both the summary builder and the per-issue dedup function, rather than parsing twice. This would require modifying the function signatures but would improve efficiency and reduce code duplication.\", \"confidence\": 0.72, \"category\": \"code-quality\", \"agent_name\": \"maya\"}]}"
+  },
+  {
+    "file": "src/revue/cli.py",
+    "review": "{\"findings\": [{\"file_path\": \"src/revue/cli.py\", \"line_number\": 797, \"severity\": \"low\", \"issue\": \"The variable `_` is used to ignore the second return value from _run_per_issue_dedup(), but the function signature was changed to return `(posted, skipped, _)` instead of the previous `(posted, skipped, total_findings)`. This makes the code less clear about what is being discarded and why.\", \"suggestion\": \"Use a more descriptive variable name or add a comment explaining why the third return value is ignored:\\n```python\\nposted, skipped, _ = _run_per_issue_dedup(  # Ignore recalculated total_findings; use pre-counted version\\n    adapter, pr_num, platform_str, review_results, diff_by_file, dedup_store\\n)\\n```\", \"confidence\": 0.65, \"category\": \"code-quality\", \"agent_name\": \"maya\"}]}"
+  }
+]

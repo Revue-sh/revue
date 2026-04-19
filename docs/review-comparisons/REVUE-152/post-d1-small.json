@@ -1,0 +1,22 @@
+[
+  {
+    "file": "src/revue/cli.py",
+    "review": "{\"findings\": [{\"file_path\": \"src/revue/cli.py\", \"line_number\": 768, \"severity\": \"high\", \"issue\": \"Variable `total_findings` is initialized as a dict but later used as if it were an integer in `_build_enhanced_summary()`. The old code returned `(posted, skipped, total_findings)` where `total_findings` was an int, but the new code pre-counts into a dict structure. This will cause a type mismatch when passed to `_build_enhanced_summary()`.\", \"suggestion\": \"Either change the dict initialization to match the expected type, or verify that `_build_enhanced_summary()` has been updated to accept a dict. If it expects an int (total count), aggregate the dict: `total_count = sum(total_findings.values())` and pass that instead.\", \"confidence\": 0.92, \"category\": \"code-quality\", \"agent_name\": \"maya\"}]}"
+  },
+  {
+    "file": "src/revue/cli.py",
+    "review": "{\"findings\": [{\"file_path\": \"src/revue/cli.py\", \"line_number\": 783, \"severity\": \"medium\", \"issue\": \"The variable `total_findings` is reassigned from a dict (line 768) to the return value of `_run_per_issue_dedup()` (line 797). This overwrites the pre-counted dict with what appears to be an integer or different type. The original `total_findings` dict is lost and cannot be used in `_build_enhanced_summary()` if it was meant to reference the pre-counted values.\", \"suggestion\": \"Rename the return value unpacking to avoid shadowing: `posted, skipped, _ = _run_per_issue_dedup(...)` (which is already done on line 797). Ensure the pre-counted `total_findings` dict is not overwritten and is correctly passed to `_build_enhanced_summary()`.\", \"confidence\": 0.88, \"category\": \"code-quality\", \"agent_name\": \"maya\"}]}"
+  },
+  {
+    "file": "src/revue/cli.py",
+    "review": "{\"findings\": [{\"file_path\": \"src/revue/cli.py\", \"line_number\": 797, \"severity\": \"medium\", \"issue\": \"The third return value from `_run_per_issue_dedup()` is discarded with `_`, but the old code at line 768 assigned it to `total_findings`. If `_build_enhanced_summary()` on line 783 relies on the return value from `_run_per_issue_dedup()` rather than the pre-counted dict, the summary will use stale or incorrect data.\", \"suggestion\": \"Verify that `_build_enhanced_summary()` is being called with the correct `total_findings` dict (the pre-counted one from line 768) and not expecting the return value from `_run_per_issue_dedup()`. Add a comment clarifying which `total_findings` is being used.\", \"confidence\": 0.85, \"category\": \"code-quality\", \"agent_name\": \"maya\"}]}"
+  },
+  {
+    "file": "src/revue/cli.py",
+    "review": "{\"findings\": [{\"file_path\": \"src/revue/cli.py\", \"line_number\": 768, \"severity\": \"medium\", \"issue\": \"The pre-counting loop silently catches all exceptions with `except Exception: pass` (line 781). If `_parse_findings()` fails due to an unexpected error, the finding count will be inaccurate and the summary will be misleading. This masks potential bugs in the parsing logic.\", \"suggestion\": \"Either log the exception for debugging, or be more specific about which exceptions are expected (e.g., `except (KeyError, ValueError, TypeError):`). At minimum, add a comment explaining why silent failure is acceptable here.\", \"confidence\": 0.78, \"category\": \"code-quality\", \"agent_name\": \"maya\"}]}"
+  },
+  {
+    "file": "src/revue/cli.py",
+    "review": "{\"findings\": [{\"file_path\": \"src/revue/cli.py\", \"line_number\": 765, \"severity\": \"low\", \"issue\": \"The comment on line 766 states 'Pre-count from Nova's consolidated list so summary is always accurate whether it's posted before or after inline comments.' However, the pre-counting happens regardless of whether inline comments are posted, and the accuracy depends on the order of operations. The comment could be clearer about the intent.\", \"suggestion\": \"Clarify the comment: 'Pre-count findings from consolidated results to ensure summary accuracy is independent of posting order (inline vs. summary first).'\", \"confidence\": 0.62, \"category\": \"code-quality\", \"agent_name\": \"maya\"}]}"
+  }
+]

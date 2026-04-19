@@ -911,3 +911,98 @@ def test_agent_loader_uses_result_text() -> None:
     agent = LoadedAgent(defn, mock_client)
     result = agent.analyse([_fc()])
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# REVUE-152: D1 structural invariants — parameterised across diff sizes
+# ---------------------------------------------------------------------------
+
+import pathlib as _pathlib
+
+_FIXTURE_DIR = _pathlib.Path(__file__).parent.parent / "fixtures" / "diffs"
+
+_DIFF_SIZES = {"small": 35, "medium": 100, "large": 260}
+
+
+def _diff_text(name: str) -> str:
+    p = _FIXTURE_DIR / f"{name}.diff"
+    if p.exists():
+        return p.read_text()
+    n = _DIFF_SIZES.get(name, 100)
+    return "\n".join(
+        ["diff --git a/app.py b/app.py", "--- a/app.py", "+++ b/app.py"]
+        + [f"+line {i}" for i in range(n)]
+    )
+
+
+def _agent_with_diff(diff_name: str, agent_name: str = "zara",
+                     system_prompt: str = "You are a security reviewer.") -> tuple:
+    diff = _diff_text(diff_name)
+    fc = FileChange(file_path="app.py", change_type="modified",
+                    additions=5, deletions=2, diff=diff)
+    defn = AgentDefinition(name=agent_name, display_name=agent_name.capitalize(),
+                           role="security", system_prompt=system_prompt)
+    mock_client = MagicMock()
+    mock_client.complete.return_value = _cr("[]")
+    return LoadedAgent(defn, mock_client), [fc], diff, mock_client
+
+
+@pytest.mark.parametrize("size", ["small", "medium", "large"])
+def test_d1_diff_in_system_block_0(size: str) -> None:
+    """D1 invariant: diff text is in system[0]['text']."""
+    agent, changes, diff, mock_client = _agent_with_diff(size)
+    agent.analyse(changes)
+    system = mock_client.complete.call_args[1].get("system", [])
+    assert len(system) >= 1
+    assert diff in system[0].get("text", ""), f"[{size}] diff text not found in system[0]"
+
+
+@pytest.mark.parametrize("size", ["small", "medium", "large"])
+def test_d1_cache_control_only_on_system_block_0(size: str) -> None:
+    """D1 invariant: cache_control on system[0] only, not on system[1]."""
+    agent, changes, _diff, mock_client = _agent_with_diff(size)
+    agent.analyse(changes)
+    system = mock_client.complete.call_args[1].get("system", [])
+    assert len(system) >= 2
+    assert system[0].get("cache_control") == _CACHE_CONTROL_1H, (
+        f"[{size}] system[0] must have cache_control={_CACHE_CONTROL_1H!r}"
+    )
+    assert "cache_control" not in system[1], f"[{size}] system[1] must NOT have cache_control"
+
+
+@pytest.mark.parametrize("size", ["small", "medium", "large"])
+def test_d1_bridge_phrase_in_system_block_1(size: str) -> None:
+    """D1 invariant: system[1] starts with the bridge phrase."""
+    agent, changes, _diff, mock_client = _agent_with_diff(size)
+    agent.analyse(changes)
+    system = mock_client.complete.call_args[1].get("system", [])
+    assert len(system) >= 2
+    text = system[1].get("text", "")
+    assert text.startswith("The code diff above is what you must review."), (
+        f"[{size}] bridge phrase missing from system[1]; got: {text[:80]!r}"
+    )
+
+
+@pytest.mark.parametrize("size", ["small", "medium", "large"])
+def test_d1_diff_not_in_user_message(size: str) -> None:
+    """D1 invariant: diff text is NOT embedded in the user message."""
+    agent, changes, diff, mock_client = _agent_with_diff(size)
+    agent.analyse(changes)
+    call_args = mock_client.complete.call_args
+    messages = call_args[0][0] if call_args[0] else []
+    diff_snippet = diff[:60]
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            assert diff_snippet not in content, (
+                f"[{size}] diff snippet found in user message: {content[:120]!r}"
+            )
+
+
+def test_d1_comparison_artifact_committed() -> None:
+    """AC5: ANALYSIS.md exists in docs/review-comparisons/REVUE-152/ (committed after T5)."""
+    artifact = _pathlib.Path(__file__).parents[4] / "docs" / "review-comparisons" / "REVUE-152" / "ANALYSIS.md"
+    assert artifact.exists(), (
+        f"ANALYSIS.md not yet committed — run scripts/run-d1-regression.sh first\n"
+        f"Expected at: {artifact}"
+    )
