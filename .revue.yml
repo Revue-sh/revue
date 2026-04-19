@@ -1,122 +1,135 @@
-# .revue.yml — Revue.io configuration
-version: "1"
-
 ai:
-  provider: anthropic
-  model: claude-haiku-4-5-20251001
   api_key_env: ANTHROPIC_API_KEY
-
-review:
-  max_diff_lines: 10000  # TODO: REVUE-96 - make this dynamic based on model context window
-  min_confidence: 70
-  agent_timeout_seconds: 240
-  max_parallel_agents: 1      # 1 = sequential (safe default). Raise only if your Anthropic plan has high TPM limits.
-  retry_on_rate_limit: true   # Retry with backoff on 429 using the retry-after header (~3 min wait for 30k TPM tier).
-  ignore_patterns:
-    - ".revue.yml"
-    - "*.lock"
-    - "package-lock.json"
-    - "*.min.js"
-    - "dist/**"
-    - "*.whl"
-    - ".claude/**"    # Internal dev scripts and skills — not production code
-
-rating:
-  weights:
-    high:   1.5   # penalty per HIGH finding
-    medium: 0.3   # penalty per MEDIUM finding (reduced from 0.5 — architecture notes ≠ bugs)
-    low:    0.05  # penalty per LOW finding (minimal impact)
-    info:   0.0   # INFO findings do not affect the score
-  floor: 1.0      # minimum possible score
-
-output:
-  comment_style: per-issue   # "per-issue" = one inline comment per finding (default)
-                              # "summary"   = one grouped comment per file
-
-# noise_filters — controls what Revue suppresses after agents have run.
-#
-# allowed_patterns: record intentional design decisions that agents should not flag.
-#   Add an entry here when a finding is a known false positive or accepted trade-off.
-#   Use `applies_to` to limit injection to the agents that are relevant; omit it to
-#   inject the pattern into every agent's system prompt.
-#
-# disallowed_patterns: patterns that agents must always flag, regardless of confidence.
-#
-# disable: list filter names to turn off (e.g. "duplicate", "low-confidence").
-# low_confidence_threshold: suppress findings whose normalised confidence is below this (0.0–1.0).
+  model: claude-haiku-4-5-20251001
+  provider: anthropic
 noise_filters:
-  disable: []
-  low_confidence_threshold: 0.5
   allowed_patterns:
-    - pattern: "_def attribute access on LoadedAgent"
-      rationale: "Internal implementation detail, no public API"
-      applies_to: ["leo", "maya"]  # leo=architecture, maya=code-quality
-    - pattern: "Inline lazy httpx import in pr_description_adapter"
-      rationale: "Intentional lazy loading pattern, now replaced with module-level import"
-      applies_to: ["maya"]  # maya=code-quality
-    - pattern: "test_vcs_adapter.py deletion"
-      rationale: "Test coverage consolidated into test_vcs_adapters.py"
-    - pattern: "Bare except in _inject_pr_context"
-      rationale: "Intentional catch-all, PR context injection must not crash the review loop"
-      applies_to: ["leo", "maya"]  # leo=architecture, maya=code-quality
-    - pattern: "N+1 query pattern acceptable for small datasets with deferred optimization"
-      rationale: "For current PR sizes (typically fewer than 50 unresolved comments),
-        the N+1 query overhead is acceptable. Batch-fetch will be introduced once won't-fix
-        tracking is stable in production."
-      applies_to: ["kai", "leo"]  # kai=performance, leo=architecture
-    - pattern: "Testing project configuration files directly when parser validation already
-        exists"
-      rationale: "Parser tests (`test_yaml_parser_rejects_invalid_pattern`, `test_yaml_parser_rejects_non_string_pattern`,
-        `test_yaml_parser_reads_allowed_patterns`) already validate configuration behavior.
-        Testing the project's own .revue.yml asserts file contents rather than code
-        behavior, which doesn't justify the maintenance cost."
-      applies_to: ["maya"]  # maya=code-quality
-    - pattern: "Using allowed_patterns for technical debt acknowledgment and policy decisions"
-      rationale: "The `allowed_patterns` feature is designed to record intentional policy
-        decisions with rationale. This use case (N+1 query pattern acceptable for small
-        datasets) is explicitly covered by REVUE-112. Additional features like `expires`
-        fields are post-MVP scope."
-      applies_to: ["leo", "maya"]  # leo=architecture, maya=code-quality
-    - pattern: "TODO comments in configuration files when disallowed_patterns targets
-        production code only"
-      rationale: "The disallowed_patterns rule explicitly covers 'TODO comments in production
-        code'. Configuration files like .revue.yml are not production code. The TODO
-        in question was also stripped by the YAML reformatter and does not appear in
-        the current branch diff."
-    - pattern: "Glob patterns or YAML values in .revue.yml flagged as code-quality issues"
-      rationale: "Entries in .revue.yml (ignore_patterns globs, model names, env var
-        references, numeric thresholds) are operational configuration values, not source
-        code constructs. Code-quality rules such as 'TODO in production code', 'missing
-        error handling', or 'lacks documentation' do not apply to YAML config files."
-    - pattern: "noise_filters section should be documented"
-      rationale: "noise_filters is fully documented in docs/revue-yml-reference.md with
-        field tables, filter name reference, allowed_patterns/disallowed_patterns schema,
-        applies_to agent scoping, and annotated examples. This finding is a false positive."
-    - pattern: "TODO finding where the exact string 'TODO' or 'FIXME' does not appear in the flagged line"
-      rationale: "The disallowed_patterns TODO rule must only fire when the literal string
-        'TODO' or `TO DO` or 'FIXME' (case-insensitive) is present in the flagged line or an adjacent
-        code comment. The word 'to' in docstring prose (e.g. 'parameter to
-        ReviewPipeline.run()') is not a TODO comment. Never generate a TODO finding
-        from partial word matches or inferred intent."
-    - pattern: "time.sleep blocking the event loop or synchronous I/O in async context"
-      rationale: "Revue's pipeline is deliberately synchronous (sequential agents, retry
-        backoff with time.sleep). There is no async event loop in scope. asyncio.sleep
-        would be wrong here."
-      applies_to: ["kai"]  # kai=performance
-    - pattern: "Repeated expensive computations in summary generation"
-      rationale: "Summary generation runs once per review run on a small dataset (one
-        summary comment). Caching adds complexity for zero measurable benefit."
-      applies_to: ["kai"]  # kai=performance
-    - pattern: "Logging AI provider name or model name may expose sensitive information"
-      rationale: "provider (e.g. 'openai') and model (e.g. 'gpt-4o-mini') are public
-        configuration metadata, not credentials. The API key is resolved separately
-        by key_resolver.py and is never logged. No masking is needed."
-      applies_to: ["maya", "zara"]  # maya=code-quality, zara=security
-    - pattern: "Removing --provider/--model CLI flags may confuse users who expect command-line configuration"
-      rationale: "A comment is present in every CI config explaining that provider and
-        model are now read from .revue.yml. The change is intentional and documented
-        inline at the point of removal."
-      applies_to: ["maya"]  # maya=code-quality
+  - applies_to:
+    - leo
+    - maya
+    pattern: _def attribute access on LoadedAgent
+    rationale: Internal implementation detail, no public API
+  - applies_to:
+    - maya
+    pattern: Inline lazy httpx import in pr_description_adapter
+    rationale: Intentional lazy loading pattern, now replaced with module-level import
+  - pattern: test_vcs_adapter.py deletion
+    rationale: Test coverage consolidated into test_vcs_adapters.py
+  - applies_to:
+    - leo
+    - maya
+    pattern: Bare except in _inject_pr_context
+    rationale: Intentional catch-all, PR context injection must not crash the review
+      loop
+  - applies_to:
+    - kai
+    - leo
+    pattern: N+1 query pattern acceptable for small datasets with deferred optimization
+    rationale: For current PR sizes (typically fewer than 50 unresolved comments),
+      the N+1 query overhead is acceptable. Batch-fetch will be introduced once won't-fix
+      tracking is stable in production.
+  - applies_to:
+    - maya
+    pattern: Testing project configuration files directly when parser validation already
+      exists
+    rationale: Parser tests (`test_yaml_parser_rejects_invalid_pattern`, `test_yaml_parser_rejects_non_string_pattern`,
+      `test_yaml_parser_reads_allowed_patterns`) already validate configuration behavior.
+      Testing the project's own .revue.yml asserts file contents rather than code
+      behavior, which doesn't justify the maintenance cost.
+  - applies_to:
+    - leo
+    - maya
+    pattern: Using allowed_patterns for technical debt acknowledgment and policy decisions
+    rationale: The `allowed_patterns` feature is designed to record intentional policy
+      decisions with rationale. This use case (N+1 query pattern acceptable for small
+      datasets) is explicitly covered by REVUE-112. Additional features like `expires`
+      fields are post-MVP scope.
+  - pattern: TODO comments in configuration files when disallowed_patterns targets
+      production code only
+    rationale: The disallowed_patterns rule explicitly covers 'TODO comments in production
+      code'. Configuration files like .revue.yml are not production code. The TODO
+      in question was also stripped by the YAML reformatter and does not appear in
+      the current branch diff.
+  - pattern: Glob patterns or YAML values in .revue.yml flagged as code-quality issues
+    rationale: Entries in .revue.yml (ignore_patterns globs, model names, env var
+      references, numeric thresholds) are operational configuration values, not source
+      code constructs. Code-quality rules such as 'TODO in production code', 'missing
+      error handling', or 'lacks documentation' do not apply to YAML config files.
+  - pattern: noise_filters section should be documented
+    rationale: noise_filters is fully documented in docs/revue-yml-reference.md with
+      field tables, filter name reference, allowed_patterns/disallowed_patterns schema,
+      applies_to agent scoping, and annotated examples. This finding is a false positive.
+  - pattern: TODO finding where the exact string 'TODO' or 'FIXME' does not appear
+      in the flagged line
+    rationale: The disallowed_patterns TODO rule must only fire when the literal string
+      'TODO' or `TO DO` or 'FIXME' (case-insensitive) is present in the flagged line
+      or an adjacent code comment. The word 'to' in docstring prose (e.g. 'parameter
+      to ReviewPipeline.run()') is not a TODO comment. Never generate a TODO finding
+      from partial word matches or inferred intent.
+  - applies_to:
+    - kai
+    pattern: time.sleep blocking the event loop or synchronous I/O in async context
+    rationale: Revue's pipeline is deliberately synchronous (sequential agents, retry
+      backoff with time.sleep). There is no async event loop in scope. asyncio.sleep
+      would be wrong here.
+  - applies_to:
+    - kai
+    pattern: Repeated expensive computations in summary generation
+    rationale: Summary generation runs once per review run on a small dataset (one
+      summary comment). Caching adds complexity for zero measurable benefit.
+  - applies_to:
+    - maya
+    - zara
+    pattern: Logging AI provider name or model name may expose sensitive information
+    rationale: provider (e.g. 'openai') and model (e.g. 'gpt-4o-mini') are public
+      configuration metadata, not credentials. The API key is resolved separately
+      by key_resolver.py and is never logged. No masking is needed.
+  - applies_to:
+    - maya
+    pattern: Removing --provider/--model CLI flags may confuse users who expect command-line
+      configuration
+    rationale: A comment is present in every CI config explaining that provider and
+      model are now read from .revue.yml. The change is intentional and documented
+      inline at the point of removal.
+  - pattern: Omit error handling for operations whose preconditions are enforced by
+      earlier build steps
+    rationale: 'The developer has acknowledged the finding and provided a specific,
+      convincing reason: the file''s existence is guaranteed by the prior pip install
+      step, which fails fatally if the package is malformed. Error handling at this
+      point would be unreachable code. This is a valid, intentional choice for this
+      build script context.'
+  - pattern: Handle tool-specific constraints by excluding problematic files from
+      the main loop and processing them separately
+    rationale: 'The developer has acknowledged the finding and provided a clear, specific
+      reason: Nuitka''s `--module` flag has a documented fatal error when passed an
+      `__init__.py` path. The sequential nature of the build eliminates the race condition
+      concern. This is an intentional, correct workaround for a tool limitation.'
+  disable: []
   disallowed_patterns:
-    - pattern: "TODO comments in production code"
-      rationale: "TODOs should be tracked as Jira tickets"
+  - pattern: TODO comments in production code
+    rationale: TODOs should be tracked as Jira tickets
+  low_confidence_threshold: 0.5
+output:
+  comment_style: per-issue
+rating:
+  floor: 1.0
+  weights:
+    high: 1.5
+    info: 0.0
+    low: 0.05
+    medium: 0.3
+review:
+  agent_timeout_seconds: 240
+  ignore_patterns:
+  - .revue.yml
+  - '*.lock'
+  - package-lock.json
+  - '*.min.js'
+  - dist/**
+  - '*.whl'
+  - .claude/**
+  max_diff_lines: 10000
+  max_parallel_agents: 1
+  min_confidence: 70
+  retry_on_rate_limit: true
+version: '1'
