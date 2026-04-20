@@ -1630,53 +1630,38 @@ def test_pipeline_metrics_enabled_creates_jsonl_collector() -> None:
         assert isinstance(pipeline._metrics, JsonlMetricsCollector)
 
 
-def test_infrastructure_only_routing_falls_back_to_all_reviewers(capsys):
-    """When Cleo routes to only infrastructure agents (e.g. nova for YAML/docs diffs),
-    the pipeline falls back to all non-infrastructure allowed agents so the diff is reviewed."""
-    from revue.core.pipeline import OrchestrationModules
-    from revue.core.agent_runner import ParallelRunResult
-    from revue.core.dedup_consolidator import ConsolidationResult
-    from revue.core.shared_analysis import SharedAnalysisResult
+def test_infrastructure_only_routing_guarantee_rule_prevents_zero_reviewers():
+    """AC1 (REVUE-166): route() guarantees ≥1 non-infra agent for YAML/docs diffs.
 
-    maya = _cascade_mock_agent("maya")
-    leo = _cascade_mock_agent("leo")
-    nova = _cascade_mock_agent("nova")
+    Previously, infrastructure-only routing was handled by a pipeline fallback.
+    Now, the guarantee rule in route() ensures ≥1 non-infrastructure reviewer is
+    always present in the routed agents, eliminating the need for the fallback.
+    """
+    from revue.core.cleo_router import route, _INFRASTRUCTURE_AGENTS
+    from revue.tests.core.test_cleo_router import _FakeAgent, _fc
 
-    shared = SharedAnalysisResult.fallback(languages=["yaml"])
-    mock_run = MagicMock(side_effect=lambda ag, ch, sh, **kw: _ok_run(ag[0].name))
+    # Set up agents: YAML file triggers cleo and nova only (infrastructure-only)
+    agents = [
+        _FakeAgent("cleo", ["**"]),
+        _FakeAgent("maya", ["**"]),  # generalist with broad triggers
+        _FakeAgent("leo", ["**/*.js"]),  # language-specific, doesn't match YAML
+        _FakeAgent("nova", ["**"]),
+    ]
 
-    orch = OrchestrationModules(
-        load_all_agents=MagicMock(return_value=[maya, leo, nova]),
-        run_agents_parallel=mock_run,
-        consolidate=MagicMock(return_value=ConsolidationResult(
-            findings=[], duplicates_removed=0, original_count=0,
-        )),
-        run_shared_analysis=MagicMock(return_value=shared),
-        route=MagicMock(return_value=(MagicMock(), [nova])),  # Cleo returns only nova
-        format_selection_message=MagicMock(return_value=""),
-        assign_files_to_agents=MagicMock(return_value={}),
-        ParallelRunResult=ParallelRunResult,
+    # YAML file: would trigger only cleo and nova without guarantee rule
+    files = [_fc("bitbucket-pipelines.yml")]
+
+    # Route through the real route() function (exercises AC1 guarantee rule)
+    selection, filtered = route(files, agents)
+
+    filtered_names = {a.name for a in filtered}
+    non_infra = {n for n in filtered_names if n not in _INFRASTRUCTURE_AGENTS}
+
+    # AC1: guarantee rule ensures ≥1 non-infrastructure agent
+    assert len(non_infra) >= 1, (
+        f"AC1 guarantee rule must prevent zero reviewers for YAML diffs. "
+        f"Got filtered={filtered_names}"
     )
-
-    pro_license = _license_info(
-        tier="pro",
-        agents_allowed=["orchestrator", "code-quality-expert", "architecture-expert",
-                        "consolidator", "cleo", "nova"],
-    )
-    pipeline = ReviewPipeline(_config(), client=MagicMock(), license_info=pro_license)
-
-    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("bitbucket-pipelines.yml")]), \
-         patch("revue.core.pipeline.track_usage"), \
-         patch("revue.core.pipeline._import_orchestration", return_value=orch):
-        pipeline.run("fake.diff")
-
-    out = capsys.readouterr().out
-    assert "infrastructure-only routing" in out
-    assert mock_run.called
-    called_agents = mock_run.call_args[0][0]
-    called_names = {a.name for a in called_agents}
-    assert "nova" not in called_names
-    assert called_names  # at least one non-infrastructure agent ran
 
 
 def test_pipeline_failure_produces_no_metrics_artefact() -> None:

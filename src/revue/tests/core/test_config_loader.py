@@ -405,3 +405,101 @@ def test_load_config_parses_show_reviewed_files_false(tmp_path) -> None:
     from revue.core.config_loader import load_config
     config = load_config(config_path=str(cfg_file))
     assert config.show_reviewed_files is False
+
+
+# ---------------------------------------------------------------------------
+# REVUE-166: File type routing configuration (AC4)
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_parses_file_type_routing(tmp_path: Path) -> None:
+    """AC4: Parser reads file_type_routing.rules with extensions and reviewers."""
+    yml = """\
+version: "1"
+ai:
+  provider: anthropic
+file_type_routing:
+  rules:
+    - extensions: [".yaml", ".yml"]
+      reviewers: ["docs-reviewer"]
+    - extensions: [".md", ".markdown"]
+      reviewers: ["docs-reviewer"]
+"""
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert len(config.file_type_routing) == 2
+    assert config.file_type_routing[0].extensions == [".yaml", ".yml"]
+    assert config.file_type_routing[0].reviewers == ["docs-reviewer"]
+    assert config.file_type_routing[1].extensions == [".md", ".markdown"]
+    assert config.file_type_routing[1].reviewers == ["docs-reviewer"]
+
+
+def test_load_config_file_type_routing_empty_reviewers(tmp_path: Path) -> None:
+    """AC4: empty reviewers list signals fall-through to existing algorithm."""
+    yml = """\
+version: "1"
+ai:
+  provider: anthropic
+file_type_routing:
+  rules:
+    - extensions: [".txt"]
+      reviewers: []
+"""
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert len(config.file_type_routing) == 1
+    assert config.file_type_routing[0].reviewers == []
+
+
+def test_load_config_file_type_routing_missing_is_empty(tmp_path: Path) -> None:
+    """AC4: Missing file_type_routing defaults to empty list."""
+    path = _write_yml(tmp_path, _minimal_yml())
+    config = load_config(config_path=path)
+    assert config.file_type_routing == []
+
+
+def test_resolve_file_type_routing_matches_extension(tmp_path: Path) -> None:
+    """AC4: _resolve_file_type_routing matches first rule with matching extension."""
+    from revue.core.ai_config import FileTypeRule, resolve_file_type_routing
+
+    rules = [
+        FileTypeRule(extensions=[".yaml", ".yml"], reviewers=["docs-reviewer"]),
+        FileTypeRule(extensions=[".md", ".markdown"], reviewers=["docs-reviewer"]),
+    ]
+
+    # YAML extension matches first rule
+    result = resolve_file_type_routing("config.yaml", rules)
+    assert result == ["docs-reviewer"]
+
+    # YML extension also matches first rule
+    result = resolve_file_type_routing("settings.yml", rules)
+    assert result == ["docs-reviewer"]
+
+    # Markdown matches second rule
+    result = resolve_file_type_routing("README.md", rules)
+    assert result == ["docs-reviewer"]
+
+
+def test_resolve_file_type_routing_fallthrough(tmp_path: Path) -> None:
+    """AC4: _resolve_file_type_routing returns None for unmatched extensions (fall-through)."""
+    from revue.core.ai_config import FileTypeRule, resolve_file_type_routing
+
+    rules = [
+        FileTypeRule(extensions=[".yaml", ".yml"], reviewers=["docs-reviewer"]),
+    ]
+
+    # Python file doesn't match any rule
+    result = resolve_file_type_routing("app.py", rules)
+    assert result is None
+
+
+def test_resolve_file_type_routing_empty_reviewers_means_none(tmp_path: Path) -> None:
+    """AC4: empty reviewers list (matched but explicit []) returns None (fall-through signal)."""
+    from revue.core.ai_config import FileTypeRule, resolve_file_type_routing
+
+    rules = [
+        FileTypeRule(extensions=[".tmp"], reviewers=[]),  # explicit empty = fall-through
+    ]
+
+    result = resolve_file_type_routing("file.tmp", rules)
+    assert result is None

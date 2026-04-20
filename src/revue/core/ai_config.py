@@ -14,6 +14,19 @@ from .key_resolver import PROVIDER_DEFAULT_ENV_VARS  # SRP: re-exported for back
 from . import key_resolver as _key_resolver
 
 
+# ---------------------------------------------------------------------------
+# File Type Routing Configuration (AC4 — REVUE-166)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FileTypeRule:
+    """Rule for routing diffs based on file extensions."""
+
+    extensions: list[str]  # e.g. [".yaml", ".yml"]
+    reviewers: list[str]  # e.g. ["docs-reviewer"] or [] to fall through
+
+
 # AI Configuration Constants
 DEFAULT_AI_MAX_TOKENS = 50000
 DEFAULT_AI_TEMPERATURE = 0.3
@@ -69,6 +82,9 @@ class AIConfig:
     # Feature flags (configurable via .revue.yml)
     preserve_comment_threads: bool = False  # REVUE-104: preserve inline comment threads across commits
     show_reviewed_files: bool = True  # REVUE-134: show/hide reviewed-files list in summary
+
+    # File type routing (AC4 — REVUE-166)
+    file_type_routing: list[FileTypeRule] = field(default_factory=list)
 
     # Rating formula weights (configurable via .revue.yml `rating:` section)
     rating_weights: dict = field(default_factory=lambda: {
@@ -198,6 +214,21 @@ PROBLEM_KEYWORDS: List[str] = [
     "strong-reference", "syntax-error", "compilation-error", "missing", "duplicate",
     "accessibility", "empty", "debugging", "placeholder", "performance",
 ]
+
+
+def resolve_file_type_routing(file_path: str, rules: list[FileTypeRule]) -> list[str] | None:
+    """Resolve file type routing rules for a given file path.
+
+    Returns:
+    - A list of reviewer agent names if a rule matches
+    - An empty list [] if a rule matches but specifies default_reviewers: []
+    - None if no rule matches (fall through to existing algorithm)
+    """
+    ext = "." + file_path.rsplit(".", 1)[-1] if "." in file_path else ""
+    for rule in rules:
+        if ext in rule.extensions:
+            return rule.reviewers if rule.reviewers else None
+    return None
 
 
 def load_ignore_patterns() -> List[str]:

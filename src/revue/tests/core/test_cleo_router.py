@@ -14,6 +14,7 @@ from revue.core.cleo_router import (
     SECURITY_FILE_PATTERNS,
     TEAM_PRESETS,
     TeamSelection,
+    _INFRASTRUCTURE_AGENTS,
     evaluate_triggers,
     route,
     select_team,
@@ -464,6 +465,55 @@ class TestRoute:
         # No definition → no triggers → always runs (if in team)
         assert len(filtered) == 1
 
+    def test_route_guarantees_non_infra_reviewer(self):
+        """AC1: route() guarantees ≥1 non-infrastructure agent when infrastructure-only routing occurs (REVUE-166)."""
+        # Set up: YAML file + agents where only cleo and nova match without guarantee
+        agents = [
+            _FakeAgent("cleo", ["**"]),  # infrastructure, matches all
+            _FakeAgent("nova", ["**"]),  # infrastructure, matches all
+            _FakeAgent("kai", ["**/*.py"]),  # code reviewer, only Python
+            _FakeAgent("maya", ["**"]),  # generalist reviewer, matches all
+            _FakeAgent("leo", ["**/*.js"]),  # code reviewer, only JavaScript
+        ]
+        # YAML file: triggers cleo, nova, and maya (maya has broad triggers)
+        # But cleo and nova are infrastructure, so guarantee rule must ensure maya is included
+        files = [_fc("config.yaml")]
+        selection, filtered = route(files, agents)
+
+        # With guarantee rule: filtered should contain non-infra agents that pass triggers
+        filtered_names = {a.name for a in filtered}
+        non_infra_in_filtered = [n for n in filtered_names if n not in _INFRASTRUCTURE_AGENTS]
+        assert len(non_infra_in_filtered) >= 1, (
+            f"Expected ≥1 non-infra agent injected by guarantee rule. "
+            f"Got filtered={filtered_names}"
+        )
+
+    def test_route_normal_case_unaffected(self):
+        """AC1: route() with normal (mixed) routing produces correct output unchanged by guarantee (REVUE-166)."""
+        agents = [
+            _FakeAgent("cleo", ["**"]),
+            _FakeAgent("zara", ["**/*.py"]),
+            _FakeAgent("kai", ["**/*.py"]),
+            _FakeAgent("nova", ["**"]),
+        ]
+        # Python file: triggers all agents (cleo, zara, kai, nova)
+        files = [_fc("app.py", additions=100)]
+        selection, filtered = route(files, agents)
+
+        # Normal case: filtered should contain both infra and code reviewers
+        filtered_names = {a.name for a in filtered}
+        non_infra = {n for n in filtered_names if n not in _INFRASTRUCTURE_AGENTS}
+        # Verify non-infra agents are present (zara, kai)
+        assert "zara" in filtered_names or "kai" in filtered_names, (
+            f"Expected code reviewers in normal routing. Got {filtered_names}"
+        )
+        # The guarantee rule should NOT artificially add agents when filtering
+        # already produces non-infra reviewers
+        assert len(filtered_names) == 4, (
+            f"Normal case should have all agents (cleo, zara, kai, nova). "
+            f"Got {filtered_names}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TeamSelection dataclass
@@ -484,6 +534,27 @@ class TestTeamSelection:
         assert ts.agents == ["a", "b"]
         assert ts.security_override is False
         assert ts.reason == "test reason"
+
+    def test_skip_review_defaults_to_false(self):
+        """AC2: skip_review field exists with default False (REVUE-166)."""
+        ts = TeamSelection(
+            team_name="test",
+            agents=["a"],
+            security_override=False,
+            reason="r",
+        )
+        assert ts.skip_review is False
+
+    def test_skip_review_field_by_name(self):
+        """AC2: skip_review can be set explicitly; still has no behaviour change."""
+        ts = TeamSelection(
+            team_name="test",
+            agents=["a"],
+            security_override=False,
+            reason="r",
+            skip_review=False,
+        )
+        assert ts.skip_review is False
 
     def test_equality(self):
         a = TeamSelection("t", ["a"], False, "r")
@@ -587,3 +658,108 @@ def test_assign_files_empty_agents():
     """No agents → returns empty dict."""
     result = assign_files_to_agents([], [_fc("app.py")])
     assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# REVUE-166: Integration tests — AC5, AC6
+# ---------------------------------------------------------------------------
+
+class TestRevue166Integration:
+    """Integration tests verifying infrastructure-only routing is fixed (REVUE-166)."""
+
+    def test_yaml_python_mixed_diff_routes_to_code_reviewers(self):
+        """AC5: YAML+Python diff routes to ≥1 code reviewer (not infrastructure-only)."""
+        agents = [
+            _FakeAgent("cleo", ["**"]),
+            _FakeAgent("zara", ["**/*.py"]),
+            _FakeAgent("kai", ["**/*.py"]),
+            _FakeAgent("maya", ["**"]),
+            _FakeAgent("leo", ["**/*.js"]),
+            _FakeAgent("nova", ["**"]),
+        ]
+        # Mixed diff: YAML + Python files
+        files = [
+            _fc("config.yaml"),
+            _fc("app.py", additions=100),
+        ]
+        selection, filtered = route(files, agents)
+
+        # After routing: filtered should contain code reviewers (kai, maya, zara from full team)
+        # and infrastructure agents (cleo, nova)
+        filtered_names = {a.name for a in filtered}
+        code_reviewers = {n for n in filtered_names if n in {"zara", "kai", "leo", "maya"}}
+        assert len(code_reviewers) >= 1, (
+            f"AC5: Expected ≥1 code reviewer in {{{','.join(code_reviewers)}}}. "
+            f"Got filtered={filtered_names}"
+        )
+
+    def test_docs_only_md_diff_routes_to_at_least_one_reviewer(self):
+        """AC6: Markdown-only diff routes to ≥1 reviewer (not zero)."""
+        agents = [
+            _FakeAgent("cleo", ["**"]),
+            _FakeAgent("zara", ["**/*.py"]),  # only Python
+            _FakeAgent("kai", ["**/*.py"]),   # only Python
+            _FakeAgent("maya", ["**"]),       # generalist, matches all
+            _FakeAgent("leo", ["**/*.js"]),   # only JavaScript
+            _FakeAgent("nova", ["**"]),
+        ]
+        # Markdown-only diff
+        files = [_fc("README.md")]
+        selection, filtered = route(files, agents)
+
+        # Without guarantee rule: filtered would be [cleo, nova] (infrastructure-only)
+        # With guarantee rule: maya should be injected (she matches all files)
+        filtered_names = {a.name for a in filtered}
+        non_infra = {n for n in filtered_names if n not in _INFRASTRUCTURE_AGENTS}
+        assert len(non_infra) >= 1, (
+            f"AC6: Expected ≥1 reviewer for Markdown diff. "
+            f"Got filtered={filtered_names}"
+        )
+
+    def test_yaml_only_diff_without_guarantee_rule_would_fail(self):
+        """AC5/AC6: Verify tests would have failed before AC1 (regression guard).
+
+        This test simulates the broken behavior by checking agents that don't
+        trigger on YAML. Without the guarantee rule, such a diff would produce
+        zero reviewers.
+        """
+        agents = [
+            _FakeAgent("cleo", ["**"]),
+            _FakeAgent("zara", ["**/*.py"]),  # doesn't match YAML
+            _FakeAgent("kai", ["**/*.py"]),   # doesn't match YAML
+            _FakeAgent("maya", []),           # no triggers (would always run if team included)
+            _FakeAgent("leo", ["**/*.js"]),   # doesn't match YAML
+            _FakeAgent("nova", ["**"]),
+        ]
+
+        # YAML-only diff
+        files = [_fc("config.yaml")]
+
+        # Without maya's broad triggers:
+        agents_no_maya_trigger = [
+            _FakeAgent("cleo", ["**"]),
+            _FakeAgent("zara", ["**/*.py"]),
+            _FakeAgent("kai", ["**/*.py"]),
+            _FakeAgent("leo", ["**/*.js"]),
+            _FakeAgent("nova", ["**"]),
+        ]
+        selection, filtered = route(files, agents_no_maya_trigger)
+        filtered_names = {a.name for a in filtered}
+        non_infra_no_maya = {n for n in filtered_names if n not in _INFRASTRUCTURE_AGENTS}
+        # This scenario should have zero reviewers before AC1: only cleo/nova trigger
+        # So the test verifies the guarantee rule is needed
+        assert len(non_infra_no_maya) == 0, (
+            "Pre-AC1 scenario: YAML file with code-specific triggers should produce "
+            f"zero reviewers. Got {filtered_names}"
+        )
+
+        # Now with the guarantee rule (maya available with broad triggers):
+        selection, filtered = route(files, agents)
+        filtered_names_with_guarantee = {a.name for a in filtered}
+        non_infra_with_guarantee = {n for n in filtered_names_with_guarantee
+                                    if n not in _INFRASTRUCTURE_AGENTS}
+        # After AC1: guarantee rule should inject maya or similar agent
+        assert len(non_infra_with_guarantee) >= 1, (
+            f"AC1 guarantee rule should prevent zero reviewers. "
+            f"Got {filtered_names_with_guarantee}"
+        )

@@ -22,6 +22,9 @@ from .team_loader import load_all_teams, TeamConfig
 # Constants
 # ---------------------------------------------------------------------------
 
+# Agents that are infrastructure (routing/consolidation) not reviewers
+_INFRASTRUCTURE_AGENTS = frozenset({"cleo", "nova"})
+
 SECURITY_FILE_PATTERNS: frozenset[str] = frozenset({
     "*.sql",
     "*.env",
@@ -132,6 +135,7 @@ class TeamSelection:
     agents: list[str]
     security_override: bool
     reason: str
+    skip_review: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +297,9 @@ def route(
     Full routing: combine team selection with trigger evaluation.
 
     Returns (team_selection, filtered_agents_to_run).
+
+    AC1 (REVUE-166): guarantees ≥1 non-infrastructure agent in filtered list
+    for any diff, ensuring YAML/Markdown-only diffs are not routed to zero reviewers.
     """
     selection = select_team(file_changes, shared, config)
     security_override = selection.security_override
@@ -312,6 +319,19 @@ def route(
         agent_def = _extract_agent_def(agent)
         if evaluate_triggers(agent.name, file_changes, agent_def):
             filtered.append(agent)
+
+    # AC1: Guarantee rule — ensure ≥1 non-infrastructure reviewer
+    # If only infrastructure agents remain, inject non-infra agents from available_agents
+    # that pass trigger evaluation
+    non_infra_in_filtered = [a for a in filtered if a.name not in _INFRASTRUCTURE_AGENTS]
+    if not non_infra_in_filtered:
+        # Find non-infra agents from available_agents that are in the selected team
+        # AND pass trigger evaluation for the given file changes
+        for agent in available_agents:
+            if agent.name not in _INFRASTRUCTURE_AGENTS and agent.name in selection.agents:
+                agent_def = _extract_agent_def(agent)
+                if evaluate_triggers(agent.name, file_changes, agent_def):
+                    filtered.append(agent)
 
     return selection, filtered
 

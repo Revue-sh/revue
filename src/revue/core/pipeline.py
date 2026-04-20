@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from .ai_config import AIConfig
 from .ai_client import AIClient, create_ai_client
+from .cleo_router import _INFRASTRUCTURE_AGENTS
 from .metrics import MetricsCollector, NullMetricsCollector
 from .diff_parser import parse_diff_file, filter_changes
 from .diff_limit import check_diff_limit, DiffLimitResult
@@ -214,9 +215,6 @@ class AllAgentsFailedError(RuntimeError):
             "Check API credentials, credit balance, and network connectivity."
         )
 
-# Agents that must NOT be passed to run_agents_parallel — they are called
-# separately by the pipeline as infrastructure (router, consolidator).
-_INFRASTRUCTURE_AGENTS = frozenset({"cleo", "nova"})
 
 # ---------------------------------------------------------------------------
 # Lazy imports for orchestration (only loaded on paid tiers)
@@ -780,14 +778,6 @@ class ReviewPipeline:
             print(
                 f"[revue]   (Infrastructure agents excluded from review pool: "
                 f"{', '.join(stripped)})",
-                flush=True,
-            )
-        if not reviewer_agents:
-            # Cleo routed to infrastructure-only agents (e.g. nova for config/docs diffs).
-            # Fall back to all non-infrastructure allowed agents so the diff is always reviewed.
-            reviewer_agents = [a for a in allowed_agents if a.name not in _INFRASTRUCTURE_AGENTS]
-            print(
-                "[revue]   Fallback: infrastructure-only routing — running all reviewer agents.",
                 flush=True,
             )
         max_parallel = self.config.max_parallel_agents

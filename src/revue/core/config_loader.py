@@ -44,7 +44,7 @@ from pathlib import Path
 
 import yaml
 
-from .ai_config import AIConfig
+from .ai_config import AIConfig, FileTypeRule
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +204,33 @@ def load_config(
         config.preserve_comment_threads = bool(features["preserve_comment_threads"])
     if "show_reviewed_files" in features:
         config.show_reviewed_files = bool(features["show_reviewed_files"])
+
+    # --- file_type_routing section (AC4 — REVUE-166) ---
+    ftr: dict[str, object] = raw.get("file_type_routing", {}) or {}  # type: ignore[assignment]
+    if ftr:
+        rules: list[object] = ftr.get("rules", []) or []  # type: ignore[assignment]
+        if isinstance(rules, list):
+            parsed_rules: list[FileTypeRule] = []
+            for i, rule in enumerate(rules):
+                if not isinstance(rule, dict):
+                    raise ValueError(
+                        f"{config_path}: file_type_routing.rules[{i}] must be a mapping."
+                    )
+                extensions = rule.get("extensions", [])
+                reviewers = rule.get("reviewers", [])
+                if not isinstance(extensions, list):
+                    raise ValueError(
+                        f"{config_path}: file_type_routing.rules[{i}].extensions must be a list."
+                    )
+                if not isinstance(reviewers, list):
+                    raise ValueError(
+                        f"{config_path}: file_type_routing.rules[{i}].reviewers must be a list."
+                    )
+                parsed_rules.append(FileTypeRule(
+                    extensions=[str(e) for e in extensions],
+                    reviewers=[str(r) for r in reviewers],
+                ))
+            config.file_type_routing = parsed_rules
 
     # --- output section ---
     output: dict[str, object] = raw.get("output", {}) or {}  # type: ignore[assignment]
