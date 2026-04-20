@@ -678,3 +678,250 @@ def test_anthropic_client_records_agent_name_when_passed(mock_anthropic_cls: Mag
         assert collector.events[0].agent_name == "kai"
 
     _test()
+
+
+# ---------------------------------------------------------------------------
+# REVUE-160: TokenUsage validation + consistency of cached_tokens extraction
+# ---------------------------------------------------------------------------
+
+def test_extract_cached_tokens_raises_on_negative_api_value() -> None:
+    """_extract_cached_tokens raises ValueError when the API returns negative cached_tokens."""
+    from revue.core.ai_client import _extract_cached_tokens
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens_details.cached_tokens = -1
+    with pytest.raises(ValueError, match="negative cached_tokens"):
+        _extract_cached_tokens(mock_usage)
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openai_warns_when_usage_is_none(mock_openai_cls: MagicMock) -> None:
+    """OpenAIClient logs a warning when the API response omits the usage block."""
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "ok"
+    mock_resp.usage = None
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openai")
+    client = OpenAIClient(config)
+
+    with patch("revue.core.ai_client._log") as mock_log:
+        result = client.complete([{"role": "user", "content": "test"}])
+        assert result.text == "ok"
+        assert result.usage.input_tokens == 0
+        mock_log.warning.assert_called_once()
+        assert "missing usage" in mock_log.warning.call_args[0][0]
+
+
+def test_token_usage_rejects_negative_input_tokens() -> None:
+    """TokenUsage raises ValueError naming the failing field."""
+    with pytest.raises(ValueError, match="input_tokens.*non-negative"):
+        TokenUsage(input_tokens=-1)
+
+
+def test_token_usage_rejects_negative_output_tokens() -> None:
+    """TokenUsage raises ValueError naming the failing field."""
+    with pytest.raises(ValueError, match="output_tokens.*non-negative"):
+        TokenUsage(output_tokens=-1)
+
+
+def test_token_usage_rejects_negative_cache_creation() -> None:
+    """TokenUsage raises ValueError naming the failing field."""
+    with pytest.raises(ValueError, match="cache_creation_input_tokens.*non-negative"):
+        TokenUsage(cache_creation_input_tokens=-1)
+
+
+def test_token_usage_rejects_negative_cache_read() -> None:
+    """TokenUsage raises ValueError naming the failing field."""
+    with pytest.raises(ValueError, match="cache_read_input_tokens.*non-negative"):
+        TokenUsage(cache_read_input_tokens=-1)
+
+
+def test_token_usage_accepts_zero_values() -> None:
+    """TokenUsage accepts zero for all fields (boundary condition)."""
+    usage = TokenUsage(
+        input_tokens=0,
+        output_tokens=0,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+    assert usage.input_tokens == 0
+    assert usage.output_tokens == 0
+    assert usage.cache_creation_input_tokens == 0
+    assert usage.cache_read_input_tokens == 0
+
+
+def test_token_usage_accepts_positive_values() -> None:
+    """TokenUsage accepts positive values for all fields."""
+    usage = TokenUsage(
+        input_tokens=100,
+        output_tokens=50,
+        cache_creation_input_tokens=25,
+        cache_read_input_tokens=10,
+    )
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 50
+    assert usage.cache_creation_input_tokens == 25
+    assert usage.cache_read_input_tokens == 10
+
+
+@patch("revue.core.ai_client.openai.AzureOpenAI")
+def test_azure_logs_cached_tokens(mock_azure_cls: MagicMock) -> None:
+    """AzureOpenAIClient extracts and logs cached_tokens from prompt_tokens_details."""
+    mock_details = MagicMock(cached_tokens=512)
+    mock_usage = MagicMock(
+        prompt_tokens=2000,
+        completion_tokens=100,
+        prompt_tokens_details=mock_details,
+    )
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "result"
+    mock_resp.usage = mock_usage
+    mock_azure_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(
+        provider="azure",
+        azure_endpoint="https://myazure.openai.azure.com",
+        azure_deployment="gpt-4o-deploy",
+    )
+    client = AzureOpenAIClient(config)
+
+    with patch("revue.core.ai_client._log") as mock_log:
+        result = client.complete([{"role": "user", "content": "test"}])
+        assert result.text == "result"
+        assert result.usage.cache_read_input_tokens == 512
+        mock_log.debug.assert_called_once()
+        log_args = mock_log.debug.call_args[0]
+        assert "cached" in log_args[0]
+        assert 512 in log_args
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openrouter_logs_cached_tokens(mock_openai_cls: MagicMock) -> None:
+    """OpenRouterClient extracts and logs cached_tokens from prompt_tokens_details."""
+    mock_details = MagicMock(cached_tokens=768)
+    mock_usage = MagicMock(
+        prompt_tokens=1500,
+        completion_tokens=200,
+        prompt_tokens_details=mock_details,
+    )
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "result"
+    mock_resp.usage = mock_usage
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openrouter")
+    client = OpenRouterClient(config)
+
+    with patch("revue.core.ai_client._log") as mock_log:
+        result = client.complete([{"role": "user", "content": "test"}])
+        assert result.text == "result"
+        assert result.usage.cache_read_input_tokens == 768
+        mock_log.debug.assert_called_once()
+        log_args = mock_log.debug.call_args[0]
+        assert "cached" in log_args[0]
+        assert 768 in log_args
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_custom_logs_cached_tokens(mock_openai_cls: MagicMock) -> None:
+    """CustomGatewayClient extracts and logs cached_tokens from prompt_tokens_details."""
+    mock_details = MagicMock(cached_tokens=256)
+    mock_usage = MagicMock(
+        prompt_tokens=1000,
+        completion_tokens=150,
+        prompt_tokens_details=mock_details,
+    )
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "result"
+    mock_resp.usage = mock_usage
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="custom", base_url="https://gateway.internal/v1")
+    client = CustomGatewayClient(config)
+
+    with patch("revue.core.ai_client._log") as mock_log:
+        result = client.complete([{"role": "user", "content": "test"}])
+        assert result.text == "result"
+        assert result.usage.cache_read_input_tokens == 256
+        mock_log.debug.assert_called_once()
+        log_args = mock_log.debug.call_args[0]
+        assert "cached" in log_args[0]
+        assert 256 in log_args
+
+
+@pytest.mark.parametrize("client_cls,mock_target,extra_config", [
+    (OpenAIClient, "revue.core.ai_client.openai.OpenAI", {}),
+    (AzureOpenAIClient, "revue.core.ai_client.openai.AzureOpenAI",
+     {"azure_endpoint": "https://x.openai.azure.com", "azure_deployment": "gpt-4o"}),
+    (OpenRouterClient, "revue.core.ai_client.openai.OpenAI", {}),
+    (CustomGatewayClient, "revue.core.ai_client.openai.OpenAI",
+     {"base_url": "https://gw.internal/v1"}),
+])
+def test_openai_compatible_cache_creation_tokens_always_zero(
+    client_cls: type, mock_target: str, extra_config: dict
+) -> None:
+    """OpenAI-compatible clients never populate cache_creation_input_tokens.
+
+    OpenAI's API has no equivalent of Anthropic's cache-creation cost; only
+    cache reads are reported. This test pins the zero so future changes to
+    extraction logic don't accidentally produce non-zero values.
+    """
+    with patch(mock_target) as mock_cls:
+        mock_resp = MagicMock()
+        mock_resp.choices[0].message.content = "ok"
+        mock_resp.usage.prompt_tokens = 100
+        mock_resp.usage.completion_tokens = 20
+        mock_resp.usage.prompt_tokens_details.cached_tokens = 50
+        mock_cls.return_value.chat.completions.create.return_value = mock_resp
+
+        config = _make_config(**extra_config)
+        client = client_cls(config)
+        result = client.complete([{"role": "user", "content": "test"}])
+
+        assert result.usage.cache_creation_input_tokens == 0
+        assert result.usage.cache_read_input_tokens == 50
+
+
+def test_all_call_sites_extract_text() -> None:
+    """Integration test: verify that call sites that use CompletionResult correctly extract .text.
+
+    Specifically tests run_shared_analysis(), which calls client.complete() and extracts
+    .text from the result. Also verifies the CompletionResult protocol itself.
+    """
+    from revue.core.shared_analysis import run_shared_analysis, SharedAnalysisResult
+    from revue.core.models import FileChange
+
+    # Helper: create a mock AIClient that returns CompletionResult (real protocol)
+    def _mock_client(text: str) -> MagicMock:
+        client = MagicMock()
+        client.complete.return_value = CompletionResult(text=text, usage=TokenUsage())
+        return client
+
+    def _file_change(filename: str) -> FileChange:
+        return FileChange(
+            file_path=filename,
+            change_type="modified",
+            additions=10,
+            deletions=5,
+            diff="--- a/test\n+++ b/test\n@@ -1 +1 @@\n-old\n+new",
+        )
+
+    # --- Call site 1: run_shared_analysis() ---
+    # run_shared_analysis calls client.complete() and extracts .text for JSON parsing
+    changes = [_file_change("test.py")]
+    json_response = '{"risk_areas": [], "suggested_agents": ["kai"], "summary": "test"}'
+    client = _mock_client(json_response)
+    shared_result = run_shared_analysis(changes, client)
+    # Verify the real function extracted .text and parsed it correctly
+    assert isinstance(shared_result, SharedAnalysisResult)
+    assert shared_result.success
+    assert shared_result.summary == "test"
+    # Verify client.complete() was actually called with .text extracted from result
+    assert client.complete.called
+
+    # --- Call site 2: CompletionResult protocol ---
+    # Verify CompletionResult.text is accessible as an attribute (not a method or property)
+    result = CompletionResult(text="# Findings\nCode review comment", usage=TokenUsage())
+    assert isinstance(result.text, str)
+    assert result.text == "# Findings\nCode review comment"
+    assert isinstance(result.usage, TokenUsage)

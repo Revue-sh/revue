@@ -49,6 +49,18 @@ class TokenUsage:
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
 
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("input_tokens", self.input_tokens),
+            ("output_tokens", self.output_tokens),
+            ("cache_creation_input_tokens", self.cache_creation_input_tokens),
+            ("cache_read_input_tokens", self.cache_read_input_tokens),
+        ):
+            if value < 0:
+                raise ValueError(
+                    f"TokenUsage.{field_name} must be non-negative, got {value}"
+                )
+
 
 @dataclass
 class CompletionResult:
@@ -159,6 +171,39 @@ def _with_retry(
 # Concrete clients
 # ---------------------------------------------------------------------------
 
+def _extract_cached_tokens(usage: Any) -> int:
+    """Extract cached_tokens from OpenAI-compatible usage.prompt_tokens_details.
+
+    OpenAI's API exposes only cache *reads* (prompt_tokens_details.cached_tokens).
+    There is no equivalent of Anthropic's cache_creation_input_tokens — caching is
+    automatic and the API does not report a separate creation cost. Therefore
+    cache_creation_input_tokens is always 0 for all OpenAI-compatible clients.
+    """
+    details = getattr(usage, "prompt_tokens_details", None) if usage else None
+    raw = getattr(details, "cached_tokens", 0) if details else 0
+    if not isinstance(raw, int):
+        return 0
+    if raw < 0:
+        raise ValueError(f"API returned negative cached_tokens: {raw}")
+    return raw
+
+
+def _build_openai_token_usage(usage: Any, provider_tag: str) -> TokenUsage:
+    """Build TokenUsage from an OpenAI-compatible usage object.
+
+    Logs a warning when the API response omits the usage block entirely —
+    token counts will default to 0, which may mask quota or billing issues.
+    """
+    if usage is None:
+        _log.warning("[%s] API response missing usage information — token counts defaulting to 0", provider_tag)
+    cached = _extract_cached_tokens(usage)
+    return TokenUsage(
+        input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
+        output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+        cache_read_input_tokens=cached,
+    )
+
+
 def _openai_messages(
     messages: list[dict[str, Any]],
     system: "str | list[dict[str, Any]] | None",
@@ -236,16 +281,10 @@ class OpenAIClient:
             if cache_key is not None:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
-            usage = resp.usage
-            details = getattr(usage, "prompt_tokens_details", None) if usage else None
-            cached = getattr(details, "cached_tokens", 0) if details else 0
-            token_usage = TokenUsage(
-                input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
-                output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
-            )
+            token_usage = _build_openai_token_usage(resp.usage, "openai")
             _log.debug(
                 "[openai] cached=%s prompt=%s completion=%s",
-                cached,
+                token_usage.cache_read_input_tokens,
                 token_usage.input_tokens,
                 token_usage.output_tokens,
             )
@@ -375,13 +414,10 @@ class AzureOpenAIClient:
             if cache_key is not None:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
-            usage = resp.usage
-            token_usage = TokenUsage(
-                input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
-                output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
-            )
+            token_usage = _build_openai_token_usage(resp.usage, "azure")
             _log.debug(
-                "[azure] prompt=%s completion=%s",
+                "[azure] cached=%s prompt=%s completion=%s",
+                token_usage.cache_read_input_tokens,
                 token_usage.input_tokens,
                 token_usage.output_tokens,
             )
@@ -429,13 +465,10 @@ class OpenRouterClient:
             if cache_key is not None:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
-            usage = resp.usage
-            token_usage = TokenUsage(
-                input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
-                output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
-            )
+            token_usage = _build_openai_token_usage(resp.usage, "openrouter")
             _log.debug(
-                "[openrouter] prompt=%s completion=%s",
+                "[openrouter] cached=%s prompt=%s completion=%s",
+                token_usage.cache_read_input_tokens,
                 token_usage.input_tokens,
                 token_usage.output_tokens,
             )
@@ -479,13 +512,10 @@ class CustomGatewayClient:
             if cache_key is not None:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
-            usage = resp.usage
-            token_usage = TokenUsage(
-                input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
-                output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
-            )
+            token_usage = _build_openai_token_usage(resp.usage, "custom")
             _log.debug(
-                "[custom] prompt=%s completion=%s",
+                "[custom] cached=%s prompt=%s completion=%s",
+                token_usage.cache_read_input_tokens,
                 token_usage.input_tokens,
                 token_usage.output_tokens,
             )
