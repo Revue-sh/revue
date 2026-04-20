@@ -127,6 +127,7 @@ EOF
 
 Description format: Jira wiki markup (`h2.`, `*bold*`, `_italic_`, `\n` for newlines).
 Use `""` as a placeholder for label when you only want to set the description.
+Description template: read the `docs/story-dod-checklist.md`
 
 ### 6. No argument — list all open tickets
 

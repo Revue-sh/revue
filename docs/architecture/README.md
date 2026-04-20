@@ -45,6 +45,8 @@ A **Proposed** ADR is the RFC phase. Add feedback to its **Review Notes** sectio
 | [agentic-review-loop.md](agentic-review-loop.md) | Proposed (post-MVP) | Iterative agentic review loop with resolution and verification rounds |
 | [prompt-cache-strategy.md](prompt-cache-strategy.md) | Accepted | Fix 2.7% Anthropic cache hit rate by moving the diff to a shared system block prefix |
 | [pipeline-metrics.md](pipeline-metrics.md) | Proposed | Per-run JSONL metrics artifacts for cache observability and future dashboard; `MetricsCollector` Protocol injection |
+| [system-context-injection.md](system-context-injection.md) | Proposed | Inject architecture docs and adjacent file contracts into agent prompts so agents can detect system-assumption errors, not just diff-level defects |
+| [critical-path-escalation.md](critical-path-escalation.md) | Proposed | Declarative `critical_paths` and `escalation` config in `.revue.yml`; structured escalation comments when sensitive areas are touched or severity thresholds are exceeded |
 
 ---
 
