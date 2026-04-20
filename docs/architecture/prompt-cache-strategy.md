@@ -89,7 +89,11 @@ Use the 1-hour cache tier for the diff prefix. Re-reviews within an hour (the ty
 
 > **Implementation (2026-04-18) — ACTIVE**: D2 is fully shipped. The 1-hour tier is `{"type": "ephemeral", "ttl": "1h"}` per `CacheControlEphemeralParam` in the Anthropic SDK (v0.94.0+). The `"persistent"` type does not exist — the API rejected it. Anthropic changed the default TTL from 1h → 5m on 2026-03-06; the explicit `ttl` field is required to opt into the 1-hour tier.
 >
-> Follow-up **REVUE-157** tracks whether the `anthropic-beta: extended-cache-ttl` header is needed for longer tiers (>1h). D2 as shipped already achieves the 1-hour window through the explicit `ttl` field alone.
+> **Verification (2026-04-20, REVUE-157)**: Live billing check completed. Two `revue` runs on the same PR with a 9-minute gap:
+> - Run 1 (18:25 UTC): cache_creation=26,301 tokens, cache_read=47,733 tokens
+> - Run 2 (18:34 UTC): cache_creation=0 tokens, cache_read=74,034 tokens
+>
+> Run 2 has zero new cache writes and read 74k cached tokens after >5 minutes, proving the 1-hour tier is active server-side. No beta header (`extended-cache-ttl-2025-04-11`) required. The `{"type": "ephemeral", "ttl": "1h"}` field alone enables the 1-hour tier via the standard `client.messages.create()` endpoint (non-beta). **REVUE-157 is complete — no further action required.**
 
 ### D3 — Agent instructions stay uncached
 

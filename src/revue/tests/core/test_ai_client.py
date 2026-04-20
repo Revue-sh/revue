@@ -438,6 +438,21 @@ def test_anthropic_complete_logs_cache_usage(mock_anthropic_cls: MagicMock) -> N
 
 
 # ---------------------------------------------------------------------------
+# REVUE-157: D2 cache tier verification — guard against accidental reversion
+# ---------------------------------------------------------------------------
+
+def test_cache_control_1h_value() -> None:
+    """_CACHE_CONTROL_1H must be exactly {"type": "ephemeral", "ttl": "1h"}.
+
+    Billing evidence (2026-04-20): cache_read_tokens=74034 after a 9-minute gap
+    with cache_creation=0 confirms the 1h tier is active server-side.  This test
+    guards the constant against accidental reversion to the old {"type": "ephemeral"}
+    (5-minute default) which would silently drop the TTL without an API error.
+    """
+    assert _CACHE_CONTROL_1H == {"type": "ephemeral", "ttl": "1h"}
+
+
+# ---------------------------------------------------------------------------
 # REVUE-155: CompletionResult + TokenUsage (RED — TokenUsage/CompletionResult
 # do not exist yet; these tests drive the implementation)
 # ---------------------------------------------------------------------------

@@ -154,9 +154,11 @@ def _parse_thread_decisions(raw: str) -> list[dict]:
         lines = clean.splitlines()
         # Remove first and last fence lines
         inner_lines = lines[1:] if lines[0].startswith("```") else lines
-        if inner_lines and inner_lines[-1].strip() == "```":
-            inner_lines = inner_lines[:-1]
-        clean = "\n".join(inner_lines).strip()
+        close_idx = next(
+            (i for i, ln in enumerate(inner_lines) if ln.strip() == "```"),
+            len(inner_lines),
+        )
+        clean = "\n".join(inner_lines[:close_idx]).strip()
 
     # Strip trailing commas before } or ] — AI models sometimes emit them.
     clean = re.sub(r",\s*([}\]])", r"\1", clean)

@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import pytest
 
-from revue.core.dedup_consolidator import consolidate, ConsolidationResult, SameFileLineStrategy
+from revue.core.dedup_consolidator import (
+    consolidate,
+    ConsolidationResult,
+    SameFileLineStrategy,
+    _parse_thread_decisions,
+)
 from revue.core.models import AIReview
 
 
@@ -85,3 +90,39 @@ def test_different_files_not_deduplicated():
     b = _review(file_path="b.py", line_number=10, severity="minor")
     result = consolidate([a, b], strategies=[SameFileLineStrategy()])
     assert len(result.findings) == 2
+
+
+# ---------------------------------------------------------------------------
+# _parse_thread_decisions — fence stripping
+# ---------------------------------------------------------------------------
+
+def test_parse_thread_decisions_plain_json():
+    raw = '[{"fingerprint": "abc", "decision": "wont_fix", "reply_draft": "ok"}]'
+    result = _parse_thread_decisions(raw)
+    assert result == [{"fingerprint": "abc", "decision": "wont_fix", "reply_draft": "ok"}]
+
+
+def test_parse_thread_decisions_fenced_json():
+    raw = '```json\n[{"fingerprint": "abc", "decision": "wont_fix", "reply_draft": ""}]\n```'
+    result = _parse_thread_decisions(raw)
+    assert result == [{"fingerprint": "abc", "decision": "wont_fix", "reply_draft": ""}]
+
+
+def test_parse_thread_decisions_fence_with_trailing_rationale():
+    """AI sometimes appends prose after the closing fence — must not crash."""
+    raw = (
+        '```json\n'
+        '[{"fingerprint": "abc", "decision": "already_handled", "reply_draft": ""}]\n'
+        '```\n'
+        '\n'
+        '**Rationale:** The thread contains a bot acknowledgment reply.\n'
+    )
+    result = _parse_thread_decisions(raw)
+    assert result == [{"fingerprint": "abc", "decision": "already_handled", "reply_draft": ""}]
+
+
+def test_parse_thread_decisions_missing_closing_fence():
+    """Opening fence present but no closing fence — treat all inner lines as JSON."""
+    raw = '```json\n[{"fingerprint": "abc", "decision": "wont_fix", "reply_draft": ""}]'
+    result = _parse_thread_decisions(raw)
+    assert result == [{"fingerprint": "abc", "decision": "wont_fix", "reply_draft": ""}]
