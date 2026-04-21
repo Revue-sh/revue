@@ -126,3 +126,58 @@ def test_parse_thread_decisions_missing_closing_fence():
     raw = '```json\n[{"fingerprint": "abc", "decision": "wont_fix", "reply_draft": ""}]'
     result = _parse_thread_decisions(raw)
     assert result == [{"fingerprint": "abc", "decision": "wont_fix", "reply_draft": ""}]
+
+
+# ---------------------------------------------------------------------------
+# _REPLY_THREAD_SYSTEM_PROMPT — pattern guidance (REVUE-174)
+# ---------------------------------------------------------------------------
+
+from revue.core.dedup_consolidator import _REPLY_THREAD_SYSTEM_PROMPT  # noqa: E402
+
+
+def test_prompt_contains_invariant_prose_guidance():
+    """TC1 / AC1: Prompt must instruct Nova to write self-contained invariant prose."""
+    prompt_lower = _REPLY_THREAD_SYSTEM_PROMPT.lower()
+    assert any(word in prompt_lower for word in ("invariant", "self-contained", "design choice")), (
+        "_REPLY_THREAD_SYSTEM_PROMPT must describe the invariant-prose requirement"
+    )
+    assert any(phrase in prompt_lower for phrase in ("generic", "not broad", "not generic")), (
+        "_REPLY_THREAD_SYSTEM_PROMPT must explicitly prohibit generic labels"
+    )
+
+
+def test_prompt_prohibits_file_paths_and_line_numbers():
+    """TC2 / AC2: Prompt must explicitly forbid file paths, line numbers, and variable names."""
+    prompt_lower = _REPLY_THREAD_SYSTEM_PROMPT.lower()
+    assert "line number" in prompt_lower or "line numbers" in prompt_lower, (
+        "_REPLY_THREAD_SYSTEM_PROMPT must prohibit line numbers"
+    )
+    assert "file path" in prompt_lower or "file paths" in prompt_lower, (
+        "_REPLY_THREAD_SYSTEM_PROMPT must prohibit file paths"
+    )
+    assert any(phrase in prompt_lower for phrase in ("stale", "refactor", "refactored")), (
+        "_REPLY_THREAD_SYSTEM_PROMPT must explain why (becomes stale on refactor)"
+    )
+
+
+def test_prompt_contains_specificity_rule():
+    """TC3 / AC3: Prompt must state that pattern applies only to the described design choice."""
+    prompt_lower = _REPLY_THREAD_SYSTEM_PROMPT.lower()
+    assert any(phrase in prompt_lower for phrase in ("specific enough", "only to", "unrelated")), (
+        "_REPLY_THREAD_SYSTEM_PROMPT must include a specificity rule"
+    )
+
+
+def test_prompt_applies_rules_to_rationale():
+    """TC4 / AC4: Prompt must apply the same prose rules to rationale field."""
+    prompt_lower = _REPLY_THREAD_SYSTEM_PROMPT.lower()
+    # Rationale section must appear after the pattern guidance
+    pattern_idx = prompt_lower.find("pattern")
+    rationale_idx = prompt_lower.find("rationale")
+    assert rationale_idx != -1, "_REPLY_THREAD_SYSTEM_PROMPT must mention rationale"
+    # The prompt must address rationale with the same no-line-number / no-path rules
+    # Check that after the first mention of rationale, the same constraints appear
+    tail = prompt_lower[rationale_idx:]
+    assert any(phrase in tail for phrase in ("line number", "file path", "invariant", "refactor")), (
+        "_REPLY_THREAD_SYSTEM_PROMPT must apply no-specifics / invariant rules to rationale"
+    )

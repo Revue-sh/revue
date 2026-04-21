@@ -73,6 +73,27 @@ Tone guidance for reply_draft:
 - For acknowledged_fixed: brief acknowledgment that the fix is confirmed
 - For acknowledged_deferred: brief thank-you acknowledging the deferral justification
 
+Pattern and rationale guidance (allowed_pattern and disallowed_pattern only):
+- **Pattern**: Write a self-contained sentence or short paragraph describing the
+  DESIGN INVARIANT — the rule or guarantee that makes this approach safe or
+  forbidden. Explain both WHAT the pattern is and WHY it is safe/forbidden.
+  DO NOT include file paths, line numbers, function names, or variable names.
+  These become stale when code is refactored or moved.
+  Example (good): "Fence detection startswith guard is sufficient because valid
+  JSON never begins with triple-backtick — the branches are exhaustive and
+  non-overlapping."
+  Example (bad): "Conditional guard prevents false-positive logic error on line 152"
+
+- **Specificity rule**: The pattern must be specific enough to apply ONLY to
+  the described design choice — not so broad that it would suppress similar-looking
+  findings in unrelated code. If your pattern could match guard logic anywhere,
+  it is too generic.
+
+- **Rationale**: Apply the same invariant-prose and no-specifics rules to rationale.
+  Rationale must also contain NO line-number references and must explain the
+  design rule in prose that remains valid after a refactor. Rationale should
+  expand on the design invariant and note any tradeoffs or constraints.
+
 Output ONLY a JSON array. Each element must have these fields:
   fingerprint    (string — copy from input)
   decision       (one of the six values above)
