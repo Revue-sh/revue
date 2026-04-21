@@ -321,31 +321,41 @@ class BitbucketAdapter:
     def resolve_inline_comment(
         self, pr_id: int, comment_id: str, reply_body: str
     ) -> bool:
-        """Resolve an inline comment thread via reply (Bitbucket has no native resolution).
+        """Resolve an inline comment thread by posting a reply then calling the native resolve API.
 
-        Bitbucket does not have a native "resolve thread" API like GitHub/GitLab.
-        We post a reply to the existing comment as a workaround.
-
-        POST /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments/{comment_id}
+        POST /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments            (reply)
+        POST /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments/{id}/resolve
 
         Args:
             pr_id:       Pull request ID.
-            comment_id:  The Bitbucket comment ID to reply to.
+            comment_id:  The Bitbucket comment ID to reply to and resolve.
             reply_body:  The reply message (e.g. "✅ Issue appears to be resolved").
 
         Returns:
             True on success, False on error.
         """
-        payload: dict[str, Any] = {
-            "content": {"raw": reply_body},
-            "parent": {"id": int(comment_id)},
-        }
+        if reply_body:
+            payload: dict[str, Any] = {
+                "content": {"raw": reply_body},
+                "parent": {"id": int(comment_id)},
+            }
+            try:
+                self._request("POST", f"/pullrequests/{pr_id}/comments", body=payload)
+                _LOG.info("Posted resolution reply to comment %s on PR %s", comment_id, pr_id)
+            except Exception as exc:
+                _LOG.warning("resolve_inline_comment: reply failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
+                return False
+
         try:
-            self._request("POST", f"/pullrequests/{pr_id}/comments", body=payload)
-            _LOG.info("Posted resolution reply to comment %s on PR %s", comment_id, pr_id)
+            self._request("POST", f"/pullrequests/{pr_id}/comments/{comment_id}/resolve")
             return True
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409:  # Already resolved — goal achieved
+                return True
+            _LOG.warning("resolve_inline_comment: resolve failed for PR %s comment %s: HTTP %s", pr_id, comment_id, exc.code, exc_info=True)
+            return False
         except Exception as exc:
-            _LOG.warning("resolve_inline_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
+            _LOG.warning("resolve_inline_comment: resolve failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
             return False
 
     # ------------------------------------------------------------------

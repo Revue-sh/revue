@@ -893,3 +893,57 @@ def test_gitlab_missing_token_prints_warning_and_skips(tmp_path, capsys) -> None
     captured = capsys.readouterr()
     assert "GITLAB_TOKEN" in captured.err
     mock_adapter.post_review_comment.assert_not_called()
+
+
+# =====================================================================
+# Revision counter: ephemeral CI must increment from live comment body
+# =====================================================================
+
+def test_revision_increments_from_live_comment_when_no_local_state(tmp_path) -> None:
+    """Ephemeral CI — no local state file but an existing summary comment is live.
+
+    _revision must be parsed from the live comment body (Review #3 → Review #4),
+    not hardcoded to 1 when the local .revue/ store is absent.
+    """
+    from revue.cli import _post_to_bitbucket
+
+    existing_summary_body = (
+        "## 🤖 Revue.io — Code Review (Review #3)\n\nPrevious review content."
+    )
+    existing_comments = [
+        {"id": "summary-99", "content": {"raw": existing_summary_body}}
+    ]
+
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([_FINDING_A]),
+        )
+    ]
+
+    mock_adapter = MagicMock()
+    mock_adapter.post_review_comment.return_value = "inline-id"
+    mock_adapter.post_summary_comment.return_value = "new-summary-id"
+    mock_adapter.update_comment.return_value = True
+    mock_adapter.get_existing_comments.return_value = existing_comments
+
+    mock_summary_store = MagicMock()
+    mock_summary_store.get_summary_for_pr.return_value = None  # ephemeral CI — no local state
+
+    with (
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch("revue.core.bitbucket_adapter.BitbucketAdapter", return_value=mock_adapter),
+        patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
+        patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+    ):
+        _post_to_bitbucket(_make_args(), review_results)
+
+    # Must update the existing comment, not post a new one
+    mock_adapter.update_comment.assert_called_once()
+    mock_adapter.post_summary_comment.assert_not_called()
+
+    # Body must show Review #4, not Review #1
+    update_body = mock_adapter.update_comment.call_args[1]["body"]
+    assert "Review #4" in update_body, (
+        f"Expected 'Review #4' in update body. Got: {update_body[:300]}"
+    )

@@ -1047,9 +1047,12 @@ def _post_to_platform(
 
     _REVUE_SUMMARY_MARKER = "## 🤖 Revue.io — Code Review"
 
-    def _scan_for_existing_summary() -> Optional[str]:
-        """Scan live platform comments for a Revue summary, return its comment ID.
+    _REVISION_RE = re.compile(r"Review #(\d+)")
 
+    def _scan_for_existing_summary() -> Optional[tuple[str, int]]:
+        """Scan live platform comments for a Revue summary.
+
+        Returns (comment_id, revision) when found, None otherwise.
         Checks issue-level comments first (GitHub summary lives there), then
         falls back to all PR comments (Bitbucket/GitLab use a unified endpoint).
         """
@@ -1062,26 +1065,37 @@ def _post_to_platform(
                 for c in get_issue_fn(pr_id=pr_num):
                     body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
                     if _REVUE_SUMMARY_MARKER in body:
-                        return str(c.get("id", ""))
+                        m = _REVISION_RE.search(body)
+                        return (str(c.get("id", "")), int(m.group(1)) if m else 1)
             # Fallback: covers Bitbucket/GitLab where summary is in general comments
             for c in adapter.get_existing_comments(pr_id=pr_num):
                 body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
                 if _REVUE_SUMMARY_MARKER in body:
-                    return str(c.get("id", ""))
+                    m = _REVISION_RE.search(body)
+                    return (str(c.get("id", "")), int(m.group(1)) if m else 1)
         except Exception:
             pass
         return None
+
+    # Eagerly scan for a live summary when the local state file is absent.
+    # This ensures _revision is set correctly on ephemeral CI where .revue/ is
+    # not persisted between pipeline runs.
+    _scanned: Optional[tuple[str, int]] = None
+    if _existing_summary is None:
+        _scanned = _scan_for_existing_summary()
+        if _scanned is not None:
+            _revision = _scanned[1] + 1
 
     def _post_or_update_summary(body: str) -> None:
         nonlocal _existing_summary, _revision
         now = datetime.now(timezone.utc)
 
         # Resolve the comment ID to update: prefer state file, fall back to
-        # scanning live comments so re-reviews never post a duplicate summary
+        # the eagerly scanned result so re-reviews never post a duplicate summary
         # even when the local state file is stale or missing (e.g. ephemeral CI).
         existing_comment_id = (
             _existing_summary.platform_comment_id if _existing_summary
-            else _scan_for_existing_summary()
+            else (_scanned[0] if _scanned else None)
         )
 
         if existing_comment_id:

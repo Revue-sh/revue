@@ -546,14 +546,15 @@ def test_parse_webhook_event_missing_pr_id() -> None:
 
 
 def test_resolve_inline_comment_posts_reply_with_parent_id() -> None:
-    """resolve_inline_comment() POSTs to /comments with parent.id set to int(comment_id)."""
+    """resolve_inline_comment() POSTs reply to /comments with parent.id as int."""
     adapter = make_adapter()
-    captured = {}
+    calls: list[dict] = []
 
     def fake_urlopen(req):
-        captured["url"] = req.full_url
-        captured["body"] = json.loads(req.data.decode())
-        captured["method"] = req.get_method()
+        call: dict = {"url": req.full_url, "method": req.get_method()}
+        if req.data:
+            call["body"] = json.loads(req.data.decode())
+        calls.append(call)
         return mock_response({"id": 999})
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
@@ -562,14 +563,69 @@ def test_resolve_inline_comment_posts_reply_with_parent_id() -> None:
         )
 
     assert result is True
-    assert "/pullrequests/42/comments" in captured["url"]
-    assert captured["method"] == "POST"
-    assert captured["body"]["content"]["raw"] == "Issue resolved."
-    assert captured["body"]["parent"]["id"] == 77  # int(comment_id)
+    reply_call = next(c for c in calls if "/resolve" not in c["url"])
+    assert "/pullrequests/42/comments" in reply_call["url"]
+    assert reply_call["method"] == "POST"
+    assert reply_call["body"]["content"]["raw"] == "Issue resolved."
+    assert reply_call["body"]["parent"]["id"] == 77  # int(comment_id)
+
+
+def test_resolve_inline_comment_also_calls_native_resolve_endpoint() -> None:
+    """resolve_inline_comment() calls POST .../resolve after posting the reply."""
+    adapter = make_adapter()
+    urls: list[str] = []
+
+    def fake_urlopen(req):
+        urls.append(req.full_url)
+        return mock_response({"id": 999})
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        result = adapter.resolve_inline_comment(
+            pr_id=42, comment_id="77", reply_body="Issue resolved."
+        )
+
+    assert result is True
+    assert any("/pullrequests/42/comments/77/resolve" in u for u in urls)
+
+
+def test_resolve_inline_comment_handles_already_resolved_as_success() -> None:
+    """resolve_inline_comment() returns True when comment is already resolved (409 Conflict)."""
+    import urllib.error
+    adapter = make_adapter()
+
+    def fake_urlopen(req):
+        if "/resolve" in req.full_url:
+            raise urllib.error.HTTPError(url=req.full_url, code=409, msg="Conflict", hdrs=None, fp=None)
+        return mock_response({"id": 999})
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        result = adapter.resolve_inline_comment(
+            pr_id=42, comment_id="77", reply_body="Issue resolved."
+        )
+
+    assert result is True
+
+
+def test_resolve_inline_comment_returns_false_when_resolve_fails() -> None:
+    """resolve_inline_comment() returns False when the resolve endpoint fails (non-409)."""
+    import urllib.error
+    adapter = make_adapter()
+
+    def fake_urlopen(req):
+        if "/resolve" in req.full_url:
+            raise urllib.error.HTTPError(url=req.full_url, code=500, msg="Server Error", hdrs=None, fp=None)
+        return mock_response({"id": 999})
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        result = adapter.resolve_inline_comment(
+            pr_id=42, comment_id="77", reply_body="Issue resolved."
+        )
+
+    assert result is False
 
 
 def test_resolve_inline_comment_returns_false_on_error() -> None:
-    """resolve_inline_comment() returns False when the API call fails."""
+    """resolve_inline_comment() returns False when the reply POST fails."""
     import urllib.error
     adapter = make_adapter()
     with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(

@@ -1954,9 +1954,10 @@ def test_respond_reason_missing_posts_fallback_when_reply_draft_empty(tmp_path) 
 
     instance.post_reply.assert_called_once()
     posted_body = instance.post_reply.call_args[0][5]
-    # Must contain a human-readable message, not just the sentinel
-    assert _SENTINEL in posted_body
-    assert posted_body.strip() != _SENTINEL  # more than just the sentinel
+    # Must contain a human-readable message, not just the sentinel.
+    # reason_missing now uses revue:rm sentinel (not revue:ack).
+    assert _RM_SENTINEL in posted_body
+    assert posted_body.strip() != _RM_SENTINEL  # more than just the sentinel
 
 
 # ---------------------------------------------------------------------------
@@ -2074,3 +2075,280 @@ def test_respond_does_not_resolve_ack_only_already_handled(tmp_path) -> None:
 
     instance.resolve_comment.assert_not_called()
     instance.post_reply.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# REVUE-173: Sentinel registry (SentinelKind enum + _SENTINEL_MAP)
+# ---------------------------------------------------------------------------
+
+_RM_SENTINEL = "[//]: # (revue:rm)"
+_NOT_ACK_SENTINEL = "[//]: # (revue:not_ack)"
+
+
+def test_sentinel_map_contains_exactly_four_sentinels() -> None:
+    """_SENTINEL_MAP must contain exactly the four expected sentinel strings."""
+    from revue.comments.service import SentinelKind, _SENTINEL_MAP
+    assert set(_SENTINEL_MAP.keys()) == {
+        "[//]: # (revue:ack)",
+        "[//]: # (revue:resolved)",
+        "[//]: # (revue:rm)",
+        "[//]: # (revue:not_ack)",
+    }
+    assert _SENTINEL_MAP["[//]: # (revue:ack)"] is SentinelKind.TERMINAL
+    assert _SENTINEL_MAP["[//]: # (revue:resolved)"] is SentinelKind.TERMINAL
+    assert _SENTINEL_MAP["[//]: # (revue:rm)"] is SentinelKind.NON_TERMINAL
+    assert _SENTINEL_MAP["[//]: # (revue:not_ack)"] is SentinelKind.NON_TERMINAL
+
+
+def test_sentinel_kind_composite_reply_returns_first_match() -> None:
+    """When both revue:ack and revue:resolved appear (terminal decision format), TERMINAL is returned."""
+    from revue.comments.service import SentinelKind, get_sentinel_kind
+    composite = f"Won't fix.\n\n{_SENTINEL}\n{_RESOLVED_SENTINEL}"
+    assert get_sentinel_kind(composite) is SentinelKind.TERMINAL
+
+
+def test_sentinel_kind_terminal_for_revue_ack() -> None:
+    """get_sentinel_kind() returns TERMINAL for text containing revue:ack."""
+    from revue.comments.service import SentinelKind, get_sentinel_kind
+    assert get_sentinel_kind(f"Some reply.\n\n{_SENTINEL}") is SentinelKind.TERMINAL
+
+
+def test_sentinel_kind_terminal_for_revue_resolved() -> None:
+    """get_sentinel_kind() returns TERMINAL for text containing revue:resolved."""
+    from revue.comments.service import SentinelKind, get_sentinel_kind
+    assert get_sentinel_kind(f"Won't fix.\n\n{_SENTINEL}\n{_RESOLVED_SENTINEL}") is SentinelKind.TERMINAL
+
+
+def test_sentinel_kind_non_terminal_for_revue_rm() -> None:
+    """get_sentinel_kind() returns NON_TERMINAL for text containing revue:rm."""
+    from revue.comments.service import SentinelKind, get_sentinel_kind
+    assert get_sentinel_kind(f"Please give a reason.\n\n{_RM_SENTINEL}") is SentinelKind.NON_TERMINAL
+
+
+def test_sentinel_kind_non_terminal_for_revue_not_ack() -> None:
+    """get_sentinel_kind() returns NON_TERMINAL for text containing revue:not_ack."""
+    from revue.comments.service import SentinelKind, get_sentinel_kind
+    assert get_sentinel_kind(f"Finding still applies.\n\n{_NOT_ACK_SENTINEL}") is SentinelKind.NON_TERMINAL
+
+
+def test_sentinel_kind_none_for_plain_text() -> None:
+    """get_sentinel_kind() returns None for text with no sentinel."""
+    from revue.comments.service import get_sentinel_kind
+    assert get_sentinel_kind("Just a normal developer reply.") is None
+
+
+def test_sentinel_is_last_true_for_any_sentinel_kind() -> None:
+    """_sentinel_is_last() returns True for any text containing any sentinel in _SENTINEL_MAP."""
+    from revue.comments.service import _sentinel_is_last
+    assert _sentinel_is_last(f"text\n\n{_SENTINEL}") is True
+    assert _sentinel_is_last(f"text\n\n{_RESOLVED_SENTINEL}") is True
+    assert _sentinel_is_last(f"text\n\n{_RM_SENTINEL}") is True
+    assert _sentinel_is_last(f"text\n\n{_NOT_ACK_SENTINEL}") is True
+    assert _sentinel_is_last("plain reply — no sentinel") is False
+
+
+def test_terminal_is_last_only_for_terminal_kind() -> None:
+    """_terminal_is_last() returns True only for terminal sentinels."""
+    from revue.comments.service import _terminal_is_last
+    assert _terminal_is_last(f"text\n\n{_SENTINEL}") is True
+    assert _terminal_is_last(f"text\n\n{_RESOLVED_SENTINEL}") is True
+    assert _terminal_is_last(f"text\n\n{_RM_SENTINEL}") is False
+    assert _terminal_is_last(f"text\n\n{_NOT_ACK_SENTINEL}") is False
+    assert _terminal_is_last("no sentinel") is False
+
+
+# ---------------------------------------------------------------------------
+# REVUE-173: reason_missing and not_acknowledged use distinct sentinels
+# ---------------------------------------------------------------------------
+
+def test_reason_missing_posts_revue_rm_sentinel(tmp_path) -> None:
+    """reason_missing reply must end with revue:rm, not revue:ack."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[], patterns_to_disallow=[], state_updates=[],
+        decisions=[{"fingerprint": "101", "decision": "reason_missing", "reply_draft": "Please clarify."}],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            _c(101, body=_FINDING_BODY_S),
+            _c(201, parent_id=101, body="won't fix"),
+        ]
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path), ai_client=MagicMock(),
+            bitbucket_username="u", bitbucket_app_password="p",
+            repo_owner="owner", repo_name="repo",
+        )
+        svc.respond(result, 1)
+
+    instance.post_reply.assert_called_once()
+    posted = instance.post_reply.call_args[0][5]
+    assert _RM_SENTINEL in posted
+    assert _SENTINEL not in posted
+
+
+def test_not_acknowledged_posts_revue_not_ack_sentinel(tmp_path) -> None:
+    """not_acknowledged reply must end with revue:not_ack, not revue:ack."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[], patterns_to_disallow=[], state_updates=[],
+        decisions=[{"fingerprint": "101", "decision": "not_acknowledged", "reply_draft": "This finding still applies."}],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            _c(101, body=_FINDING_BODY_S),
+            _c(201, parent_id=101, body="(no dev reply)"),
+        ]
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path), ai_client=MagicMock(),
+            bitbucket_username="u", bitbucket_app_password="p",
+            repo_owner="owner", repo_name="repo",
+        )
+        svc.respond(result, 1)
+
+    instance.post_reply.assert_called_once()
+    posted = instance.post_reply.call_args[0][5]
+    assert _NOT_ACK_SENTINEL in posted
+    assert _SENTINEL not in posted
+
+
+# ---------------------------------------------------------------------------
+# REVUE-173: Idempotency guard covers all sentinels (AC8)
+# ---------------------------------------------------------------------------
+
+def test_idempotency_guard_recognises_all_sentinels(tmp_path) -> None:
+    """respond() must skip re-posting when the last bot reply contains any sentinel."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    for sentinel in (_SENTINEL, _RESOLVED_SENTINEL, _RM_SENTINEL, _NOT_ACK_SENTINEL):
+        result = ClassificationResult(
+            patterns_to_allow=[], patterns_to_disallow=[], state_updates=[],
+            decisions=[{"fingerprint": "101", "decision": "reason_missing", "reply_draft": "Please clarify."}],
+        )
+        with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+            instance = MockAdapter.return_value
+            instance.get_all_pr_comments.return_value = [
+                _c(101, body=_FINDING_BODY_S),
+                _c(201, parent_id=101, body="won't fix"),
+                _c(202, parent_id=101, body=f"Bot reply.\n\n{sentinel}"),
+            ]
+            svc = WontFixReplyService(
+                repo_path=str(tmp_path), ai_client=MagicMock(),
+                bitbucket_username="u", bitbucket_app_password="p",
+                repo_owner="owner", repo_name="repo",
+            )
+            svc.respond(result, 1)
+        if instance.post_reply.called:
+            pytest.fail(f"Should not post when last reply has {sentinel!r}")
+
+
+def test_no_duplicate_reply_when_sentinel_is_last(tmp_path) -> None:
+    """When last bot reply has revue:rm or revue:not_ack, no new reply posted (AC8)."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    for sentinel in (_RM_SENTINEL, _NOT_ACK_SENTINEL):
+        result = ClassificationResult(
+            patterns_to_allow=[], patterns_to_disallow=[], state_updates=[],
+            decisions=[{"fingerprint": "101", "decision": "reason_missing", "reply_draft": "..."}],
+        )
+        with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+            instance = MockAdapter.return_value
+            instance.get_all_pr_comments.return_value = [
+                _c(101, body=_FINDING_BODY_S),
+                _c(201, parent_id=101, body="won't fix"),
+                _c(202, parent_id=101, body=f"Please clarify.\n\n{sentinel}"),
+            ]
+            svc = WontFixReplyService(
+                repo_path=str(tmp_path), ai_client=MagicMock(),
+                bitbucket_username="u", bitbucket_app_password="p",
+                repo_owner="owner", repo_name="repo",
+            )
+            svc.respond(result, 1)
+        if instance.post_reply.called:
+            pytest.fail(f"Duplicate reply guard failed for {sentinel!r}")
+
+
+def test_dev_reply_after_revue_rm_resets_already_handled(tmp_path) -> None:
+    """Developer reply after revue:rm → already_handled=False on next cycle (AC5)."""
+    from revue.comments.platform_adapter import BitbucketAdapter
+
+    mock_adapter = MagicMock(spec=BitbucketAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix"),
+        _c(202, parent_id=101, body=f"Please give a reason.\n\n{_RM_SENTINEL}"),
+        _c(203, parent_id=101, body="Because it is a pre-existing constraint in the framework."),
+    ]
+
+    svc = _sentinel_svc(tmp_path, mock_adapter)
+    threads = svc._collect_threads_with_replies(1)
+
+    assert len(threads) == 1
+    assert threads[0]["already_handled"] is False
+
+
+def test_backward_compat_revue_ack_still_terminal(tmp_path) -> None:
+    """revue:ack from an old reason_missing post is still recognised as sentinel-last (AC4)."""
+    from revue.comments.platform_adapter import BitbucketAdapter
+
+    mock_adapter = MagicMock(spec=BitbucketAdapter)
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix"),
+        _c(202, parent_id=101, body=f"Please give a reason.\n\n{_SENTINEL}"),
+    ]
+
+    svc = _sentinel_svc(tmp_path, mock_adapter)
+    threads = svc._collect_threads_with_replies(1)
+
+    assert len(threads) == 1
+    assert threads[0]["already_handled"] is True
+
+
+def test_terminal_decisions_still_use_revue_ack(tmp_path) -> None:
+    """allowed_pattern reply contains revue:ack; revue:rm and revue:not_ack are absent (AC6)."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+
+    result = ClassificationResult(
+        patterns_to_allow=[{"pattern": "rate-limit sleep", "rationale": "pre-existing"}],
+        patterns_to_disallow=[],
+        state_updates=[{"fingerprint": "101", "file_path": "a.py", "decision": "allowed_pattern"}],
+        decisions=[{
+            "fingerprint": "101", "decision": "allowed_pattern",
+            "pattern": "rate-limit sleep", "rationale": "pre-existing",
+            "reply_draft": "Noted — lessons recorded.",
+        }],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            _c(101, body=_FINDING_BODY_S),
+            _c(201, parent_id=101, body="won't fix — pre-existing"),
+        ]
+        instance.ensure_lessons_pr.return_value = "https://bitbucket.org/ws/repo/pull-requests/9"
+        instance.get_pr_template.return_value = None
+
+        with patch("revue.comments.service.WontFixReplyService._append_pattern_to_config"):
+            svc = WontFixReplyService(
+                repo_path=str(tmp_path), ai_client=MagicMock(),
+                bitbucket_username="u", bitbucket_app_password="p",
+                repo_owner="owner", repo_name="repo",
+            )
+            svc.respond(result, 1)
+
+    instance.post_reply.assert_called_once()
+    posted = instance.post_reply.call_args[0][5]
+    assert _SENTINEL in posted
+    assert _RM_SENTINEL not in posted
+    assert _NOT_ACK_SENTINEL not in posted

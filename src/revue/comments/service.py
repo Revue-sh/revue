@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
@@ -354,6 +355,34 @@ See changes to `.revue.yml` for added allowed/disallowed patterns.
 """
 
 
+class SentinelKind(Enum):
+    TERMINAL = "terminal"
+    NON_TERMINAL = "non_terminal"
+
+
+_SENTINEL_MAP: dict[str, SentinelKind] = {
+    "[//]: # (revue:ack)":      SentinelKind.TERMINAL,
+    "[//]: # (revue:resolved)": SentinelKind.TERMINAL,
+    "[//]: # (revue:rm)":       SentinelKind.NON_TERMINAL,
+    "[//]: # (revue:not_ack)":  SentinelKind.NON_TERMINAL,
+}
+
+
+def get_sentinel_kind(text: str) -> "SentinelKind | None":
+    for sentinel, kind in _SENTINEL_MAP.items():
+        if sentinel in text:
+            return kind
+    return None
+
+
+def _sentinel_is_last(text: str) -> bool:
+    return get_sentinel_kind(text) is not None
+
+
+def _terminal_is_last(text: str) -> bool:
+    return get_sentinel_kind(text) is SentinelKind.TERMINAL
+
+
 class WontFixReplyService:
     """Orchestrate won't-fix reply tracking for Bitbucket PRs (REVUE-112).
 
@@ -514,12 +543,12 @@ class WontFixReplyService:
         result = self.classify(pr_number)
         self.respond(result, pr_number)
 
-    # Appended to every bot reply so respond() can detect it already ran on a thread.
-    _BOT_ACK_SENTINEL = "[//]: # (revue:ack)"
-    # Appended in addition to _BOT_ACK_SENTINEL for terminal decisions (wont-fix,
-    # acknowledged_fixed, acknowledged_deferred). Allows respond() to call
-    # resolve_comment on a re-run if the thread was not resolved on the first pass.
-    _BOT_RESOLVED_SENTINEL = "[//]: # (revue:resolved)"
+    # Sentinel constants — string literals live here and in _SENTINEL_MAP only.
+    # Detection code uses get_sentinel_kind() / _sentinel_is_last() / _terminal_is_last().
+    _BOT_ACK_SENTINEL = "[//]: # (revue:ack)"          # terminal decisions
+    _BOT_RESOLVED_SENTINEL = "[//]: # (revue:resolved)" # terminal decisions (enables resolve_comment retry)
+    _BOT_RM_SENTINEL = "[//]: # (revue:rm)"             # non-terminal: reason_missing
+    _BOT_NOT_ACK_SENTINEL = "[//]: # (revue:not_ack)"   # non-terminal: not_acknowledged
 
     def respond(self, result: "ClassificationResult", pr_number: int) -> None:
         """I/O phase: act on the classified decisions (REVUE-112 Phase 2, AC14).
@@ -598,7 +627,7 @@ class WontFixReplyService:
             # will re-enable re-evaluation on the next classify/respond cycle.
             existing_replies = thread_entry.get("replies", [])
             last_reply = existing_replies[-1] if existing_replies else ""
-            if self._BOT_ACK_SENTINEL in last_reply or self._BOT_RESOLVED_SENTINEL in last_reply:
+            if _sentinel_is_last(last_reply):
                 print(
                     f"[revue]   💬  respond(): skip {thread_entry.get('platform_comment_id')} ({dec}) — already acknowledged",
                     flush=True,
@@ -710,7 +739,7 @@ class WontFixReplyService:
                         pr_number,
                         comment_id,
                         thread_id,
-                        reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}",
+                        reply_draft + f"\n\n{self._BOT_RM_SENTINEL}",
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
@@ -728,7 +757,7 @@ class WontFixReplyService:
                         pr_number,
                         comment_id,
                         thread_id,
-                        reply_draft + f"\n\n{self._BOT_ACK_SENTINEL}",
+                        reply_draft + f"\n\n{self._BOT_NOT_ACK_SENTINEL}",
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
@@ -935,13 +964,11 @@ class WontFixReplyService:
             # If the bot's sentinel is in the LAST reply, no new developer input has
             # arrived since we last responded — skip the AI call for this thread.
             last_reply_text = reply_texts[-1] if reply_texts else ""
-            sentinel_is_last = bool(reply_texts) and (
-                self._BOT_ACK_SENTINEL in last_reply_text
-                or self._BOT_RESOLVED_SENTINEL in last_reply_text
-            )
-            # Terminal flag: the last reply contains revue:resolved, meaning a
-            # definitive won't-fix decision was posted. respond() will attempt to
-            # resolve the thread on the next run if it wasn't resolved already.
+            sentinel_is_last = bool(reply_texts) and _sentinel_is_last(last_reply_text)
+            # Terminal flag: only True if revue:resolved is present, indicating a final
+            # decision. respond() will attempt to resolve the thread on the next run if
+            # it wasn't resolved already. (Not True for revue:ack alone, which may be
+            # asking for clarification and awaiting developer input.)
             terminal_is_last = bool(reply_texts) and self._BOT_RESOLVED_SENTINEL in last_reply_text
             threads.append({
                 "fingerprint": fp,
