@@ -104,6 +104,25 @@ noise_filters:
       reason: Nuitka''s `--module` flag has a documented fatal error when passed an
       `__init__.py` path. The sequential nature of the build eliminates the race condition
       concern. This is an intentional, correct workaround for a tool limitation.'
+  - pattern: Future-dated verification timestamps in architecture documentation
+    rationale: 'The developer has acknowledged the finding and provided a clear, specific
+      reason: the temporal order reflects the actual workflow (implementation precedes
+      verification). This is an intentional, legitimate choice for documenting staged
+      work in architecture records.'
+  - pattern: Fence detection startswith guard is sufficient because valid JSON never
+      begins with triple-backtick
+    rationale: In _parse_thread_decisions, the check clean.startswith("```") creates
+      exhaustive, non-overlapping branches — valid JSON starts with { or [, never
+      with ```. Any finding claiming the plain-JSON path could be triggered for a
+      fenced response is a false positive. Test coverage confirms the plain-JSON path
+      is unaffected.
+  - pattern: Forward scan for closing fence is safe because JSON encoding escapes
+      backtick sequences in string values
+    rationale: In _parse_thread_decisions, the close_idx forward scan identifies
+      a bare ``` line as the closing fence. JSON string encoding guarantees that
+      triple-backticks inside string values are escaped, never emitted as raw characters.
+      A bare ``` line can therefore only be a fence marker, making the scan unambiguous
+      and correct.
   disable: []
   disallowed_patterns:
   - pattern: TODO comments in production code
