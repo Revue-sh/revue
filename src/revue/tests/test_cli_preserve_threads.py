@@ -947,3 +947,337 @@ def test_revision_increments_from_live_comment_when_no_local_state(tmp_path) -> 
     assert "Review #4" in update_body, (
         f"Expected 'Review #4' in update body. Got: {update_body[:300]}"
     )
+
+
+# ===========================================================================
+# REVUE-172: Same-line finding merging
+# ===========================================================================
+
+def test_merge_three_findings_same_line(tmp_path) -> None:
+    """3 agents flag app.py:42 — _run_per_issue_dedup posts exactly 1 comment."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    findings = [
+        {"severity": "high", "issue": "Unsafe deser", "line": 42, "recommendation": "Use json.loads"},
+        {"severity": "medium", "issue": "Missing hint", "line": 42, "recommendation": "Add annotation"},
+        {"severity": "low", "issue": "Magic number", "line": 42, "recommendation": "Extract constant"},
+    ]
+    review_results = [
+        _FakeReviewResult("app.py", _make_review_response([f])) for f in findings
+    ]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "merged-1"
+
+    store = PerPRCommentStore(tmp_path)
+    posted, skipped, _tf, _pt = _run_per_issue_dedup(
+        mock_adapter, 42, "bitbucket", review_results, {}, store
+    )
+
+    assert mock_adapter.post_review_comment.call_count == 1, (
+        "3 same-line findings must produce exactly 1 post call"
+    )
+    assert posted == 1
+    assert skipped == 0
+
+
+def test_merged_comment_uses_highest_severity(tmp_path) -> None:
+    """HIGH + MEDIUM + LOW findings on same line → merged badge shows HIGH."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    findings = [
+        {"severity": "low", "issue": "Low issue", "line": 42, "recommendation": "Fix low"},
+        {"severity": "high", "issue": "High issue", "line": 42, "recommendation": "Fix high"},
+        {"severity": "medium", "issue": "Med issue", "line": 42, "recommendation": "Fix med"},
+    ]
+    review_results = [
+        _FakeReviewResult("app.py", _make_review_response([f])) for f in findings
+    ]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "merged-2"
+
+    store = PerPRCommentStore(tmp_path)
+    _run_per_issue_dedup(mock_adapter, 42, "bitbucket", review_results, {}, store)
+
+    body = mock_adapter.post_review_comment.call_args[1]["body"]
+    header = body.splitlines()[0]
+    assert "[HIGH]" in header, f"Header must show [HIGH] badge, got: {header}"
+    assert "🔴" in header, "HIGH emoji must appear in header"
+
+
+def test_merged_comment_format_body(tmp_path) -> None:
+    """Merged body: header with finding count + numbered list with [SEVERITY] and suggestion."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    findings = [
+        {"severity": "high", "issue": "Unsafe deser", "line": 42, "recommendation": "Use json.loads"},
+        {"severity": "medium", "issue": "Missing hint", "line": 42, "recommendation": "Add annotation"},
+        {"severity": "low", "issue": "Magic number", "line": 42, "recommendation": "Extract constant"},
+    ]
+    review_results = [
+        _FakeReviewResult("app.py", _make_review_response([f])) for f in findings
+    ]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "merged-3"
+
+    store = PerPRCommentStore(tmp_path)
+    _run_per_issue_dedup(mock_adapter, 42, "bitbucket", review_results, {}, store)
+
+    body = mock_adapter.post_review_comment.call_args[1]["body"]
+    assert "3 findings" in body.splitlines()[0], "Header must state finding count"
+    assert "[HIGH] Unsafe deser — Use json.loads" in body
+    assert "[MEDIUM] Missing hint — Add annotation" in body
+    assert "[LOW] Magic number — Extract constant" in body
+    assert "[//]: # (revue:fp:" in body
+
+
+def test_merged_comment_fingerprint_unchanged(tmp_path) -> None:
+    """Fingerprint in merged comment body = gen_fingerprint(file, line, diff_content)."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.fingerprint import fingerprint as gen_fp
+    from revue.comments.json_store import PerPRCommentStore
+
+    findings = [
+        {"severity": "high", "issue": "Issue A", "line": 42, "recommendation": "Fix A"},
+        {"severity": "medium", "issue": "Issue B", "line": 42, "recommendation": "Fix B"},
+    ]
+    review_results = [
+        _FakeReviewResult("app.py", _make_review_response([f])) for f in findings
+    ]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "merged-4"
+
+    store = PerPRCommentStore(tmp_path)
+    _run_per_issue_dedup(mock_adapter, 42, "bitbucket", review_results, {}, store)
+
+    expected_fp = gen_fp("app.py", 42, "")
+    body = mock_adapter.post_review_comment.call_args[1]["body"]
+    assert f"[//]: # (revue:fp:{expected_fp})" in body, (
+        "Merged comment must embed gen_fingerprint sentinel unchanged"
+    )
+    assert mock_adapter.post_review_comment.call_count == 1, (
+        "Must post exactly 1 comment for 2 same-line findings"
+    )
+
+
+def test_dedup_skips_line_on_rerun(tmp_path) -> None:
+    """On second run, merged comment fp in merged_prior → line skipped, no new post."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.fingerprint import fingerprint as gen_fp
+    from revue.comments.json_store import PerPRCommentStore
+
+    findings = [
+        {"severity": "high", "issue": "Issue A", "line": 42, "recommendation": "Fix A"},
+        {"severity": "medium", "issue": "Issue B", "line": 42, "recommendation": "Fix B"},
+    ]
+    review_results = [
+        _FakeReviewResult("app.py", _make_review_response([f])) for f in findings
+    ]
+
+    fp = gen_fp("app.py", 42, "")
+    store = PerPRCommentStore(tmp_path)
+    store.save_finding("bitbucket", 42, "app.py", fp, "prior-comment-id", 42, "prior body")
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+
+    _run_per_issue_dedup(mock_adapter, 42, "bitbucket", review_results, {}, store)
+
+    mock_adapter.post_review_comment.assert_not_called()
+
+
+def test_single_finding_no_regression(tmp_path) -> None:
+    """Single finding on a unique line posts with the existing format — no merged header."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    finding = {"severity": "high", "issue": "SQL injection", "line": 10,
+               "details": "Unsanitised", "recommendation": "Parameterise"}
+    review_results = [_FakeReviewResult("app.py", _make_review_response([finding]))]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "single-1"
+
+    store = PerPRCommentStore(tmp_path)
+    posted, skipped, _tf, _pt = _run_per_issue_dedup(
+        mock_adapter, 42, "bitbucket", review_results, {}, store
+    )
+
+    assert posted == 1
+    body = mock_adapter.post_review_comment.call_args[1]["body"]
+    assert "findings on this line" not in body, "Single finding must not use merged format"
+    assert "**🔴 [HIGH] SQL injection**" in body
+
+
+def test_two_findings_different_severity_merged(tmp_path) -> None:
+    """HIGH + LOW findings on same line appear in one comment with both items listed."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    findings = [
+        {"severity": "high", "issue": "XSS", "line": 7, "recommendation": "Escape output"},
+        {"severity": "low", "issue": "Typo", "line": 7, "recommendation": "Fix spelling"},
+    ]
+    review_results = [
+        _FakeReviewResult("api.py", _make_review_response([f])) for f in findings
+    ]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "merged-5"
+
+    store = PerPRCommentStore(tmp_path)
+    posted, _sk, _tf, _pt = _run_per_issue_dedup(
+        mock_adapter, 42, "bitbucket", review_results, {}, store
+    )
+
+    assert mock_adapter.post_review_comment.call_count == 1
+    assert posted == 1
+    body = mock_adapter.post_review_comment.call_args[1]["body"]
+    assert "[HIGH] XSS" in body
+    assert "[LOW] Typo" in body
+
+
+def test_grouping_key_is_file_and_line_only(tmp_path) -> None:
+    """Same file+line with any combination of severities always merges into 1 comment."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    findings = [
+        {"severity": "high", "issue": "Issue H", "line": 99, "recommendation": "Fix H"},
+        {"severity": "high", "issue": "Issue H2", "line": 99, "recommendation": "Fix H2"},
+    ]
+    review_results = [
+        _FakeReviewResult("utils.py", _make_review_response([f])) for f in findings
+    ]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "merged-6"
+
+    store = PerPRCommentStore(tmp_path)
+    _run_per_issue_dedup(mock_adapter, 42, "bitbucket", review_results, {}, store)
+
+    assert mock_adapter.post_review_comment.call_count == 1, (
+        "Same file+line must merge regardless of severity"
+    )
+
+
+def test_merged_three_findings_total_findings_per_finding(tmp_path) -> None:
+    """3 HIGH findings on same line → total_findings['high'] == 3 (per-finding counting)."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    findings = [
+        {"severity": "high", "issue": f"Issue {i}", "line": 5, "recommendation": f"Fix {i}"}
+        for i in range(3)
+    ]
+    review_results = [
+        _FakeReviewResult("main.py", _make_review_response([f])) for f in findings
+    ]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "merged-7"
+
+    store = PerPRCommentStore(tmp_path)
+    _posted, _skipped, total_findings, _pt = _run_per_issue_dedup(
+        mock_adapter, 42, "bitbucket", review_results, {}, store
+    )
+
+    assert total_findings["high"] == 3, (
+        "Merging must not reduce total_findings count — 3 HIGH findings remain 3 HIGH"
+    )
+
+
+def test_merged_comment_no_trailing_dash_when_no_rec(tmp_path) -> None:
+    """Merged list entry omits the em-dash when recommendation is empty or absent."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    findings = [
+        {"severity": "high", "issue": "No-rec issue", "line": 3},
+        {"severity": "medium", "issue": "With-rec issue", "line": 3, "recommendation": "Fix it"},
+    ]
+    review_results = [
+        _FakeReviewResult("app.py", _make_review_response([f])) for f in findings
+    ]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "merged-8"
+
+    store = PerPRCommentStore(tmp_path)
+    _run_per_issue_dedup(mock_adapter, 42, "bitbucket", review_results, {}, store)
+
+    body = mock_adapter.post_review_comment.call_args[1]["body"]
+    assert "[HIGH] No-rec issue —" not in body, "No trailing em-dash when recommendation is absent"
+    assert "[HIGH] No-rec issue" in body
+    assert "[MEDIUM] With-rec issue — Fix it" in body
+
+
+def test_merge_single_review_result_two_findings_same_line(tmp_path) -> None:
+    """Two findings on the same line from a single review_result merge into one comment."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    two_findings = [
+        {"severity": "high", "issue": "Issue A", "line": 15, "recommendation": "Fix A"},
+        {"severity": "low", "issue": "Issue B", "line": 15, "recommendation": "Fix B"},
+    ]
+    review_results = [_FakeReviewResult("single.py", _make_review_response(two_findings))]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "merged-9"
+
+    store = PerPRCommentStore(tmp_path)
+    posted, skipped, _tf, _pt = _run_per_issue_dedup(
+        mock_adapter, 42, "bitbucket", review_results, {}, store
+    )
+
+    assert mock_adapter.post_review_comment.call_count == 1, (
+        "Two same-line findings in one review_result must still merge"
+    )
+    assert posted == 1
+    body = mock_adapter.post_review_comment.call_args[1]["body"]
+    assert "[HIGH] Issue A" in body
+    assert "[LOW] Issue B" in body
+
+
+def test_two_groups_different_lines_posts_twice(tmp_path) -> None:
+    """Findings on two distinct lines produce two separate inline comments."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    findings = [
+        {"severity": "high", "issue": "Line-5 issue", "line": 5, "recommendation": "Fix 5"},
+        {"severity": "medium", "issue": "Line-10 issue", "line": 10, "recommendation": "Fix 10"},
+    ]
+    review_results = [_FakeReviewResult("app.py", _make_review_response(findings))]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.side_effect = ["post-line5", "post-line10"]
+
+    store = PerPRCommentStore(tmp_path)
+    posted, skipped, _tf, _pt = _run_per_issue_dedup(
+        mock_adapter, 42, "bitbucket", review_results, {}, store
+    )
+
+    assert mock_adapter.post_review_comment.call_count == 2, (
+        "Findings on two distinct lines must produce two separate comments"
+    )
+    assert posted == 2
+    assert skipped == 0

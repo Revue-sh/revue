@@ -812,6 +812,39 @@ def _build_api_fingerprint_map(adapter, pr_num: int) -> dict[str, dict]:
     return result
 
 
+def _get_highest_severity(severities: list[str]) -> str:
+    """Return the highest severity from a list, using SEVERITY_ORDER."""
+    for sev in SEVERITY_ORDER:
+        if sev in severities:
+            return sev
+    return "info"
+
+
+
+def _build_merged_comment_body(group_items: list[tuple[str, str, str]], fp: str) -> str:
+    """Build merged comment body for N>=2 findings on same line.
+
+    group_items: list of (sev, issue, rec) tuples.
+    Returns: formatted body with header + numbered list.
+    """
+    severities = [sev for sev, _, _ in group_items]
+    highest = _get_highest_severity(severities)
+    emoji = SEVERITY_EMOJI.get(highest, "⚪")
+
+    header = f"**{emoji} [{highest.upper()}] {len(group_items)} findings on this line**"
+    lines = [header]
+
+    for i, (sev, issue, rec) in enumerate(group_items, start=1):
+        sev_tag = sev.upper()
+        if rec:
+            lines.append(f"{i}. [{sev_tag}] {issue} — {rec}")
+        else:
+            lines.append(f"{i}. [{sev_tag}] {issue}")
+
+    body = "\n".join(lines) + f"\n\n[//]: # (revue:fp:{fp})"
+    return body
+
+
 def _run_per_issue_dedup(
     adapter,
     pr_num: int,
@@ -860,6 +893,10 @@ def _run_per_issue_dedup(
     # Hunk fps seen this cycle — used by AC5 to detect fixed findings.
     seen_hunk_fps: set[str] = set()
 
+    # Phase 1: Collect findings, compute fingerprints, add to seen_hunk_fps, group by line.
+    # grouping tuple: (file_path, line, sev, issue, rec, details, cat, finding_dict)
+    findings_to_process: list[tuple[str, int, str, str, str, str, str, dict]] = []
+
     for rr in review_results:
         if rr.error or not rr.response:
             continue
@@ -872,52 +909,65 @@ def _run_per_issue_dedup(
 
         for f in findings:
             sev, issue, details, rec, cat, line = _extract_finding_fields(f)
-            emoji = SEVERITY_EMOJI.get(sev, "⚪")
 
             if not issue and not details:
                 continue
 
             fp = gen_fingerprint(rr.file_path, line, diff_content)
+            # Always add to seen_hunk_fps — even if deduped later, needed for AC5 auto-resolve.
             seen_hunk_fps.add(fp)
 
-            # AC1/AC2: skip if already posted in a previous review cycle.
-            # Check diff-based fp first (most precise); fall back to location-based
-            # fp (file+line only, no diff) which matches API-derived fingerprints
-            # from _apply_location_strategy that lack diff context.
-            #
-            # ORDER MATTERS: the total_findings increment is BELOW this block so
-            # that resolved-prior findings are excluded from the summary count.
-            # See test_resolved_prior_excluded_from_summary_count for the guard.
-            matched_entry = merged_prior.get(fp) or merged_prior.get(
-                gen_fingerprint(rr.file_path, line, "")
-            )
-            if matched_entry is not None:
-                if matched_entry.get("resolved", False):
-                    # Thread is resolved (won't-fix decision). Do NOT count toward
-                    # total_findings — the issue is already handled.
-                    previously_tracked += 1
-                else:
-                    # Open prior thread — still requires attention, keep in count.
-                    # Use the severity from the EXISTING comment (as visible in the UI),
-                    # not the current re-analysis: the AI may have changed its mind
-                    # between runs, but the user sees the original comment body.
-                    # API fingerprint entries store severity from _apply_sentinel_strategy;
-                    # local-store entries carry comment_body which we parse here.
-                    prior_sev = matched_entry.get("severity", "")
-                    if not prior_sev:
-                        cb = matched_entry.get("comment_body", "")
-                        sev_m = _FINDING_SEV_EXTRACT_RE.search(cb)
-                        prior_sev = sev_m.group(1).lower() if sev_m else sev
+            findings_to_process.append((rr.file_path, line, sev, issue, rec, details, cat, f))
+
+    # Phase 2: Group findings by (file_path, line) — REVUE-172 AC1.
+    groups: dict[tuple[str, int], list[tuple[str, str, str, str, str, dict]]] = {}
+    for file_path, line, sev, issue, rec, details, cat, f in findings_to_process:
+        key = (file_path, line)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append((sev, issue, rec, details, cat, f))
+
+    # Phase 3: For each group, check merged_prior once (per Jira note: grouping before dedup).
+    # Then post merged comment if new, or skip if deduped.
+    for (file_path, line), group_items in groups.items():
+        diff_content = diff_by_file.get(file_path, "")
+        fp = gen_fingerprint(file_path, line, diff_content)
+
+        # AC1/AC2: Check if line was already posted in a previous review cycle.
+        # Check diff-based fp first (most precise); fall back to location-based.
+        matched_entry = merged_prior.get(fp) or merged_prior.get(
+            gen_fingerprint(file_path, line, "")
+        )
+        if matched_entry is not None:
+            if matched_entry.get("resolved", False):
+                # Thread is resolved (won't-fix decision). Do NOT count findings — issue is handled.
+                previously_tracked += len(group_items)
+            else:
+                # Open prior thread — still requires attention. Count each finding.
+                # Use the severity from the EXISTING comment (as visible in the UI).
+                prior_sev = matched_entry.get("severity", "")
+                if not prior_sev:
+                    cb = matched_entry.get("comment_body", "")
+                    sev_m = _FINDING_SEV_EXTRACT_RE.search(cb)
+                    prior_sev = sev_m.group(1).lower() if sev_m else ""
+                # Count each finding in the group using prior severity.
+                for sev, issue, rec, details, cat, f in group_items:
                     count_sev = prior_sev if prior_sev in total_findings else sev
                     if count_sev in total_findings:
                         total_findings[count_sev] += 1
-                skipped += 1
-                continue
+            skipped += len(group_items)
+            continue
 
-            # New finding — count it toward the summary total and post it.
+        # New group — count all findings toward summary total.
+        for sev, issue, rec, details, cat, f in group_items:
             if sev in total_findings:
                 total_findings[sev] += 1
 
+        # Build merged or single comment body — REVUE-172 AC3/AC6.
+        if len(group_items) == 1:
+            # Single finding — use existing format with category and details.
+            sev, issue, rec, details, cat, f = group_items[0]
+            emoji = SEVERITY_EMOJI.get(sev, "⚪")
             body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
             if cat:
                 display_cat = cat.replace('-', ' ').title()
@@ -928,43 +978,47 @@ def _run_per_issue_dedup(
                 body_parts.append(f"\n{details}")
             if rec:
                 body_parts.append(f"\n> 💡 **Recommendation:** {rec}")
-            # Sentinel embedded so future runs can deduplicate without local store.
             body = "\n".join(body_parts) + f"\n\n[//]: # (revue:fp:{fp})"
+        else:
+            # Multiple findings — use merged format (REVUE-172 AC3).
+            group_tuple_list = [(sev, issue, rec) for sev, issue, rec, details, cat, f in group_items]
+            body = _build_merged_comment_body(group_tuple_list, fp)
 
-            if platform_str == "gitlab":
-                lc, resolved_line, old_ln = compute_gitlab_line_code(
-                    rr.file_path, diff_content, line
-                )
-                position = DiffPosition(
-                    file_path=rr.file_path,
-                    line_number=resolved_line,
-                    line_code=lc,
-                    new_line=resolved_line,
-                    old_line=old_ln if old_ln > 0 else None,
-                    side="RIGHT",
-                )
-            else:
-                position = adapter.resolve_position(rr.file_path, line, diff_content)
+        # Resolve position and post — same logic as before.
+        if platform_str == "gitlab":
+            lc, resolved_line, old_ln = compute_gitlab_line_code(
+                file_path, diff_content, line
+            )
+            position = DiffPosition(
+                file_path=file_path,
+                line_number=resolved_line,
+                line_code=lc,
+                new_line=resolved_line,
+                old_line=old_ln if old_ln > 0 else None,
+                side="RIGHT",
+            )
+        else:
+            position = adapter.resolve_position(file_path, line, diff_content)
 
-            # position=0 is the sentinel for "line outside diff hunks" on both
-            # GitHub (500) and Bitbucket (403). Skip rather than attempt to post.
-            if platform_str in ("github", "bitbucket") and position.position == 0:
-                skipped += 1
-                continue
+        # position=0 is the sentinel for "line outside diff hunks" on both
+        # GitHub (500) and Bitbucket (403). Skip rather than attempt to post.
+        if platform_str in ("github", "bitbucket") and position.position == 0:
+            skipped += len(group_items)
+            continue
 
-            comment_id = adapter.post_review_comment(pr_id=pr_num, position=position, body=body)
+        comment_id = adapter.post_review_comment(pr_id=pr_num, position=position, body=body)
 
-            if comment_id is not None:
-                posted += 1
-                dedup_store.save_finding(
-                    platform=platform_str,
-                    pr_number=pr_num,
-                    file_path=rr.file_path,
-                    fingerprint=fp,
-                    platform_comment_id=comment_id,
-                    line_number=line,
-                    comment_body=body,
-                )
+        if comment_id is not None:
+            posted += 1
+            dedup_store.save_finding(
+                platform=platform_str,
+                pr_number=pr_num,
+                file_path=file_path,
+                fingerprint=fp,
+                platform_comment_id=comment_id,
+                line_number=line,
+                comment_body=body,
+            )
 
     # AC5: auto-resolve findings absent from new review.
     # Use merged_prior so API-seeded entries (fresh CI) are also considered.

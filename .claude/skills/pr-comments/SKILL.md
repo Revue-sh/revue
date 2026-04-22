@@ -15,7 +15,7 @@ Fetch and display PR comments with reply threads from Bitbucket, GitHub, or GitL
 | GitHub | `GITHUB_TOKEN` | `cbscd/revue-test-github` |
 | GitLab | `GITLAB_TOKEN` | `urukia-group/revue-test-gitlab` |
 
-> **Bitbucket auth note:** GET (read) calls use `Bearer ${BITBUCKET_API_TOKEN}`. POST/PUT/DELETE (write) calls require basic auth: `-u "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}"`. Bearer returns 401 for writes.
+> **Bitbucket auth note:** Always use basic auth: `-u "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}"` for ALL calls (GET and write). Bearer token fails on Bitbucket Cloud even for read operations.
 
 ## Instructions
 
@@ -27,52 +27,19 @@ Always `source ~/.zshenv` before any curl call.
 
 ### Bitbucket
 
+Use the pre-approved scripts to avoid repeated Bash approval prompts:
+
+**Fetch a single comment:**
 ```bash
-source ~/.zshenv && curl -s \
-  -H "Authorization: Bearer ${BITBUCKET_API_TOKEN}" \
-  "https://api.bitbucket.org/2.0/repositories/cbscd/revue/pullrequests/42/comments?pagelen=100" | python3 -c "
-import json, sys
+/Volumes/LexarSSD/Projects/revue.io/.claude/skills/pr-comments/scripts/bb_get_comment.sh <comment_id> [pr_number] [repo]
+# Default pr_number: 78, repo: cbscd/revue
+# Example: bb_get_comment.sh 786361663 78
+```
 
-data = json.load(sys.stdin)
-comments = data.get('values', [])
-
-# Build thread map: id -> comment
-by_id = {c['id']: c for c in comments}
-
-# Top-level comments (no parent)
-roots = [c for c in comments if 'parent' not in c]
-replies = [c for c in comments if 'parent' in c]
-
-# Group replies by parent id
-from collections import defaultdict
-children = defaultdict(list)
-for r in replies:
-    children[r['parent']['id']].append(r)
-
-def disposition(text):
-    t = text.lower()
-    if 'won\\'t fix' in t or 'wont fix' in t: return 'WON\\'T FIX'
-    if 'false positive' in t: return 'FALSE POSITIVE'
-    if 'fixed' in t or 'fix:' in t: return 'FIXED'
-    return ''
-
-def fmt(c, indent=''):
-    user = c.get('user', {}).get('display_name', '?')
-    resolved = ' [RESOLVED]' if c.get('resolved') else ''
-    content = (c.get('content', {}).get('raw') or '')[:200]
-    disp = disposition(content)
-    disp_tag = f' [{disp}]' if disp else ''
-    print(f'{indent}#{c[\"id\"]} by {user}{resolved}{disp_tag}')
-    print(f'{indent}  {content[:160]}')
-
-print(f'Total comments: {len(comments)} ({len(roots)} top-level, {len(replies)} replies)')
-print()
-for root in sorted(roots, key=lambda x: x['id']):
-    fmt(root)
-    for reply in sorted(children.get(root['id'], []), key=lambda x: x['id']):
-        fmt(reply, indent='  → ')
-    print()
-"
+**Fetch all comments on a PR:**
+```bash
+/Volumes/LexarSSD/Projects/revue.io/.claude/skills/pr-comments/scripts/bb_get_comment.sh all <pr_number>
+# Example: bb_get_comment.sh all 78
 ```
 
 **Post a reply to a Bitbucket comment:**
