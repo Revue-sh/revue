@@ -2352,3 +2352,72 @@ def test_terminal_decisions_still_use_revue_ack(tmp_path) -> None:
     assert _SENTINEL in posted
     assert _RM_SENTINEL not in posted
     assert _NOT_ACK_SENTINEL not in posted
+
+
+# ---------------------------------------------------------------------------
+# REVUE-161: resolve_conversation — PR-level comments are resolved
+# ---------------------------------------------------------------------------
+
+def test_post_acknowledgement_reply_resolves_conversation(tmp_path) -> None:
+    """REVUE-161 T3.1: post_reply is followed by resolve_conversation for acknowledged decisions."""
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+    from revue.comments.json_store import PerPRCommentStore
+
+    # Pre-populate store with a finding
+    store = PerPRCommentStore(tmp_path)
+    store.save_finding(
+        platform="bitbucket",
+        pr_number=1,
+        file_path="src/sec.py",
+        fingerprint="101",
+        platform_comment_id="101",
+        line_number=10,
+        comment_body="Security issue",
+    )
+
+    result = ClassificationResult(
+        patterns_to_allow=[],
+        patterns_to_disallow=[],
+        state_updates=[{"fingerprint": "101", "file_path": "src/sec.py", "decision": "acknowledged_fixed"}],
+        decisions=[{
+            "fingerprint": "101",
+            "decision": "acknowledged_fixed",
+            "reply_draft": "Thanks for fixing this!",
+        }],
+    )
+
+    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
+        instance = MockAdapter.return_value
+        instance.get_all_pr_comments.return_value = [
+            {
+                "id": 101,
+                "inline": {"path": "src/sec.py", "to": 10},
+                "content": {"raw": "**🔴 [HIGH] Security issue"},
+            },
+            {
+                "id": 201,
+                "parent": {"id": 101},
+                "content": {"raw": "Fixed in latest commit"},
+            },
+        ]
+        instance.get_pr_template.return_value = None
+
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path),
+            ai_client=MagicMock(),
+            bitbucket_username="u",
+            bitbucket_app_password="p",
+            repo_owner="owner",
+            repo_name="repo",
+        )
+        svc.respond(result, 1)
+
+    # Both post_reply and resolve_conversation should be called
+    instance.post_reply.assert_called_once()
+    instance.resolve_conversation.assert_called_once()
+    call_args = instance.resolve_conversation.call_args[0]
+    assert call_args[0] == "owner"   # repo_owner
+    assert call_args[1] == "repo"    # repo_name
+    assert call_args[2] == 1         # pr_number as int
+    assert call_args[3] == "101"     # comment_id matches finding's platform_comment_id

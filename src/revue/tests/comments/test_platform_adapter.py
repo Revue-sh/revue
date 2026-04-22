@@ -1059,3 +1059,56 @@ def test_bitbucket_ensure_lessons_pr_returns_existing_url_without_creating(adapt
 
     assert url == "https://bitbucket.org/ws/repo/pull-requests/3"
     assert mock_post.call_count == 1  # Only the commit, not PR creation
+
+
+# ---------------------------------------------------------------------------
+# REVUE-161: resolve_conversation — PUT to resolve endpoint for PR comments
+# ---------------------------------------------------------------------------
+
+def test_bitbucket_resolve_conversation(adapter) -> None:
+    """REVUE-161 T1.1: resolve_conversation calls POST with correct URL; no error logged on success."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+
+    with patch("httpx.post", return_value=mock_response) as mock_post, \
+         patch("revue.comments.platform_adapter._log.error") as mock_log:
+        adapter.resolve_conversation("workspace", "repo", 42, "100")
+
+    mock_post.assert_called_once()
+    call_url = mock_post.call_args[0][0]
+    assert "/repositories/workspace/repo/pullrequests/42/comments/100/resolve" in call_url
+    mock_log.assert_not_called()
+
+
+def test_bitbucket_resolve_conversation_idempotent_on_409(adapter) -> None:
+    """REVUE-161: resolve_conversation treats 409 Already Resolved as success."""
+    mock_response = MagicMock()
+    mock_response.status_code = 409
+
+    with patch("httpx.post", return_value=mock_response), \
+         patch("revue.comments.platform_adapter._log.error") as mock_log:
+        adapter.resolve_conversation("workspace", "repo", 42, "100")
+
+    mock_log.assert_not_called()
+
+
+def test_bitbucket_resolve_conversation_no_error_on_failure(adapter) -> None:
+    """REVUE-161 T2.1: resolve_conversation logs error but does not raise."""
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+
+    with patch("httpx.post", return_value=mock_response), \
+         patch("revue.comments.platform_adapter._log.error") as mock_log:
+        adapter.resolve_conversation("workspace", "repo", 42, "100")
+
+    mock_log.assert_called_once()
+    # No exception raised
+
+
+def test_bitbucket_resolve_conversation_logs_on_request_error(adapter) -> None:
+    """REVUE-161 T2.1: resolve_conversation logs httpx errors."""
+    with patch("httpx.post", side_effect=Exception("Network error")), \
+         patch("revue.comments.platform_adapter._log.error") as mock_log:
+        adapter.resolve_conversation("workspace", "repo", 42, "100")
+
+    mock_log.assert_called_once()

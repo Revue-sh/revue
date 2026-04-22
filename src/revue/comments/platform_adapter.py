@@ -136,6 +136,18 @@ class PlatformAdapter(ABC):
             f"Lessons PR creation is not supported on {type(self).__name__}"
         )
 
+    def resolve_conversation(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        comment_id: str,
+    ) -> None:
+        """Resolve a PR-level conversation (non-inline thread).
+
+        No-op by default; Bitbucket overrides with the PUT /resolve API call.
+        """
+
 
 class BitbucketAdapter(PlatformAdapter):
     """Bitbucket Cloud API adapter."""
@@ -226,6 +238,36 @@ class BitbucketAdapter(PlatformAdapter):
         )
         response.raise_for_status()
         return str(response.json()["id"])
+
+    def resolve_conversation(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        comment_id: str,
+    ) -> None:
+        """Resolve a PR conversation (non-inline comment) via Bitbucket API."""
+        url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/pullrequests/{pr_number}/comments/{comment_id}/resolve"
+        try:
+            response = httpx.post(url, timeout=10.0, **self._auth_kwargs())
+            if response.status_code not in (200, 409):
+                _log.error(
+                    "Failed to resolve conversation %s on PR %s/%s/%s: HTTP %s",
+                    comment_id,
+                    repo_owner,
+                    repo_name,
+                    pr_number,
+                    response.status_code,
+                )
+        except Exception as exc:
+            _log.error(
+                "Failed to resolve conversation %s on PR %s/%s/%s: %s",
+                comment_id,
+                repo_owner,
+                repo_name,
+                pr_number,
+                exc,
+            )
 
     def get_comment_replies(
         self,

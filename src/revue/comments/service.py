@@ -806,6 +806,13 @@ class WontFixReplyService:
                         "[REVUE-112] resolve_comment failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
+                # REVUE-161: Resolve thread via Bitbucket API; no-op on GitHub/GitLab.
+                self._adapter.resolve_conversation(
+                    self._repo_owner,
+                    self._repo_name,
+                    pr_number,
+                    comment_id,
+                )
 
             elif dec == "acknowledged_fixed":
                 # Developer fixed the code — post acknowledgment and resolve the thread
@@ -852,6 +859,13 @@ class WontFixReplyService:
                         "[REVUE-112] resolve_comment failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
+                # REVUE-161: Resolve thread via Bitbucket API; no-op on GitHub/GitLab.
+                self._adapter.resolve_conversation(
+                    self._repo_owner,
+                    self._repo_name,
+                    pr_number,
+                    comment_id,
+                )
 
     # ------------------------------------------------------------------
     # Internal helpers
