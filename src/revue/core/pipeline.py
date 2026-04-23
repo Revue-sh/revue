@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import NamedTuple, Optional
 from uuid import uuid4
 
+from .agent_names import ORCHESTRATOR
 from .ai_config import AIConfig
 from .ai_client import AIClient, create_ai_client
 from .cleo_router import _INFRASTRUCTURE_AGENTS
@@ -619,6 +620,7 @@ class ReviewPipeline:
                     [{"role": "user", "content": prompt}],
                     max_tokens=self.config.ai_max_tokens,
                     temperature=self.config.ai_temp,
+                    agent_name=ORCHESTRATOR,
                 ).text
                 results.append(ReviewResult(file_path=fc.file_path, response=response))
                 print(f"[revue]   ✓ {fc.file_path}", flush=True)

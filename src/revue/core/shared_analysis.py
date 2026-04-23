@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .ai_client import AIClient
 
+from .agent_names import SHARED_ANALYSIS
 from .ai_client import _CACHE_CONTROL_1H, _JSON_FORMAT_PROVIDERS
 from .models import FileChange
 
@@ -249,6 +250,7 @@ def run_shared_analysis(
             [{"role": "user", "content": "Analyse the diff above and respond with valid JSON."}],
             system=system_blocks,
             cache_key=diff_hash,
+            agent_name=SHARED_ANALYSIS,
         ).text
         _log.debug("Shared analysis raw response (%d chars): %.300r", len(raw), raw)
         # Strip markdown code fences that LLMs often wrap responses in

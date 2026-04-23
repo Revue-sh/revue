@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from .agent_names import NOVA
 from .models import AIReview
 
 _log = logging.getLogger(__name__)
@@ -150,6 +151,7 @@ class NovaConsolidator:
                 system=_REPLY_THREAD_SYSTEM_PROMPT,
                 max_tokens=4096,
                 temperature=0.2,
+                agent_name=NOVA,
             )
         except Exception:
             _log.exception(
