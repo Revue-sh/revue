@@ -1,17 +1,57 @@
 """Platform-specific API adapters for comment resolution."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
+import re
 import urllib.parse
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
+from revue.core.diff_parser import parse_diff
+from revue.core.models import FileChange
+from revue.core.vcs_adapter import DiffPosition
 from .models import Platform
 
 _log = logging.getLogger(__name__)
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def _line_in_diff(line_number: int, file_path: str, diff: str) -> bool:
+    """Return True if line_number falls within any new-file hunk range for file_path.
+
+    Handles both full multi-file diffs (with 'diff --git' headers) and
+    per-file hunk-only diffs (FileChange.diff from diff_by_file, which
+    strips the header in _parse_single_file_diff).
+
+    For per-file diffs (no git header), ``file_path`` is not validated —
+    callers must supply the correct per-file diff via ``diff_by_file.get(file_path)``.
+    """
+    if not diff:
+        return False
+    in_file: bool | None = None  # None = not yet determined
+    for line in diff.splitlines():
+        if line.startswith("diff --git"):
+            if in_file is None:
+                in_file = False  # full diff — start locked out until we find our file
+            in_file = f" b/{file_path}" in line
+            continue
+        if in_file is None:
+            in_file = True  # first line is a hunk header — per-file diff, treat as in file
+        if not in_file:
+            continue
+        m = _HUNK_RE.match(line)
+        if m:
+            new_start = int(m.group(1))
+            new_count = int(m.group(2)) if m.group(2) is not None else 1
+            if new_start <= line_number < new_start + new_count:
+                return True
+    return False
 
 
 class PlatformAdapter(ABC):
@@ -136,6 +176,57 @@ class PlatformAdapter(ABC):
             f"Lessons PR creation is not supported on {type(self).__name__}"
         )
 
+    @abstractmethod
+    def get_diff(self, pr_id: int) -> list[FileChange]:
+        """Fetch PR diff and return as FileChange objects.
+
+        Returns [] on error. Bitbucket-specific; GitHub/GitLab return [].
+        """
+        pass
+
+    @abstractmethod
+    def set_pr_status(self, commit_sha: str, state: str, description: str = "") -> bool:
+        """Post build/review status against a commit.
+
+        Bitbucket-specific; GitHub uses check runs, GitLab uses pipeline stages.
+        Returns True on success, False on error.
+        """
+        pass
+
+    @abstractmethod
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        """Verify webhook signature using HMAC.
+
+        Returns True if signature is valid, False otherwise.
+        """
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def parse_webhook_event(
+        headers: dict[str, str], payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Parse webhook event from headers and payload.
+
+        Returns dict with event details or None if not a relevant event.
+        """
+        pass
+
+    @abstractmethod
+    def post_summary_comment(self, pr_id: int, body: str) -> "str | None":
+        """Post a top-level (non-inline) PR comment. Returns comment ID or None on failure."""
+        pass
+
+    @abstractmethod
+    def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool:
+        """Update an existing PR comment in-place. Returns True on success."""
+        pass
+
+    @abstractmethod
+    def get_existing_comments(self, pr_id: int) -> list[dict]:
+        """Fetch all comments on a PR. Returns [] on error."""
+        pass
+
     def resolve_conversation(
         self,
         repo_owner: str,
@@ -150,16 +241,39 @@ class PlatformAdapter(ABC):
 
 
 class BitbucketAdapter(PlatformAdapter):
-    """Bitbucket Cloud API adapter."""
+    """Bitbucket Cloud API adapter.
+
+    Supports both comment threading and pipeline operations (diff, status, webhooks).
+    Auth: HTTP Basic Auth or Bearer token depending on token type.
+    """
 
     # Bitbucket Repository/Workspace Access Tokens (OAuth) start with this prefix.
     # App Passwords do not — they use HTTP Basic Auth instead.
     _BEARER_PREFIX = "ATCTT3"
 
-    def __init__(self, username: str, app_password: str):
+    def __init__(
+        self,
+        username: str,
+        app_password: str,
+        workspace: str = "",
+        repo_slug: str = "",
+        webhook_secret: str = "",
+    ):
+        """Initialize BitbucketAdapter.
+
+        Args:
+            username: Bitbucket account username or email.
+            app_password: Bitbucket API token or app password.
+            workspace: Bitbucket workspace slug (e.g. "cbscd") — required for pipeline operations.
+            repo_slug: Repository slug (e.g. "revue") — required for pipeline operations.
+            webhook_secret: Secret for webhook signature verification.
+        """
         self.username = username
         self.app_password = app_password
         self.base_url = "https://api.bitbucket.org/2.0"
+        self.workspace = workspace
+        self.repo_slug = repo_slug
+        self.webhook_secret = webhook_secret
         # Repository/Workspace Access Tokens must be sent as Bearer, not Basic Auth.
         self._is_bearer = app_password.startswith(self._BEARER_PREFIX)
 
@@ -239,6 +353,118 @@ class BitbucketAdapter(PlatformAdapter):
         response.raise_for_status()
         return str(response.json()["id"])
 
+    def get_diff(self, pr_id: int) -> list[FileChange]:
+        """Fetch PR diff from Bitbucket and parse into FileChange objects.
+
+        GET /2.0/repositories/{ws}/{slug}/pullrequests/{id}/diff
+        Returns raw unified diff text; reuse diff_parser.parse_diff().
+        """
+        try:
+            url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/diff"
+            kw = self._auth_kwargs()
+            kw.setdefault("headers", {})["Accept"] = "text/plain"
+            response = httpx.get(url, **kw)
+            response.raise_for_status()
+            return parse_diff(response.text)
+        except Exception as exc:
+            _log.warning("get_diff failed for PR %s: %s", pr_id, exc)
+            return []
+
+    def set_pr_status(self, commit_sha: str, state: str, description: str = "") -> bool:
+        """Post a build/review status against a commit (Bitbucket Commit Status API).
+
+        POST /2.0/repositories/{ws}/{slug}/commit/{sha}/statuses/build
+
+        Args:
+            commit_sha: The HEAD commit SHA of the PR.
+            state: "SUCCESSFUL", "FAILED", or "INPROGRESS".
+            description: Short human-readable description shown in the UI.
+
+        Returns:
+            True on success, False on error.
+        """
+        try:
+            payload: dict[str, Any] = {
+                "key": "revue-io",
+                "state": state,
+                "name": "Revue.io AI Review",
+                "description": description or f"Revue.io review {state.lower()}",
+                "url": "https://revue-io.fly.dev",
+            }
+            sha_encoded = urllib.parse.quote(commit_sha, safe="")
+            url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/commit/{sha_encoded}/statuses/build"
+            response = httpx.post(url, json=payload, **self._auth_kwargs())
+            response.raise_for_status()
+            return True
+        except Exception as exc:
+            _log.warning("set_pr_status failed for commit %s: %s", commit_sha, exc)
+            return False
+
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        """Verify Bitbucket webhook signature via HMAC-SHA256.
+
+        Bitbucket sends X-Hub-Signature: sha256=<hex> (same as GitHub).
+        Returns False immediately if no webhook_secret is set.
+
+        Args:
+            payload: Raw request body bytes.
+            signature: Value of X-Hub-Signature header (sha256=<hex>).
+
+        Returns:
+            True if the signature is valid, False otherwise.
+        """
+        if not self.webhook_secret:
+            return False
+        expected = (
+            "sha256="
+            + hmac.new(
+                self.webhook_secret.encode(),
+                payload,
+                hashlib.sha256,
+            ).hexdigest()
+        )
+        return hmac.compare_digest(expected, signature)
+
+    @staticmethod
+    def parse_webhook_event(
+        headers: dict[str, str], payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Parse a Bitbucket webhook event.
+
+        Returns dict with {event_type, pr_id, workspace, repo_slug, action, commit_sha}
+        for pullrequest:created / pullrequest:updated events.
+        Returns None for everything else.
+
+        Bitbucket webhook event key is in the X-Event-Key header.
+        """
+        event_key = headers.get("X-Event-Key", "")
+        if not event_key.startswith("pullrequest:"):
+            return None
+
+        action = event_key.split(":", 1)[1]  # e.g. "created", "updated"
+        if action not in ("created", "updated"):
+            return None
+
+        pr = payload.get("pullrequest", {})
+        pr_id = pr.get("id")
+        if not pr_id:
+            return None
+
+        repo = payload.get("repository", {})
+        full_name = repo.get("full_name", "/")  # e.g. "cbscd/revue"
+        parts = full_name.split("/", 1)
+        workspace = parts[0] if len(parts) > 0 else ""
+        repo_slug = parts[1] if len(parts) > 1 else ""
+
+        return {
+            "event_type": "pull_request",
+            "pr_id": pr_id,
+            "workspace": workspace,
+            "repo_slug": repo_slug,
+            "action": action,
+            "commit_sha": pr.get("source", {}).get("commit", {}).get("hash", ""),
+        }
+
     def resolve_conversation(
         self,
         repo_owner: str,
@@ -268,6 +494,162 @@ class BitbucketAdapter(PlatformAdapter):
                 pr_number,
                 exc,
             )
+
+    def post_review_comment(
+        self, pr_id: int, position: DiffPosition, body: str
+    ) -> str | None:
+        """Post an inline comment on a PR (pipeline operation).
+
+        POST /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments
+        Bitbucket inline comments use an ``inline`` key with ``path`` and ``to``
+        (the new-file line number).
+
+        Returns:
+            The Bitbucket comment ID as a string on success, None on failure.
+        """
+        payload: dict[str, Any] = {
+            "content": {"raw": body},
+            "inline": {
+                "path": position.file_path,
+                "to": position.line_number,
+            },
+        }
+        try:
+            url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments"
+            response = httpx.post(url, json=payload, **self._auth_kwargs())
+            response.raise_for_status()
+            comment_id = response.json().get("id")
+            return str(comment_id) if comment_id is not None else None
+        except Exception as exc:
+            _log.warning("post_review_comment failed for PR %s: %s", pr_id, exc)
+            return None
+
+    post_inline_comment = post_review_comment
+
+    def post_summary_comment(self, pr_id: int, body: str) -> str | None:
+        """Post a top-level PR comment (not inline).
+
+        POST /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments
+        Omitting the ``inline`` key makes it a general comment.
+
+        Returns:
+            The comment ID as a string on success, None on failure.
+        """
+        payload: dict[str, Any] = {"content": {"raw": body}}
+        try:
+            url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments"
+            response = httpx.post(url, json=payload, **self._auth_kwargs())
+            response.raise_for_status()
+            comment_id = response.json().get("id")
+            return str(comment_id) if comment_id is not None else None
+        except Exception as exc:
+            _log.warning("post_summary_comment failed for PR %s: %s", pr_id, exc)
+            return None
+
+    def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool:
+        """Update an existing top-level PR comment in-place.
+
+        PUT /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments/{comment_id}
+
+        Args:
+            pr_id:      Pull request ID.
+            comment_id: The Bitbucket comment ID (as string).
+            body:       New markdown body for the comment.
+
+        Returns:
+            True on success, False on error (including 404 if comment was deleted).
+        """
+        payload: dict[str, Any] = {"content": {"raw": body}}
+        try:
+            url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments/{comment_id}"
+            response = httpx.put(url, json=payload, **self._auth_kwargs())
+            response.raise_for_status()
+            return True
+        except Exception as exc:
+            _log.warning("update_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
+            return False
+
+    def get_existing_comments(self, pr_id: int) -> list[dict]:
+        """Fetch all comments on a PR (all pages).
+
+        GET /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments
+        Returns a flat list of comment objects. Returns [] on error.
+        """
+        try:
+            all_comments: list[dict] = []
+            url: Optional[str] = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments"
+            while url:
+                response = httpx.get(url, **self._auth_kwargs())
+                response.raise_for_status()
+                data = response.json()
+                all_comments.extend(data.get("values", []))
+                url = data.get("next")
+            return all_comments
+        except Exception as exc:
+            _log.warning("get_existing_comments failed for PR %s: %s", pr_id, exc)
+            return []
+
+    def resolve_position(
+        self, file_path: str, line_number: int, diff: str
+    ) -> DiffPosition:
+        """Return a DiffPosition for Bitbucket.
+
+        Validates line_number against diff hunk ranges. position=1 means the
+        line is in the diff; position=0 means it falls outside all hunks and
+        the caller should skip posting (Bitbucket returns 403 for out-of-range
+        lines, matching the same sentinel used by the GitHub path).
+        """
+        valid = _line_in_diff(line_number, file_path, diff)
+        return DiffPosition(
+            file_path=file_path,
+            line_number=line_number,
+            side="RIGHT",
+            position=1 if valid else 0,
+        )
+
+    def resolve_inline_comment(
+        self, pr_id: int, comment_id: str, reply_body: str
+    ) -> bool:
+        """Resolve an inline comment thread by posting a reply then calling the native resolve API.
+
+        POST /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments            (reply)
+        POST /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments/{id}/resolve
+
+        Args:
+            pr_id:       Pull request ID.
+            comment_id:  The Bitbucket comment ID to reply to and resolve.
+            reply_body:  The reply message (e.g. "✅ Issue appears to be resolved").
+
+        Returns:
+            True on success, False on error.
+        """
+        if reply_body:
+            payload: dict[str, Any] = {
+                "content": {"raw": reply_body},
+                "parent": {"id": int(comment_id)},
+            }
+            try:
+                url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments"
+                response = httpx.post(url, json=payload, **self._auth_kwargs())
+                response.raise_for_status()
+                _log.info("Posted resolution reply to comment %s on PR %s", comment_id, pr_id)
+            except Exception as exc:
+                _log.warning("resolve_inline_comment: reply failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
+                return False
+
+        try:
+            url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments/{comment_id}/resolve"
+            response = httpx.post(url, **self._auth_kwargs())
+            response.raise_for_status()
+            return True
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 409:  # Already resolved — goal achieved
+                return True
+            _log.warning("resolve_inline_comment: resolve failed for PR %s comment %s: HTTP %s", pr_id, comment_id, exc.response.status_code, exc_info=True)
+            return False
+        except Exception as exc:
+            _log.warning("resolve_inline_comment: resolve failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
+            return False
 
     def get_comment_replies(
         self,
@@ -405,10 +787,12 @@ class BitbucketAdapter(PlatformAdapter):
 
 class GitHubAdapter(PlatformAdapter):
     """GitHub API adapter (comment acknowledgment only - no resolution)."""
-    
-    def __init__(self, token: str):
+
+    def __init__(self, token: str, repo: str = ""):
         self.token = token
+        self.repo = repo
         self.base_url = "https://api.github.com"
+        self.webhook_secret = ""
         self.headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
@@ -481,6 +865,30 @@ class GitHubAdapter(PlatformAdapter):
         response.raise_for_status()
 
         return str(response.json()['id'])
+
+    def get_diff(self, pr_id: int) -> list[FileChange]:
+        raise NotImplementedError
+
+    def set_pr_status(self, commit_sha: str, state: str, description: str = "") -> bool:
+        raise NotImplementedError
+
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        raise NotImplementedError
+
+    @staticmethod
+    def parse_webhook_event(
+        headers: dict[str, str], payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def post_summary_comment(self, pr_id: int, body: str) -> "str | None":
+        raise NotImplementedError
+
+    def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool:
+        raise NotImplementedError
+
+    def get_existing_comments(self, pr_id: int) -> list[dict]:
+        raise NotImplementedError
 
     def get_all_pr_comments(
         self,
@@ -682,11 +1090,12 @@ class GitHubAdapter(PlatformAdapter):
 
 class GitLabAdapter(PlatformAdapter):
     """GitLab API adapter."""
-    
+
     def __init__(self, token: str, base_url: str = "https://gitlab.com"):
         self.token = token
         self.base_url = f"{base_url}/api/v4"
         self.headers = {"PRIVATE-TOKEN": token}
+        self.webhook_secret = ""
     
     def _get_mr_version_shas(self, project_id: str, pr_number: int) -> tuple[str, str, str]:
         """Return (base_commit_sha, start_commit_sha, head_commit_sha) from the latest MR version."""
@@ -892,6 +1301,30 @@ class GitLabAdapter(PlatformAdapter):
     ) -> bool:
         """Check GitLab discussion resolution (placeholder)."""
         return False
+
+    def get_diff(self, pr_id: int) -> list[FileChange]:
+        raise NotImplementedError
+
+    def set_pr_status(self, commit_sha: str, state: str, description: str = "") -> bool:
+        raise NotImplementedError
+
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        raise NotImplementedError
+
+    @staticmethod
+    def parse_webhook_event(
+        headers: dict[str, str], payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def post_summary_comment(self, pr_id: int, body: str) -> "str | None":
+        raise NotImplementedError
+
+    def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool:
+        raise NotImplementedError
+
+    def get_existing_comments(self, pr_id: int) -> list[dict]:
+        raise NotImplementedError
 
     def ensure_lessons_pr(
         self,

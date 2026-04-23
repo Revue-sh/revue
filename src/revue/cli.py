@@ -1289,7 +1289,7 @@ def _post_to_platform(
 
 def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> None:
     """Resolve Bitbucket credentials and delegate to _post_to_platform."""
-    from revue.core.bitbucket_adapter import BitbucketAdapter
+    from revue.comments.platform_adapter import BitbucketAdapter
     from revue.core.diff_parser import parse_diff_file
     from revue.comments.models import Platform
 
@@ -1312,8 +1312,10 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=No
     show_reviewed_files = getattr(config, "show_reviewed_files", True) if config else True
     rating_cfg = getattr(config, "rating_weights", None) if config else None
     adapter = BitbucketAdapter(
-        api_token=bb_token, username=bb_username,
-        workspace=workspace, repo_slug=repo_slug,
+        username=bb_username,
+        app_password=bb_token,
+        workspace=workspace,
+        repo_slug=repo_slug,
     )
     diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
     _post_to_platform(

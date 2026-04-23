@@ -147,6 +147,216 @@ def test_post_reply_returns_new_comment_id(adapter) -> None:
 
 
 # ---------------------------------------------------------------------------
+# REVUE-175 Pipeline Methods: get_diff, set_pr_status, verify_webhook_signature, parse_webhook_event
+# ---------------------------------------------------------------------------
+
+def test_bitbucket_get_diff_returns_file_changes(adapter) -> None:
+    """REVUE-175 AC1: get_diff() returns list[FileChange] parsed from diff."""
+    sample_diff = """\
+diff --git a/src/main.py b/src/main.py
+index abc..def 100644
+--- a/src/main.py
++++ b/src/main.py
+@@ -1,3 +1,4 @@
+ def hello():
+-    pass
++    return "hello"
++
+ # end
+"""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.text = sample_diff
+
+    with patch("httpx.get", return_value=mock_response):
+        changes = adapter.get_diff(pr_id=42)
+
+    assert len(changes) == 1
+    assert changes[0].file_path == "src/main.py"
+    assert changes[0].change_type == "modified"
+
+
+def test_bitbucket_get_diff_returns_empty_on_error(adapter) -> None:
+    """REVUE-175: get_diff() returns [] when API call fails."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = Exception("Network error")
+
+    with patch("httpx.get", return_value=mock_response):
+        changes = adapter.get_diff(pr_id=99)
+
+    assert changes == []
+
+
+def test_bitbucket_set_pr_status_posts_to_build_status(adapter) -> None:
+    """REVUE-175 AC1: set_pr_status() POSTs to build status endpoint."""
+    adapter.workspace = "cbscd"
+    adapter.repo_slug = "revue"
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=mock_response) as mock_post:
+        result = adapter.set_pr_status("deadbeef", "SUCCESSFUL", "Review passed")
+
+    assert result is True
+    call_url = mock_post.call_args[0][0]
+    assert "/commit/deadbeef/statuses/build" in call_url
+    _, kwargs = mock_post.call_args
+    body = kwargs["json"]
+    assert body["key"] == "revue-io"
+    assert body["state"] == "SUCCESSFUL"
+
+
+def test_bitbucket_set_pr_status_returns_false_on_error(adapter) -> None:
+    """REVUE-175: set_pr_status() returns False on API error."""
+    adapter.workspace = "cbscd"
+    adapter.repo_slug = "revue"
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = Exception("API error")
+
+    with patch("httpx.post", return_value=mock_response):
+        result = adapter.set_pr_status("sha", "FAILED")
+
+    assert result is False
+
+
+def test_bitbucket_verify_webhook_signature_valid(adapter) -> None:
+    """REVUE-175 AC1: verify_webhook_signature() validates HMAC-SHA256."""
+    import hashlib
+    import hmac
+
+    adapter.webhook_secret = "test-secret"
+    payload = b'{"event":"pullrequest:created"}'
+    sig = "sha256=" + hmac.new(b"test-secret", payload, hashlib.sha256).hexdigest()
+
+    result = adapter.verify_webhook_signature(payload, sig)
+    assert result is True
+
+
+def test_bitbucket_verify_webhook_signature_invalid(adapter) -> None:
+    """REVUE-175: verify_webhook_signature() rejects tampered payload."""
+    adapter.webhook_secret = "test-secret"
+    result = adapter.verify_webhook_signature(b"payload", "sha256=badhash")
+    assert result is False
+
+
+def test_bitbucket_verify_webhook_signature_no_secret(adapter) -> None:
+    """REVUE-175: verify_webhook_signature() returns False without secret."""
+    adapter.webhook_secret = ""
+    result = adapter.verify_webhook_signature(b"payload", "sha256=anything")
+    assert result is False
+
+
+def test_bitbucket_parse_webhook_event_pr_created(adapter) -> None:
+    """REVUE-175 AC1: parse_webhook_event() parses PR create events."""
+    headers = {"X-Event-Key": "pullrequest:created"}
+    payload = {
+        "pullrequest": {
+            "id": 5,
+            "source": {"commit": {"hash": "deadbeef"}},
+        },
+        "repository": {"full_name": "cbscd/revue"},
+    }
+    result = BitbucketAdapter.parse_webhook_event(headers, payload)
+    assert result is not None
+    assert result["event_type"] == "pull_request"
+    assert result["pr_id"] == 5
+    assert result["workspace"] == "cbscd"
+    assert result["repo_slug"] == "revue"
+    assert result["action"] == "created"
+    assert result["commit_sha"] == "deadbeef"
+
+
+def test_bitbucket_parse_webhook_event_non_pr_returns_none(adapter) -> None:
+    """REVUE-175: parse_webhook_event() returns None for non-PR events."""
+    headers = {"X-Event-Key": "repo:push"}
+    result = BitbucketAdapter.parse_webhook_event(headers, {})
+    assert result is None
+
+
+def test_bitbucket_post_summary_comment(adapter) -> None:
+    """REVUE-175: post_summary_comment() POSTs to PR comments without inline key."""
+    adapter.workspace = "cbscd"
+    adapter.repo_slug = "revue"
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"id": 77}
+
+    with patch("httpx.post", return_value=mock_response) as mock_post:
+        result = adapter.post_summary_comment(42, "## Review Summary\n\nLooks good.")
+
+    assert result == "77"
+    call_url = mock_post.call_args[0][0]
+    assert "/pullrequests/42/comments" in call_url
+    _, kwargs = mock_post.call_args
+    body = kwargs["json"]
+    assert "inline" not in body
+    assert body["content"]["raw"] == "## Review Summary\n\nLooks good."
+
+
+def test_bitbucket_update_comment(adapter) -> None:
+    """REVUE-175: update_comment() PUTs to comments/{id} and returns True on success."""
+    adapter.workspace = "cbscd"
+    adapter.repo_slug = "revue"
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.put", return_value=mock_response) as mock_put:
+        result = adapter.update_comment(42, "77", "## Updated Review")
+
+    assert result is True
+    call_url = mock_put.call_args[0][0]
+    assert "/pullrequests/42/comments/77" in call_url
+    _, kwargs = mock_put.call_args
+    assert kwargs["json"]["content"]["raw"] == "## Updated Review"
+
+
+def test_github_pipeline_methods_raise_not_implemented() -> None:
+    """REVUE-175 P2: GitHub pipeline stubs raise NotImplementedError, not silent no-ops."""
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    gh = GitHubAdapter("ghp_tok")
+    with pytest.raises(NotImplementedError):
+        gh.get_diff(1)
+    with pytest.raises(NotImplementedError):
+        gh.set_pr_status("sha", "SUCCESSFUL")
+    with pytest.raises(NotImplementedError):
+        gh.verify_webhook_signature(b"payload", "sha256=sig")
+    with pytest.raises(NotImplementedError):
+        GitHubAdapter.parse_webhook_event({}, {})
+    with pytest.raises(NotImplementedError):
+        gh.post_summary_comment(1, "body")
+    with pytest.raises(NotImplementedError):
+        gh.update_comment(1, "id", "body")
+    with pytest.raises(NotImplementedError):
+        gh.get_existing_comments(1)
+
+
+def test_gitlab_pipeline_methods_raise_not_implemented() -> None:
+    """REVUE-175 P2: GitLab pipeline stubs raise NotImplementedError, not silent no-ops."""
+    from revue.comments.platform_adapter import GitLabAdapter
+
+    gl = GitLabAdapter("glpat-tok")
+    with pytest.raises(NotImplementedError):
+        gl.get_diff(1)
+    with pytest.raises(NotImplementedError):
+        gl.set_pr_status("sha", "SUCCESSFUL")
+    with pytest.raises(NotImplementedError):
+        gl.verify_webhook_signature(b"payload", "sig")
+    with pytest.raises(NotImplementedError):
+        GitLabAdapter.parse_webhook_event({}, {})
+    with pytest.raises(NotImplementedError):
+        gl.post_summary_comment(1, "body")
+    with pytest.raises(NotImplementedError):
+        gl.update_comment(1, "id", "body")
+    with pytest.raises(NotImplementedError):
+        gl.get_existing_comments(1)
+
+
+# ---------------------------------------------------------------------------
 # REVUE-119 T2: GitHubAdapter.get_all_pr_comments()
 # ---------------------------------------------------------------------------
 

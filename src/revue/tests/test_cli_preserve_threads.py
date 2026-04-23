@@ -82,7 +82,7 @@ def _run(args, review_results, *, tmp_path, adapter=None, pre_seed=None, existin
 
     with (
         patch("os.getcwd", return_value=str(tmp_path)),
-        patch("revue.core.bitbucket_adapter.BitbucketAdapter", return_value=mock_adapter),
+        patch("revue.comments.platform_adapter.BitbucketAdapter", return_value=mock_adapter),
         patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
         patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
     ):
@@ -623,7 +623,7 @@ def test_bitbucket_summary_posted_after_inline_comments(tmp_path) -> None:
 
     with (
         patch("os.getcwd", return_value=str(tmp_path)),
-        patch("revue.core.bitbucket_adapter.BitbucketAdapter", return_value=mock_adapter),
+        patch("revue.comments.platform_adapter.BitbucketAdapter", return_value=mock_adapter),
         patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
         patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
     ):
@@ -932,7 +932,7 @@ def test_revision_increments_from_live_comment_when_no_local_state(tmp_path) -> 
 
     with (
         patch("os.getcwd", return_value=str(tmp_path)),
-        patch("revue.core.bitbucket_adapter.BitbucketAdapter", return_value=mock_adapter),
+        patch("revue.comments.platform_adapter.BitbucketAdapter", return_value=mock_adapter),
         patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
         patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
     ):
