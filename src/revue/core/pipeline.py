@@ -21,7 +21,7 @@ from .agent_names import ORCHESTRATOR
 from .ai_config import AIConfig
 from .ai_client import AIClient, create_ai_client
 from .cleo_router import _INFRASTRUCTURE_AGENTS
-from .metrics import MetricsCollector, NullMetricsCollector
+from .metrics import MetricsCollector, NullMetricsCollector, RoutingMetricsData
 from .diff_parser import parse_diff_file, filter_changes
 from .diff_limit import check_diff_limit, DiffLimitResult
 from .license_validator import LicenseInfo, validate as validate_license
@@ -768,6 +768,19 @@ class ReviewPipeline:
                 f"[revue]   Routed to: {', '.join(_agent_label(a) for a in routed_agents)}",
                 flush=True,
             )
+            # REVUE-170 AC5: record routing observability metrics
+            ai_suggested = (
+                [a.name for a in shared.orchestrator_response.selected_agents]
+                if shared and shared.orchestrator_response
+                else []
+            )
+            self._metrics.record_routing(RoutingMetricsData(
+                ai_suggested_agents=ai_suggested,
+                algorithm_selected_agents=_team_selection.algorithm_filtered_agents,
+                final_agents=[a.name for a in routed_agents],
+                routing_source="ai_assisted" if ai_suggested else "algorithm_fallback",
+                model_used=self.config.model,
+            ))
         except Exception as exc:
             print(f"[revue]   Cleo routing failed ({exc}) — running all allowed agents.", flush=True)
             routed_agents = allowed_agents

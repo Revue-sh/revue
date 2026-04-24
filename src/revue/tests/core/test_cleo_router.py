@@ -20,7 +20,7 @@ from revue.core.cleo_router import (
     select_team,
 )
 from revue.core.models import FileChange
-from revue.core.shared_analysis import SharedAnalysisResult
+from revue.core.shared_analysis import OrchestratorResponse, SelectedAgent, SharedAnalysisResult
 
 
 # ---------------------------------------------------------------------------
@@ -762,4 +762,236 @@ class TestRevue166Integration:
         assert len(non_infra_with_guarantee) >= 1, (
             f"AC1 guarantee rule should prevent zero reviewers. "
             f"Got {filtered_names_with_guarantee}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-170: AC2–AC4 — AI-signal refinement in route()
+# ---------------------------------------------------------------------------
+
+def _shared_with_orch(
+    selected_agent_names: list[str],
+    risk_areas: list[str] | None = None,
+    error: str = "",
+) -> SharedAnalysisResult:
+    """Build a SharedAnalysisResult with an OrchestratorResponse for routing tests."""
+    orch = OrchestratorResponse(
+        detected_areas=[],
+        selected_agents=[
+            SelectedAgent(emoji="", name=name, reason="test")
+            for name in selected_agent_names
+        ],
+        languages=["python"],
+        risk_areas=risk_areas or [],
+        summary="test",
+    ) if not error else None
+    return SharedAnalysisResult(
+        languages=["python"],
+        risk_areas=risk_areas or [],
+        suggested_agents=[n.lower() for n in selected_agent_names] if not error else [],
+        summary="test",
+        error=error,
+        orchestrator_response=orch,
+    )
+
+
+def _full_agents() -> list[_FakeAgent]:
+    """Return a standard set of full-team agents (no trigger restrictions)."""
+    return [
+        _FakeAgent("cleo"),
+        _FakeAgent("zara"),
+        _FakeAgent("kai"),
+        _FakeAgent("maya"),
+        _FakeAgent("leo"),
+        _FakeAgent("nova"),
+    ]
+
+
+class TestAIRoutingSignal:
+    """REVUE-170 AC2–AC4: AI-signal refinement in route()."""
+
+    def test_ac6_state1_ai_suggests_valid_non_infra_agents_used(self):
+        """AC6-1: AI suggests valid non-infra agents → those agents become the reviewer set."""
+        files = _files_with_lines(200)
+        agents = _full_agents()
+        shared = _shared_with_orch(["zara", "kai"])
+
+        _, filtered = route(files, agents, shared)
+        reviewer_names = {a.name for a in filtered if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        assert reviewer_names == {"zara", "kai"}, (
+            f"Expected {{zara, kai}} from AI signal; got {reviewer_names}"
+        )
+
+    def test_ac6_state2_ai_suggests_infra_only_floor_kicks_in(self):
+        """AC6-2: AI suggests only infra agents → floor keeps the algorithm's non-infra set."""
+        files = _files_with_lines(200)
+        agents = _full_agents()
+        shared = _shared_with_orch(["nova"])  # nova is infrastructure
+
+        _, filtered = route(files, agents, shared)
+        reviewer_names = {a.name for a in filtered if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        # Floor: must have ≥1 non-infra reviewer; AI's infra-only suggestion is ignored
+        assert len(reviewer_names) >= 1, (
+            f"Floor guarantee violated — no non-infra reviewer. Got: {reviewer_names}"
+        )
+
+    def test_ac6_state3_ai_suggests_unavailable_agent_falls_back_to_algorithm(self):
+        """AC6-3: AI suggests 'ghost_agent' not in available_agents → algorithm result used."""
+        files = _files_with_lines(200)
+        agents = _full_agents()
+        shared = _shared_with_orch(["ghost_agent"])
+
+        _, filtered_ai = route(files, agents, shared)
+        # Without AI signal, algorithm gives the same result
+        _, filtered_algo = route(files, agents, shared=None)
+
+        ai_names = {a.name for a in filtered_ai if a.name not in _INFRASTRUCTURE_AGENTS}
+        algo_names = {a.name for a in filtered_algo if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        assert ai_names == algo_names, (
+            f"Unavailable AI agent should leave algorithm result unchanged. "
+            f"AI: {ai_names}, Algo: {algo_names}"
+        )
+
+    def test_ac6_state4_ai_suggests_empty_list_fallback_to_algorithm(self):
+        """AC6-4: AI suggests [] → AC4 bail-out, algorithm result unchanged."""
+        files = _files_with_lines(200)
+        agents = _full_agents()
+        shared = _shared_with_orch([])  # empty selected_agents
+
+        _, filtered_ai = route(files, agents, shared)
+        _, filtered_algo = route(files, agents, shared=None)
+
+        ai_names = {a.name for a in filtered_ai if a.name not in _INFRASTRUCTURE_AGENTS}
+        algo_names = {a.name for a in filtered_algo if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        assert ai_names == algo_names, (
+            f"Empty AI suggestions should leave algorithm result unchanged. "
+            f"AI: {ai_names}, Algo: {algo_names}"
+        )
+
+    @pytest.mark.parametrize("shared_value,label", [
+        (None, "shared=None"),
+    ])
+    def test_ac6_state5_shared_none_falls_back_to_algorithm(self, shared_value, label):
+        """AC6-5a: shared=None → algorithm fallback, no regression."""
+        files = _files_with_lines(200)
+        agents = _full_agents()
+
+        _, filtered = route(files, agents, shared_value)
+        reviewer_names = {a.name for a in filtered if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        assert len(reviewer_names) >= 1, (
+            f"[{label}] Must have ≥1 non-infra reviewer. Got: {reviewer_names}"
+        )
+
+    def test_ac6_state5_shared_error_falls_back_to_algorithm(self):
+        """AC6-5b: shared.error set → AC4 bail-out, algorithm result unchanged."""
+        files = _files_with_lines(200)
+        agents = _full_agents()
+        shared_with_error = _shared_with_orch(["zara", "kai"], error="fallback")
+
+        _, filtered_error = route(files, agents, shared_with_error)
+        _, filtered_algo = route(files, agents, shared=None)
+
+        error_names = {a.name for a in filtered_error if a.name not in _INFRASTRUCTURE_AGENTS}
+        algo_names = {a.name for a in filtered_algo if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        assert error_names == algo_names, (
+            f"shared.error should skip AI signal. Error path: {error_names}, Algo: {algo_names}"
+        )
+
+    def test_ac6_state5_orch_response_none_falls_back_to_algorithm(self):
+        """AC6-5c: orchestrator_response=None → AC4 bail-out, algorithm result unchanged."""
+        files = _files_with_lines(200)
+        agents = _full_agents()
+        shared_no_orch = SharedAnalysisResult(
+            languages=["python"],
+            risk_areas=[],
+            suggested_agents=["zara", "kai", "maya", "leo"],
+            summary="test",
+            orchestrator_response=None,
+        )
+
+        _, filtered_no_orch = route(files, agents, shared_no_orch)
+        _, filtered_algo = route(files, agents, shared=None)
+
+        no_orch_names = {a.name for a in filtered_no_orch if a.name not in _INFRASTRUCTURE_AGENTS}
+        algo_names = {a.name for a in filtered_algo if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        assert no_orch_names == algo_names, (
+            f"orch_response=None should skip AI signal. No-orch: {no_orch_names}, Algo: {algo_names}"
+        )
+
+    def test_ac3_floor_guarantee_preserved_after_ai_refinement(self):
+        """AC3: AI signal cannot produce an empty reviewer list — floor always applies."""
+        files = _files_with_lines(200)
+        # Agents where all non-infra agents are not suggested by AI
+        agents = [_FakeAgent("cleo"), _FakeAgent("zara"), _FakeAgent("nova")]
+        shared = _shared_with_orch(["nova"])  # suggests only infra
+
+        _, filtered = route(files, agents, shared)
+        reviewer_names = {a.name for a in filtered if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        assert len(reviewer_names) >= 1, (
+            "AC3 floor guarantee: non-infra reviewer must be present when AI suggests infra-only"
+        )
+
+    def test_ac6_state1_with_display_names_matched_by_substring(self):
+        """AC6-1 (display names): LLM returns 'Zara Security' and 'Kai Code Quality' —
+        canonical names 'zara' and 'kai' are matched by substring within the display name.
+        This was broken before the 3-way match fix: exact set membership failed."""
+        files = _files_with_lines(200)
+        agents = _full_agents()
+        # LLM returns display names containing the canonical name as a substring
+        shared = _shared_with_orch(["Zara Security", "Kai Code Quality"])
+
+        _, filtered = route(files, agents, shared)
+        reviewer_names = {a.name for a in filtered if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        assert reviewer_names == {"zara", "kai"}, (
+            f"Canonical names should match LLM display names via substring. Got {reviewer_names}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# D1 fix: available_agents expansion must pass evaluate_triggers()
+# ---------------------------------------------------------------------------
+
+class TestAIRoutingExpansionTriggers:
+    """AI can promote agents from available_agents only when triggers match the diff."""
+
+    def test_expansion_admitted_when_triggers_match(self):
+        """Agent in available_agents but not in filtered is promoted by AI when triggers match."""
+        files = [_fc("src/app.py", additions=200)]  # .py file
+        # Algorithm's filtered set excludes kai
+        algorithm_agents = [_FakeAgent("cleo"), _FakeAgent("zara"), _FakeAgent("nova")]
+        # kai is available but excluded by algorithm; triggers match .py files
+        kai = _FakeAgent("kai", trigger_patterns=["*.py"])
+        available = algorithm_agents + [kai]
+        shared = _shared_with_orch(["kai"])
+
+        _, filtered = route(files, available, shared)
+        reviewer_names = {a.name for a in filtered if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        assert "kai" in reviewer_names, (
+            f"kai should be admitted via AI expansion when triggers match. Got {reviewer_names}"
+        )
+
+    def test_expansion_blocked_when_triggers_do_not_match(self):
+        """Agent in available_agents is not promoted by AI when triggers don't match the diff."""
+        files = [_fc("src/app.py", additions=200)]  # .py file
+        algorithm_agents = [_FakeAgent("cleo"), _FakeAgent("zara"), _FakeAgent("nova")]
+        # kai triggers only match .sql — won't fire on .py files
+        kai = _FakeAgent("kai", trigger_patterns=["*.sql"])
+        available = algorithm_agents + [kai]
+        shared = _shared_with_orch(["kai"])
+
+        _, filtered = route(files, available, shared)
+        reviewer_names = {a.name for a in filtered if a.name not in _INFRASTRUCTURE_AGENTS}
+
+        assert "kai" not in reviewer_names, (
+            f"kai should be blocked when triggers don't match. Got {reviewer_names}"
         )

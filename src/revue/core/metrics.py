@@ -22,6 +22,17 @@ class MetricsEvent:
     output_tokens: int = 0
 
 
+@dataclass
+class RoutingMetricsData:
+    """Routing observability data captured after Cleo routing (REVUE-170 AC5)."""
+
+    ai_suggested_agents: list[str]
+    algorithm_selected_agents: list[str]
+    final_agents: list[str]
+    routing_source: str  # "ai_assisted" or "algorithm_fallback"
+    model_used: str
+
+
 class MetricsCollector(Protocol):
     """Protocol for collecting and storing metrics events."""
 
@@ -37,6 +48,10 @@ class MetricsCollector(Protocol):
         """Return in-memory totals after flush, or None if unavailable."""
         ...
 
+    def record_routing(self, data: RoutingMetricsData) -> None:
+        """Record routing observability data for the current run."""
+        ...
+
 
 class NullMetricsCollector:
     """Default no-op metrics collector (used when metrics disabled)."""
@@ -50,12 +65,16 @@ class NullMetricsCollector:
     def verbose_summary(self) -> dict | None:
         return None
 
+    def record_routing(self, data: RoutingMetricsData) -> None:
+        pass
+
 
 class CapturingMetricsCollector:
     """Test double — accumulates events in memory."""
 
     def __init__(self) -> None:
         self.events: list[MetricsEvent] = []
+        self.routing_events: list[RoutingMetricsData] = []
 
     def record(self, event: MetricsEvent) -> None:
         self.events.append(event)
@@ -65,3 +84,6 @@ class CapturingMetricsCollector:
 
     def verbose_summary(self) -> dict | None:
         return None
+
+    def record_routing(self, data: RoutingMetricsData) -> None:
+        self.routing_events.append(data)

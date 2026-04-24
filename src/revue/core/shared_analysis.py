@@ -272,7 +272,10 @@ def run_shared_analysis(
         return SharedAnalysisResult(
             languages=data.get("languages", languages),
             risk_areas=data.get("risk_areas", []),
-            suggested_agents=data.get("suggested_agents", ["zara", "kai", "maya", "leo"]),
+            suggested_agents=(
+                [a.name.lower() for a in orch_response.selected_agents]
+                if orch_response and orch_response.selected_agents else ["zara", "kai", "maya", "leo"]
+            ),
             summary=data.get("summary", ""),
             raw_response=raw,
             orchestrator_response=orch_response,

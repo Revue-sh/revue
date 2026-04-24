@@ -169,3 +169,113 @@ def test_verbose_summary_returns_totals_after_flush() -> None:
         assert summary["cache_read_tokens"] == 1500
         assert summary["input_tokens"] == 2000
         assert summary["output_tokens"] == 300
+
+
+# ---------------------------------------------------------------------------
+# REVUE-170: AC5 — routing metrics in flush record
+# ---------------------------------------------------------------------------
+
+def test_ac5_routing_data_all_fields_in_flush_record() -> None:
+    """AC5: flush() includes a 'routing' key with all five required fields when
+    record_routing() has been called. Every field is asserted by name."""
+    from revue.core.metrics import MetricsEvent, RoutingMetricsData
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        collector.record(MetricsEvent(
+            event_type="agent_call",
+            timestamp="2026-04-23T10:00:00Z",
+            agent_name="zara",
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            input_tokens=100,
+            output_tokens=50,
+        ))
+        collector.record_routing(RoutingMetricsData(
+            ai_suggested_agents=["zara", "kai"],
+            algorithm_selected_agents=["zara", "kai", "maya", "leo"],
+            final_agents=["zara", "kai"],
+            routing_source="ai_assisted",
+            model_used="claude-sonnet-4-6",
+        ))
+        collector.flush("run-routing")
+
+        metrics_file = Path(tmpdir) / ".revue" / "metrics.jsonl"
+        data = json.loads(metrics_file.read_text().strip())
+
+        assert "routing" in data, "flush record must contain 'routing' key"
+        r = data["routing"]
+        # AC5: assert every field by name
+        assert r["ai_suggested_agents"] == ["zara", "kai"]
+        assert r["algorithm_selected_agents"] == ["zara", "kai", "maya", "leo"]
+        assert r["final_agents"] == ["zara", "kai"]
+        assert r["routing_source"] == "ai_assisted"
+        assert r["model_used"] == "claude-sonnet-4-6"
+
+
+def test_ac5_no_routing_data_flush_has_no_routing_key() -> None:
+    """When record_routing() is not called, flush record has no 'routing' key."""
+    from revue.core.metrics import MetricsEvent
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        collector.record(MetricsEvent(
+            event_type="agent_call",
+            timestamp="2026-04-23T10:00:00Z",
+            agent_name="zara",
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            input_tokens=100,
+            output_tokens=50,
+        ))
+        collector.flush("run-no-routing")
+
+        metrics_file = Path(tmpdir) / ".revue" / "metrics.jsonl"
+        data = json.loads(metrics_file.read_text().strip())
+
+        assert "routing" not in data
+
+
+def test_p3_routing_cleared_when_flush_exits_early_due_to_no_events() -> None:
+    """P3: _routing is reset even when flush() exits early (no events).
+    A subsequent flush with events must not inherit stale routing data."""
+    from revue.core.metrics import MetricsEvent, RoutingMetricsData
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+
+        # Run 1: record routing but no events → flush exits early
+        collector.record_routing(RoutingMetricsData(
+            ai_suggested_agents=["zara"],
+            algorithm_selected_agents=["zara", "kai"],
+            final_agents=["zara"],
+            routing_source="ai_assisted",
+            model_used="claude-sonnet-4-6",
+        ))
+        collector.flush("run-no-events")  # early exit — routing should be cleared
+
+        # Run 2: events but no record_routing() call
+        collector.record(MetricsEvent(
+            event_type="agent_call",
+            timestamp="2026-04-23T10:00:00Z",
+            agent_name="kai",
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            input_tokens=50,
+            output_tokens=25,
+        ))
+        collector.flush("run-with-events")
+
+        metrics_file = Path(tmpdir) / ".revue" / "metrics.jsonl"
+        records = [json.loads(line) for line in metrics_file.read_text().strip().splitlines()]
+
+        # Only run-with-events was written (run-no-events had no events)
+        assert len(records) == 1
+        assert records[0]["run_id"] == "run-with-events"
+        # Stale routing from run 1 must NOT bleed into run 2
+        assert "routing" not in records[0], (
+            "Stale _routing from a previous flush (with no events) must not persist to the next run"
+        )

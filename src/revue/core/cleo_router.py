@@ -8,7 +8,7 @@ DIP: depends on AgentProtocol, not concrete agent classes.
 from __future__ import annotations
 
 import fnmatch
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -136,6 +136,7 @@ class TeamSelection:
     security_override: bool
     reason: str
     skip_review: bool = False
+    algorithm_filtered_agents: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +321,7 @@ def route(
         if evaluate_triggers(agent.name, file_changes, agent_def):
             filtered.append(agent)
 
-    # AC1: Guarantee rule — ensure ≥1 non-infrastructure reviewer
+    # AC1 (REVUE-166): Guarantee rule — ensure ≥1 non-infrastructure reviewer
     # If only infrastructure agents remain, inject non-infra agents from available_agents
     # that pass trigger evaluation
     non_infra_in_filtered = [a for a in filtered if a.name not in _INFRASTRUCTURE_AGENTS]
@@ -333,7 +334,83 @@ def route(
                 if evaluate_triggers(agent.name, file_changes, agent_def):
                     filtered.append(agent)
 
+    # REVUE-170: Apply AI-signal refinement (AC2–AC4) after floor guarantee
+    selection.algorithm_filtered_agents = [a.name for a in filtered]
+    filtered = _apply_ai_routing_signal(filtered, available_agents, shared, file_changes)
+
     return selection, filtered
+
+
+def _agent_matches_ai_suggestion(agent_name: str, ai_suggestions: list[str]) -> bool:
+    """Return True if agent_name matches any AI-suggested name via 3-way substring match.
+
+    Mirrors _extract_cleo_file_assignments() in pipeline.py to handle LLM name variation:
+    exact match, canonical-in-display ("zara" in "zara security"), or display-in-canonical.
+    """
+    canonical = agent_name.lower()
+    for suggestion in ai_suggestions:
+        if not isinstance(suggestion, str):
+            continue
+        ai = suggestion.lower()
+        if canonical == ai or canonical in ai or ai in canonical:
+            return True
+    return False
+
+
+def _apply_ai_routing_signal(
+    filtered: "list[AgentProtocol]",
+    available_agents: "list[AgentProtocol]",
+    shared: "SharedAnalysisResult | None",
+    file_changes: "list[FileChange]",
+) -> "list[AgentProtocol]":
+    """Refine the algorithm's agent list using the AI's routing signal (REVUE-170).
+
+    AC4 bail-out: returns filtered unchanged when shared is None, has an error,
+    has no orchestrator_response, or has empty selected_agents.
+    AC3: if the AI signal would produce no non-infra reviewers, the original
+    algorithm result is kept (floor guarantee preserved).
+    """
+    if (
+        shared is None
+        or shared.error
+        or shared.orchestrator_response is None
+        or not shared.orchestrator_response.selected_agents
+    ):
+        return filtered  # AC4: algorithm result unchanged
+
+    ai_suggestions: list[str] = [
+        a.name for a in shared.orchestrator_response.selected_agents
+    ]
+
+    # Always keep infrastructure agents from the algorithm's filtered set
+    infra = [a for a in filtered if a.name in _INFRASTRUCTURE_AGENTS]
+
+    # Non-infra from filtered that the AI also suggested (3-way substring match)
+    ai_non_infra = [
+        a for a in filtered
+        if a.name not in _INFRASTRUCTURE_AGENTS
+        and _agent_matches_ai_suggestion(a.name, ai_suggestions)
+    ]
+
+    # Admit non-infra agents from available_agents that the AI suggested but the
+    # algorithm excluded — only if they also pass trigger evaluation (consistent
+    # with the floor guarantee block which calls evaluate_triggers before injecting)
+    filtered_names = frozenset(a.name for a in filtered)
+    for agent in available_agents:
+        if (
+            agent.name not in _INFRASTRUCTURE_AGENTS
+            and _agent_matches_ai_suggestion(agent.name, ai_suggestions)
+            and agent.name not in filtered_names
+        ):
+            agent_def = _extract_agent_def(agent)
+            if evaluate_triggers(agent.name, file_changes, agent_def):
+                ai_non_infra.append(agent)
+
+    # AC3: if AI signal yields no non-infra reviewers, keep the algorithm set
+    if not ai_non_infra:
+        return filtered
+
+    return infra + ai_non_infra
 
 
 # ---------------------------------------------------------------------------

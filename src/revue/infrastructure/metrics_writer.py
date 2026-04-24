@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from revue.core.metrics import MetricsCollector, MetricsEvent
+from revue.core.metrics import MetricsCollector, MetricsEvent, RoutingMetricsData
 
 
 class JsonlMetricsCollector(MetricsCollector):
@@ -19,13 +19,20 @@ class JsonlMetricsCollector(MetricsCollector):
         self.base_dir = Path(base_dir)
         self.events: list[MetricsEvent] = []
         self._last_totals: dict | None = None
+        self._routing: RoutingMetricsData | None = None
 
     def record(self, event: MetricsEvent) -> None:
         """Accumulate an event in memory."""
         self.events.append(event)
 
+    def record_routing(self, data: RoutingMetricsData) -> None:
+        """Store routing observability data to be included in the next flush."""
+        self._routing = data
+
     def flush(self, run_id: str) -> None:
         """Write accumulated events to .revue/metrics.jsonl as a single JSON object."""
+        routing = self._routing
+        self._routing = None
         if not self.events:
             return
 
@@ -89,7 +96,7 @@ class JsonlMetricsCollector(MetricsCollector):
             agents.append(agent_entry)
 
         # Construct the run record
-        run_record = {
+        run_record: dict[str, Any] = {
             "run_id": run_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "provider": provider or "unknown",
@@ -98,6 +105,16 @@ class JsonlMetricsCollector(MetricsCollector):
             "totals": totals,
         }
 
+        # Include routing observability data if recorded (REVUE-170 AC5)
+        if routing is not None:
+            run_record["routing"] = {
+                "ai_suggested_agents": routing.ai_suggested_agents,
+                "algorithm_selected_agents": routing.algorithm_selected_agents,
+                "final_agents": routing.final_agents,
+                "routing_source": routing.routing_source,
+                "model_used": routing.model_used,
+            }
+
         # Store totals in memory before clearing (for verbose_summary())
         self._last_totals = dict(totals)
 
@@ -105,7 +122,6 @@ class JsonlMetricsCollector(MetricsCollector):
         with open(metrics_file, "a") as f:
             f.write(json.dumps(run_record) + "\n")
 
-        # Clear events for next run
         self.events = []
 
     def verbose_summary(self) -> dict | None:

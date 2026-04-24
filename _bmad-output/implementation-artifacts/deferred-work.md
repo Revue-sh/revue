@@ -4,6 +4,15 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+## Deferred from: code review of revue-170-ai-assisted-routing (2026-04-23)
+
+- **W1** — `_agent_matches_ai_suggestion` false-positive risk on short canonical names (e.g. "leo" matches "paleontologist"); deliberate design, low practical risk with structured LLM output but worth revisiting if custom agents are added.
+- **W2** — `record_routing()` not atomic with routing decision: exception between `route()` and `record_routing()` leaves metrics unrecorded. Window is a single print statement; non-blocking.
+- **W3** — `routing_source` field in `RoutingMetricsData` is a plain `str` with no enum constraint; a typed `Literal["ai_assisted", "algorithm_fallback"]` or `StrEnum` would prevent invalid values silently persisting to JSONL.
+- **W4** — `test_ac6_state5_shared_none_falls_back_to_algorithm` uses `@pytest.mark.parametrize` with a single case; implies unfulfilled intent to parametrise all AC4 bail-out conditions in one test.
+
+---
+
 ## Deferred from REVUE-134 (2026-04-13)
 
 ### D1 — Feature flags have no env-var override path

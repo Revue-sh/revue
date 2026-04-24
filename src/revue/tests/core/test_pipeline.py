@@ -1701,3 +1701,44 @@ def test_pipeline_failure_produces_no_metrics_artefact() -> None:
 
         # flush() was never reached — no artefact
         assert not (Path(tmpdir) / ".revue" / "metrics.jsonl").exists()
+
+
+# ---------------------------------------------------------------------------
+# REVUE-170 AC5 — pipeline→metrics end-to-end wiring
+# ---------------------------------------------------------------------------
+
+def test_p4_pipeline_calls_record_routing_after_orchestration():
+    """AC5 wiring: pipeline.py calls self._metrics.record_routing() after route()
+    succeeds. CapturingMetricsCollector.routing_events must be non-empty.
+    CLAUDE.md requires caller-wiring tests, not just writer-unit tests."""
+    from revue.core.metrics import CapturingMetricsCollector
+
+    mock_client = MagicMock()
+    mock_client.complete.return_value = _cr('{"findings": []}')
+    capturing = CapturingMetricsCollector()
+
+    pro_license = _license_info(
+        tier="pro",
+        agents_allowed=[
+            "orchestrator", "code-quality-expert", "security-expert",
+            "performance-expert", "architecture-expert", "consolidator",
+            "sage", "cleo", "nova",
+        ],
+    )
+    pipeline = ReviewPipeline(
+        _config(), client=mock_client, license_info=pro_license, metrics=capturing,
+    )
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage"):
+        pipeline.run("fake.diff")
+
+    assert len(capturing.routing_events) == 1, (
+        f"Expected 1 routing event recorded by pipeline; got {len(capturing.routing_events)}"
+    )
+    event = capturing.routing_events[0]
+    assert isinstance(event.ai_suggested_agents, list)
+    assert isinstance(event.algorithm_selected_agents, list)
+    assert isinstance(event.final_agents, list)
+    assert event.routing_source in ("ai_assisted", "algorithm_fallback")
+    assert event.model_used

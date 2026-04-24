@@ -73,7 +73,8 @@ def test_run_shared_analysis_success():
 def test_run_shared_analysis_extracts_all_fields():
     result = run_shared_analysis([_fc("app.py")], _mock_client(_VALID_JSON))
     assert result.risk_areas == ["database"]
-    assert result.suggested_agents == ["maya", "zara"]
+    # Legacy JSON has no "selected_agents" key so orch_response is None → fallback default
+    assert result.suggested_agents == ["zara", "kai", "maya", "leo"]
     assert "database query" in result.summary
 
 
@@ -300,11 +301,11 @@ def test_parse_orchestrator_response_non_dict_items_skipped():
 # ---------------------------------------------------------------------------
 
 def test_run_shared_analysis_legacy_format_no_orchestrator_response():
-    """Old-format JSON (with suggested_agents) still works; orchestrator_response is None."""
+    """Old-format JSON (no 'selected_agents' key) → orch_response is None → fallback default."""
     result = run_shared_analysis([_fc("app.py")], _mock_client(_VALID_JSON))
     assert result.success
     assert result.orchestrator_response is None
-    assert result.suggested_agents == ["maya", "zara"]
+    assert result.suggested_agents == ["zara", "kai", "maya", "leo"]
 
 
 def test_run_shared_analysis_new_format_has_orchestrator_response():
@@ -316,10 +317,12 @@ def test_run_shared_analysis_new_format_has_orchestrator_response():
     assert len(result.orchestrator_response.selected_agents) == 2
 
 
-def test_run_shared_analysis_new_format_defaults_suggested_agents():
-    """New format without suggested_agents defaults to all agents."""
+def test_run_shared_analysis_new_format_suggested_agents_derived_from_orch():
+    """New format → suggested_agents derived from orchestrator_response.selected_agents names."""
     result = run_shared_analysis([_fc("app.py")], _mock_client(_VALID_ORCHESTRATOR_JSON))
-    assert result.suggested_agents == ["zara", "kai", "maya", "leo"]
+    assert result.orchestrator_response is not None
+    expected = [a.name.lower() for a in result.orchestrator_response.selected_agents]
+    assert result.suggested_agents == expected
 
 
 # ---------------------------------------------------------------------------
@@ -719,3 +722,42 @@ def test_shared_analysis_uses_result_text() -> None:
     mock_client.complete.return_value = CompletionResult(text=_VALID_JSON, usage=TokenUsage())
     result = run_shared_analysis([_fc("app.py")], mock_client)
     assert isinstance(result, SharedAnalysisResult)
+
+
+# ---------------------------------------------------------------------------
+# REVUE-170: AC1 — suggested_agents derived from orchestrator_response
+# ---------------------------------------------------------------------------
+
+def test_ac1_suggested_agents_derived_from_orchestrator_response():
+    """AC1: suggested_agents is derived from orchestrator_response.selected_agents names
+    (lowercased), not from the missing data['suggested_agents'] key."""
+    result = run_shared_analysis([_fc("app.py")], _mock_client(_VALID_ORCHESTRATOR_JSON))
+    assert result.orchestrator_response is not None
+    expected = [a.name.lower() for a in result.orchestrator_response.selected_agents]
+    assert result.suggested_agents == expected
+
+
+def test_ac1_legacy_format_no_orch_response_falls_back_to_default():
+    """AC1: when orchestrator_response is None (legacy JSON format), suggested_agents
+    falls back to the hardcoded default rather than reading data['suggested_agents']."""
+    result = run_shared_analysis([_fc("app.py")], _mock_client(_VALID_JSON))
+    assert result.orchestrator_response is None
+    assert result.suggested_agents == ["zara", "kai", "maya", "leo"]
+
+
+def test_p2_suggested_agents_falls_back_when_orch_response_has_empty_selected_agents():
+    """P2: when orch_response is set but selected_agents is [], suggested_agents falls
+    back to the default rather than producing an unexpected empty list."""
+    empty_orch_json = json.dumps({
+        "detected_areas": [],
+        "selected_agents": [],
+        "languages": ["python"],
+        "risk_areas": [],
+        "summary": "no agents selected",
+    })
+    result = run_shared_analysis([_fc("app.py")], _mock_client(empty_orch_json))
+    assert result.orchestrator_response is not None
+    assert result.orchestrator_response.selected_agents == []
+    assert result.suggested_agents == ["zara", "kai", "maya", "leo"], (
+        f"Expected default fallback when selected_agents is empty; got {result.suggested_agents}"
+    )
