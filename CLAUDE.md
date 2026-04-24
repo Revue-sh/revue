@@ -18,7 +18,7 @@ cd src && PYTHONPATH=$(pwd) pytest revue/tests/core/test_pipeline.py::test_name 
 
 ### Pull requests
 
-Every PR **must** use `.bitbucket/pull_request_template.md` — fill in every section, no placeholders left blank. See `docs/PR_TEMPLATE_GUIDE.md` for guidance.
+Every PR **must** use `.bitbucket/pull_request_template.md` — fill in every section, no placeholders left blank. See `docs/team/PR_TEMPLATE_GUIDE.md` for guidance.
 
 Commit and PR title format: `type(scope)[REVUE-XX]: description`
 
@@ -85,7 +85,7 @@ Before transitioning a ticket to Code Review:
 
 | Area | Where to look |
 |------|--------------|
-| Architecture diagram + agent roles | `docs/prd.md` §4.3 (Cleo → Zara/Kai/Maya/Leo → Nova → Comments) |
+| Architecture diagram + agent roles | `docs/planning/prd.md` §4.3 (Cleo → Zara/Kai/Maya/Leo → Nova → Comments) |
 | Nova consolidation pipeline | `docs/architecture/consolidation.md` |
 | Post-MVP agentic loop | `docs/architecture/agentic-review-loop.md` |
 | Pipeline code | `src/revue/core/pipeline.py`, `core/cleo_router.py` |
@@ -93,5 +93,5 @@ Before transitioning a ticket to Code Review:
 | VCS integration | `src/revue/core/vcs_adapter.py` |
 | Domain types | `src/revue/core/models.py` |
 | AI provider | `src/revue/core/ai_client.py` |
-| Config schema | `docs/revue-yml-reference.md` |
-| Sprint context | `docs/HANDOFF.md` |
+| Config schema | `docs/guides/revue-yml-reference.md` |
+| Sprint context | `docs/team/HANDOFF.md` |
