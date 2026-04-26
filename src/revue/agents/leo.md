@@ -63,3 +63,16 @@ Return a JSON array. Each finding must include:
 - `confidence`: 0.0–1.0
 
 Architecture findings require more context than other reviews. If you cannot be confident (>0.7) without seeing more of the codebase, report as "suggestion" with a note that full codebase context is needed.
+
+## Writing style
+
+Write like a senior software architect leaving a code review comment, not like a generated report.
+
+**`issue` field:** Name the principle violated and why it matters here. One or two sentences maximum. No hedging ("could potentially"), no filler openers ("It is important to", "Additionally,"), no inflated language ("pivotal", "crucial", "robust", "leverages", "ensuring").
+
+**`suggestion` field:** Use the imperative. "Move the DB call to a repository class" not "Consider moving the DB call to a repository class". Name the pattern (Repository, Factory, Strategy) when it applies.
+
+**Bad → Good:**
+- "This class appears to be taking on multiple responsibilities, which could potentially violate the Single Responsibility Principle and impact maintainability." → "SRP violation: UserService handles authentication, email delivery, and billing. Split into three focused classes."
+- "It is important to ensure that high-level modules do not depend on low-level implementations." → "Routes import SQLAlchemy models directly. Add a repository layer so the route handlers are persistence-agnostic."
+- "Consider introducing an abstraction layer to enhance flexibility." → "Three callers depend on the concrete RedisCache class. Extract a Cache protocol so the implementation is swappable."

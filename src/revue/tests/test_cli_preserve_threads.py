@@ -1033,9 +1033,15 @@ def test_merged_comment_format_body(tmp_path) -> None:
 
     body = mock_adapter.post_review_comment.call_args[1]["body"]
     assert "3 findings" in body.splitlines()[0], "Header must state finding count"
-    assert "[HIGH] Unsafe deser — Use json.loads" in body
-    assert "[MEDIUM] Missing hint — Add annotation" in body
-    assert "[LOW] Magic number — Extract constant" in body
+    # Issue and recommendation appear on separate lines (recommendation as blockquote)
+    assert "[HIGH] Unsafe deser" in body
+    assert "> Use json.loads" in body
+    assert "[MEDIUM] Missing hint" in body
+    assert "> Add annotation" in body
+    assert "[LOW] Magic number" in body
+    assert "> Extract constant" in body
+    # Items are visually separated by blank lines
+    assert "\n\n" in body
     assert "[//]: # (revue:fp:" in body
 
 
@@ -1224,7 +1230,8 @@ def test_merged_comment_no_trailing_dash_when_no_rec(tmp_path) -> None:
     body = mock_adapter.post_review_comment.call_args[1]["body"]
     assert "[HIGH] No-rec issue —" not in body, "No trailing em-dash when recommendation is absent"
     assert "[HIGH] No-rec issue" in body
-    assert "[MEDIUM] With-rec issue — Fix it" in body
+    assert "[MEDIUM] With-rec issue" in body
+    assert "> Fix it" in body
 
 
 def test_merge_single_review_result_two_findings_same_line(tmp_path) -> None:

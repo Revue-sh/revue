@@ -832,16 +832,16 @@ def _build_merged_comment_body(group_items: list[tuple[str, str, str]], fp: str)
     emoji = SEVERITY_EMOJI.get(highest, "⚪")
 
     header = f"**{emoji} [{highest.upper()}] {len(group_items)} findings on this line**"
-    lines = [header]
+    parts = [header]
 
     for i, (sev, issue, rec) in enumerate(group_items, start=1):
         sev_tag = sev.upper()
+        item = f"{i}. [{sev_tag}] {issue}"
         if rec:
-            lines.append(f"{i}. [{sev_tag}] {issue} — {rec}")
-        else:
-            lines.append(f"{i}. [{sev_tag}] {issue}")
+            item += f"\n> {rec}"
+        parts.append(item)
 
-    body = "\n".join(lines) + f"\n\n[//]: # (revue:fp:{fp})"
+    body = "\n\n".join(parts) + f"\n\n[//]: # (revue:fp:{fp})"
     return body
 
 

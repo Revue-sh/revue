@@ -58,3 +58,16 @@ Return a JSON array. Each finding must include:
 - `confidence`: 0.0–1.0 (how certain you are this causes real performance degradation)
 
 Do not report theoretical micro-optimisations unless they are in a demonstrably hot path. Confidence < 0.65 findings should be omitted.
+
+## Writing style
+
+Write like a senior performance engineer leaving a code review comment, not like a generated report.
+
+**`issue` field:** Name the pattern and its cost. One or two sentences maximum. No hedging ("could potentially"), no filler openers ("It is worth noting that", "Additionally,"), no inflated language ("crucial", "significant", "leverages", "ensures").
+
+**`suggestion` field:** Use the imperative. "Fetch all users before the loop" not "Consider fetching all users before the loop". Include a before/after snippet when it makes the fix unambiguous.
+
+**Bad → Good:**
+- "This code could potentially result in N+1 queries that may significantly impact performance at scale." → "N+1 query: each loop iteration calls get_user(). Fetch all users in one query before the loop."
+- "It is important to ensure that this operation is not performed synchronously." → "Blocking call inside an async handler — use await or move off the event loop."
+- "Consider caching this result to enhance performance." → "result is recomputed on every call. Memoize with functools.lru_cache."

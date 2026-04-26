@@ -88,7 +88,7 @@ Cleo reads the diff, classifies its complexity and risk level, and selects the a
 
 **Role:** Deduplicates and prioritises findings from all specialist agents.
 
-Nova receives findings from Zara, Kai, Maya, and Leo, removes duplicates and contradictions, and produces a single ranked list ordered by severity and confidence. It also generates the summary comment posted to the PR.
+Nova receives findings from Zara, Kai, Maya, and Leo, deduplicates them, and produces a single ranked list ordered by severity and confidence. It also generates the summary comment posted to the PR.
 
 **Nova does not post independent findings** — it synthesises and ranks.
 
