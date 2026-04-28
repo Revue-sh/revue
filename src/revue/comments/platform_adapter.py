@@ -1109,9 +1109,9 @@ class GitHubAdapter(PlatformAdapter):
 
     def _fetch_review_threads_page(
         self,
+        pr_number: int,
         repo_owner: str,
         repo_name: str,
-        pr_number: int,
         cursor: "str | None",
     ) -> dict:
         """Execute one GraphQL page request and return the reviewThreads dict.
@@ -1137,16 +1137,18 @@ class GitHubAdapter(PlatformAdapter):
         pr_number: int,
         repo_owner: str,
         repo_name: str,
+        max_pages: int = 50,
     ) -> list[dict]:
         """Fetch all review threads for a PR, paginating past the 100-node limit.
 
+        Stops after max_pages to prevent infinite loops from stuck API cursors.
         Returns list of dicts:
         [{"thread_id": "PRRT_xxx", "comment_id": int, "is_resolved": bool}, ...]
         """
         normalised: list[dict] = []
         cursor = None
-        while True:
-            page = self._fetch_review_threads_page(repo_owner, repo_name, pr_number, cursor)
+        for _ in range(max_pages):
+            page = self._fetch_review_threads_page(pr_number, repo_owner, repo_name, cursor)
             for t in page.get("nodes", []):
                 comment_id = t.get("comments", {}).get("nodes", [{}])[0].get("databaseId")
                 if comment_id is not None:
@@ -1158,13 +1160,24 @@ class GitHubAdapter(PlatformAdapter):
             page_info = page.get("pageInfo", {})
             if not page_info.get("hasNextPage"):
                 break
-            cursor = page_info.get("endCursor")
-            if cursor is None:
+            next_cursor = page_info.get("endCursor")
+            if next_cursor is None:
                 _log.warning(
-                    "fetch_review_thread_ids: hasNextPage=True but endCursor=null — "
-                    "stopping pagination to avoid infinite loop"
+                    "fetch_review_thread_ids: null endCursor with hasNextPage=True — stopping pagination",
                 )
                 break
+            if next_cursor == cursor:
+                _log.warning(
+                    "fetch_review_thread_ids: stuck cursor '%s' — stopping pagination",
+                    cursor,
+                )
+                break
+            cursor = next_cursor
+        else:
+            _log.warning(
+                "fetch_review_thread_ids: max_pages limit (%d) reached — stopping pagination",
+                max_pages,
+            )
         return normalised
 
     def resolve_thread(self, thread_id: str) -> bool:

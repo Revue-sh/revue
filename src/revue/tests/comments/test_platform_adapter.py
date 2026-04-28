@@ -689,6 +689,116 @@ def test_resolve_comment_graceful_fallback_when_thread_not_found() -> None:
 
     assert result is False
 
+# ---------------------------------------------------------------------------
+# REVUE-181: fetch_review_thread_ids safety guards
+# ---------------------------------------------------------------------------
+
+def test_fetch_review_thread_ids_stops_at_max_pages() -> None:
+    """TC1: loop stops after max_pages even if API keeps returning hasNextPage=True."""
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    gh = GitHubAdapter("ghp_tok")
+
+    def make_page(cursor_out: str) -> dict:
+        return {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [{"id": f"PRRT_{cursor_out}", "isResolved": False,
+                                       "comments": {"nodes": [{"databaseId": 1}]}}],
+                            "pageInfo": {"hasNextPage": True, "endCursor": cursor_out},
+                        }
+                    }
+                }
+            }
+        }
+
+    pages = [make_page(f"cursor_{i}") for i in range(10)]
+
+    with patch.object(gh, "_graphql", side_effect=pages) as mock_gql, \
+            patch("revue.comments.platform_adapter._log.warning") as mock_log:
+        result = gh.fetch_review_thread_ids(1, "owner", "repo", max_pages=3)
+
+    assert mock_gql.call_count == 3
+    mock_log.assert_called_once()
+    assert "max_pages" in mock_log.call_args.args[0]
+    assert len(result) == 3
+
+
+def test_fetch_review_thread_ids_breaks_on_null_end_cursor() -> None:
+    """P1 guard: loop stops when hasNextPage=True but endCursor is None mid-pagination."""
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    gh = GitHubAdapter("ghp_tok")
+
+    page1 = {
+        "data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": [{"id": "PRRT_1", "isResolved": False,
+                       "comments": {"nodes": [{"databaseId": 1}]}}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "cursor_valid"},
+        }}}}
+    }
+    page2 = {
+        "data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": [{"id": "PRRT_2", "isResolved": False,
+                       "comments": {"nodes": [{"databaseId": 2}]}}],
+            "pageInfo": {"hasNextPage": True, "endCursor": None},
+        }}}}
+    }
+
+    with patch.object(gh, "_graphql", side_effect=[page1, page2]) as mock_gql, \
+            patch("revue.comments.platform_adapter._log.warning") as mock_log:
+        result = gh.fetch_review_thread_ids(1, "owner", "repo")
+
+    assert mock_gql.call_count == 2
+    mock_log.assert_called_once()
+    assert "null endCursor" in mock_log.call_args.args[0]
+    assert len(result) == 2
+
+
+def test_fetch_review_thread_ids_breaks_on_stuck_cursor() -> None:
+    """TC2: loop breaks immediately when the same cursor is returned twice."""
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    gh = GitHubAdapter("ghp_tok")
+
+    page1 = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [{"id": "PRRT_1", "isResolved": False,
+                                   "comments": {"nodes": [{"databaseId": 1}]}}],
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor_stuck"},
+                    }
+                }
+            }
+        }
+    }
+    page2 = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [{"id": "PRRT_2", "isResolved": False,
+                                   "comments": {"nodes": [{"databaseId": 2}]}}],
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor_stuck"},
+                    }
+                }
+            }
+        }
+    }
+
+    with patch.object(gh, "_graphql", side_effect=[page1, page2]) as mock_gql, \
+            patch("revue.comments.platform_adapter._log.warning") as mock_log:
+        result = gh.fetch_review_thread_ids(1, "owner", "repo")
+
+    assert mock_gql.call_count == 2
+    mock_log.assert_called_once()
+    assert "stuck" in mock_log.call_args.args[0]
+    assert len(result) == 2
+
 
 # ---------------------------------------------------------------------------
 # REVUE-119 T5: GitHubAdapter.get_pr_template()
