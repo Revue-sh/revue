@@ -83,10 +83,10 @@ pipelines:
           caches:
             - pip
           script:
-            - pip install nuitka ordered-set zstandard
-            - pip install -e src/
-            - python -u build/build_nuitka.py
-            - python -u build/build_wheel.py
+            - python3.12 -m pip install nuitka ordered-set zstandard
+            - python3.12 -m pip install -e src/
+            - python3.12 -u build/build_nuitka.py
+            - python3.12 -u build/build_wheel.py
           artifacts:
             - dist/wheels/*.whl
       - step:
