@@ -70,7 +70,7 @@ pipelines:
                 caches:
                   - pip
                 script:
-                  - apt-get update && apt-get install -y --no-install-recommends gcc patchelf
+                  - apt-get update && apt-get install -y --no-install-recommends gcc patchelf libc6-dev
                   - pip install nuitka ordered-set zstandard
                   - pip install -e src/
                   - python build/build_nuitka.py
@@ -86,7 +86,7 @@ pipelines:
                 caches:
                   - pip
                 script:
-                  - apt-get update && apt-get install -y --no-install-recommends gcc patchelf
+                  - apt-get update && apt-get install -y --no-install-recommends gcc patchelf libc6-dev
                   - pip install nuitka ordered-set zstandard
                   - pip install -e src/
                   - python build/build_nuitka.py
