@@ -80,13 +80,12 @@ pipelines:
           runs-on:
             - self.hosted
             - macos
-          caches:
-            - pip
           script:
-            - python3.12 -m pip install nuitka ordered-set zstandard
-            - python3.12 -m pip install -e src/
-            - python3.12 -u build/build_nuitka.py
-            - python3.12 -u build/build_wheel.py
+            - python3.12 -m venv .build-venv
+            - .build-venv/bin/pip install nuitka ordered-set zstandard
+            - .build-venv/bin/pip install -e src/
+            - .build-venv/bin/python -u build/build_nuitka.py
+            - .build-venv/bin/python -u build/build_wheel.py
           artifacts:
             - dist/wheels/*.whl
       - step:

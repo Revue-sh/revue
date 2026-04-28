@@ -16,6 +16,8 @@ build/*
 venv/
 venv_new/
 .venv/
+.build-venv/
+.playwright-cli/
 
 # Test artifacts
 .pytest_cache/
