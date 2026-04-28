@@ -65,9 +65,10 @@ pipelines:
       - step:
           name: "Build macOS ARM64"
           runs-on:
-            - self.hosted
+            - 'self.hosted'
             - macos
           script:
+            - export PATH="/opt/homebrew/bin:$PATH"
             - python3.12 -m venv .build-venv
             - .build-venv/bin/pip install nuitka ordered-set zstandard
             - .build-venv/bin/pip install -e src/
@@ -122,3 +123,21 @@ pipelines:
     "**":
       - step: *run-tests
       - step: *revue-review
+
+  custom:
+    debug-macos-build:
+      - step:
+          name: "Debug — Build macOS ARM64"
+          runs-on:
+            - self.hosted
+            - macos
+          script:
+            - export PATH="/opt/homebrew/bin:$PATH"
+            - python3.12 --version
+            - python3.12 -m venv .build-venv
+            - .build-venv/bin/pip install nuitka ordered-set zstandard
+            - .build-venv/bin/pip install -e src/
+            - .build-venv/bin/python -u build/build_nuitka.py
+            - .build-venv/bin/python -u build/build_wheel.py
+          artifacts:
+            - dist/wheels/*.whl
