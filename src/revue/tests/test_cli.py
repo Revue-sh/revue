@@ -642,3 +642,76 @@ def test_print_metrics_summary_with_jsonl_collector(capsys) -> None:
         assert "1,000" in captured.out  # write tokens
         assert "3,000" in captured.out  # read tokens
         assert "75" in captured.out  # hit rate (3000 / 4000 = 75%)
+
+
+# ---------------------------------------------------------------------------
+# Exit code contract: posted==0 AND failed>0 → exit 1 (REVUE-179)
+# ---------------------------------------------------------------------------
+
+def _make_args_with_platform(diff_file, platform: str = "bitbucket"):
+    """Build a Namespace with platform args for exit-code contract tests."""
+    parser = build_parser()
+    return parser.parse_args([
+        "review", "--diff", str(diff_file),
+        "--platform", platform,
+        "--pr-id", "85",
+        "--workspace", "ws",
+        "--repo-slug", "repo",
+        "--bb-username", "user",
+        "--bb-token", "token",
+    ])
+
+
+def _cmd_review_with_posting_result(posting_result, tmp_path) -> int:
+    """Run cmd_review with _post_to_bitbucket patched to return posting_result."""
+    diff_file = _write_diff(tmp_path)
+    args = _make_args_with_platform(diff_file)
+
+    mock_pipeline = MagicMock()
+    mock_cfg = _make_mock_pipeline_ctx(mock_pipeline)
+
+    with patch("revue.cli.load_config", return_value=mock_cfg), \
+         patch("revue.cli.validate_config", return_value=[]), \
+         patch("revue.cli.ReviewPipeline", return_value=mock_pipeline), \
+         patch("revue.cli._post_to_bitbucket", return_value=posting_result):
+        return cmd_review(args)
+
+
+def test_exit_1_when_all_comment_posting_fails(tmp_path) -> None:
+    """cmd_review returns 1 when posted==0 AND failed>0 (total delivery failure)."""
+    rc = _cmd_review_with_posting_result((0, 3), tmp_path)
+    assert rc == 1
+
+
+def test_exit_0_on_partial_delivery(tmp_path) -> None:
+    """cmd_review returns 0 when posted>0 even if some postings failed (partial delivery)."""
+    rc = _cmd_review_with_posting_result((5, 2), tmp_path)
+    assert rc == 0
+
+
+def test_exit_0_on_clean_run_no_findings(tmp_path) -> None:
+    """cmd_review returns 0 when posted==0 AND failed==0 (no findings to post)."""
+    rc = _cmd_review_with_posting_result((0, 0), tmp_path)
+    assert rc == 0
+
+
+def test_exit_0_on_full_delivery(tmp_path) -> None:
+    """cmd_review returns 0 when all comments were posted successfully."""
+    rc = _cmd_review_with_posting_result((7, 0), tmp_path)
+    assert rc == 0
+
+
+def test_exit_0_when_no_platform_configured(tmp_path) -> None:
+    """cmd_review returns 0 when no --platform flag is passed (posting_result stays None)."""
+    diff_file = _write_diff(tmp_path)
+    args = _parse_args(["review", "--diff", str(diff_file)])
+
+    mock_pipeline = MagicMock()
+    mock_cfg = _make_mock_pipeline_ctx(mock_pipeline)
+
+    with patch("revue.cli.load_config", return_value=mock_cfg), \
+         patch("revue.cli.validate_config", return_value=[]), \
+         patch("revue.cli.ReviewPipeline", return_value=mock_pipeline):
+        rc = cmd_review(args)
+
+    assert rc == 0

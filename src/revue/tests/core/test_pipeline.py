@@ -1742,3 +1742,44 @@ def test_p4_pipeline_calls_record_routing_after_orchestration():
     assert isinstance(event.final_agents, list)
     assert event.routing_source in ("ai_assisted", "algorithm_fallback")
     assert event.model_used
+
+
+# ---------------------------------------------------------------------------
+# REVUE-179 AC4 — pipeline→metrics synthesis wiring
+# ---------------------------------------------------------------------------
+
+def test_p4_pipeline_calls_record_synthesis_after_consolidation():
+    """AC4 wiring: pipeline.py calls self._metrics.record_synthesis() after consolidate().
+    CapturingMetricsCollector.synthesis_events must be non-empty.
+    CLAUDE.md requires caller-wiring tests, not just writer-unit tests."""
+    from revue.core.metrics import CapturingMetricsCollector
+
+    mock_client = MagicMock()
+    mock_client.complete.return_value = _cr('{"findings": []}')
+    capturing = CapturingMetricsCollector()
+
+    pro_license = _license_info(
+        tier="pro",
+        agents_allowed=[
+            "orchestrator", "code-quality-expert", "security-expert",
+            "performance-expert", "architecture-expert", "consolidator",
+            "sage", "cleo", "nova",
+        ],
+    )
+    pipeline = ReviewPipeline(
+        _config(), client=mock_client, license_info=pro_license, metrics=capturing,
+    )
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage"):
+        pipeline.run("fake.diff")
+
+    assert len(capturing.synthesis_events) == 1, (
+        f"Expected 1 synthesis event recorded by pipeline; got {len(capturing.synthesis_events)}"
+    )
+    event = capturing.synthesis_events[0]
+    assert isinstance(event.total_findings, int)
+    assert isinstance(event.synthesised_count, int)
+    assert isinstance(event.synthesis_events, list)
+    assert event.synthesised_count >= 0
+    assert event.total_findings >= 0

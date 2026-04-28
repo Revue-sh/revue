@@ -21,7 +21,12 @@ from .agent_names import ORCHESTRATOR
 from .ai_config import AIConfig
 from .ai_client import AIClient, create_ai_client
 from .cleo_router import _INFRASTRUCTURE_AGENTS
-from .metrics import MetricsCollector, NullMetricsCollector, RoutingMetricsData
+from .metrics import (
+    MetricsCollector,
+    NullMetricsCollector,
+    RoutingMetricsData,
+    SynthesisMetricsData,
+)
 from .diff_parser import parse_diff_file, filter_changes
 from .diff_limit import check_diff_limit, DiffLimitResult
 from .license_validator import LicenseInfo, validate as validate_license
@@ -564,7 +569,7 @@ class ReviewPipeline:
                         flush=True,
                     )
                     _log.exception(
-                        "[REVUE-112] respond() failed for PR #%d",
+                        "respond() failed for PR #%d",
                         pr_context.pr_number,
                     )
                     # Degrade gracefully — won't-fix posting failed but review is complete.
@@ -895,13 +900,24 @@ class ReviewPipeline:
             for finding in r.findings
         ]
 
-        consolidation = consolidate(all_findings)
+        consolidation = consolidate(all_findings, ai_client=self._client)
         print(
             f"[revue]   {consolidation.original_count} findings → "
             f"{len(consolidation.findings)} after deduplication "
             f"({consolidation.duplicates_removed} removed)",
             flush=True,
         )
+
+        # Record synthesis metrics (REVUE-179 AC4)
+        synthesised_count = sum(
+            1 for f in consolidation.findings
+            if hasattr(f, "synthesised_from") and f.synthesised_from is not None
+        )
+        self._metrics.record_synthesis(SynthesisMetricsData(
+            total_findings=len(consolidation.findings),
+            synthesised_count=synthesised_count,
+            synthesis_events=consolidation.synthesis_events,
+        ))
 
         # 6. Convert AIReview findings → ReviewResult for the shared result format
         results: list[ReviewResult] = []

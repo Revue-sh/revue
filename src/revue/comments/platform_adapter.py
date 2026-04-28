@@ -276,6 +276,8 @@ class BitbucketAdapter(PlatformAdapter):
         self.webhook_secret = webhook_secret
         # Repository/Workspace Access Tokens must be sent as Bearer, not Basic Auth.
         self._is_bearer = app_password.startswith(self._BEARER_PREFIX)
+        # Set to True when Bitbucket's 200-comment-per-PR limit is hit.
+        self.comment_limit_reached = False
 
     def _auth_kwargs(self) -> dict:
         """Return the httpx auth keyword args for this token type."""
@@ -520,8 +522,16 @@ class BitbucketAdapter(PlatformAdapter):
             response.raise_for_status()
             comment_id = response.json().get("id")
             return str(comment_id) if comment_id is not None else None
+        except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:300] if exc.response.text else "(empty)"
+            if exc.response.status_code == 403 and "200 comments" in exc.response.text:
+                self.comment_limit_reached = True
+                _log.warning("❌ post_review_comment: PR %s has reached Bitbucket's 200-comment limit", pr_id)
+            else:
+                _log.warning("❌ post_review_comment failed for PR %s: %s — response: %s", pr_id, exc, body)
+            return None
         except Exception as exc:
-            _log.warning("post_review_comment failed for PR %s: %s", pr_id, exc)
+            _log.warning("❌ post_review_comment failed for PR %s: %s", pr_id, exc)
             return None
 
     post_inline_comment = post_review_comment
@@ -633,8 +643,12 @@ class BitbucketAdapter(PlatformAdapter):
                 response = httpx.post(url, json=payload, **self._auth_kwargs())
                 response.raise_for_status()
                 _log.info("Posted resolution reply to comment %s on PR %s", comment_id, pr_id)
+            except httpx.HTTPStatusError as exc:
+                body = exc.response.text[:300] if exc.response.text else "(empty)"
+                _log.warning("❌ resolve_inline_comment: reply failed for PR %s comment %s: %s — response: %s", pr_id, comment_id, exc, body)
+                return False
             except Exception as exc:
-                _log.warning("resolve_inline_comment: reply failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
+                _log.warning("❌ resolve_inline_comment: reply failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
                 return False
 
         try:
@@ -645,11 +659,100 @@ class BitbucketAdapter(PlatformAdapter):
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 409:  # Already resolved — goal achieved
                 return True
-            _log.warning("resolve_inline_comment: resolve failed for PR %s comment %s: HTTP %s", pr_id, comment_id, exc.response.status_code, exc_info=True)
+            _log.warning("❌ resolve_inline_comment: resolve failed for PR %s comment %s: HTTP %s", pr_id, comment_id, exc.response.status_code, exc_info=True)
             return False
         except Exception as exc:
-            _log.warning("resolve_inline_comment: resolve failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
+            _log.warning("❌ resolve_inline_comment: resolve failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
             return False
+
+    _REVUE_FP_SENTINEL = "revue:fp:"
+    _RESOLUTION_MARKERS = ("✅", "Issue appears to be resolved")
+
+    def delete_comment(self, pr_id: int, comment_id: str) -> bool:
+        """Delete a single PR comment.
+
+        DELETE /2.0/repositories/{ws}/{slug}/pullrequests/{id}/comments/{comment_id}
+
+        Returns True on success (including 404 — already gone).
+        Returns False on error. 403 is treated as a silent skip (comment belongs
+        to a different token identity) rather than a warning, since eviction
+        iterates over all Revue comments without pre-filtering by owner.
+        """
+        url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments/{comment_id}"
+        try:
+            response = httpx.delete(url, **self._auth_kwargs())
+            if response.status_code == 404:
+                return True
+            response.raise_for_status()
+            return True
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 403:
+                _log.debug("delete_comment: skipping comment %s on PR %s — not owned by current token", comment_id, pr_id)
+            else:
+                _log.warning("delete_comment failed for PR %s comment %s: HTTP %s", pr_id, comment_id, exc.response.status_code)
+            return False
+        except Exception as exc:
+            _log.warning("delete_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
+            return False
+
+    def evict_resolved_revue_comments(self, pr_id: int) -> int:
+        """Delete oldest resolved Revue inline comment threads to free up comment slots.
+
+        A "resolved Revue thread" is a top-level inline comment that:
+        - contains the ``revue:fp:`` fingerprint sentinel (posted by Revue), AND
+        - has at least one reply containing a resolution marker (✅ / "Issue appears
+          to be resolved"), indicating Revue already auto-resolved it.
+
+        Attempts deletion of all matching threads (replies first, then parent),
+        oldest first. Comments posted by a different token identity are silently
+        skipped — delete_comment treats 403 as a soft skip, so no extra scope
+        (e.g. ``account``) is required.
+
+        Returns the number of parent comments successfully deleted.
+        """
+        all_comments = self.get_existing_comments(pr_id)
+        if not all_comments:
+            return 0
+
+        children_by_parent: dict[int, list[dict]] = {}
+        revue_parents: list[dict] = []
+
+        for c in all_comments:
+            parent_ref = c.get("parent")
+            if parent_ref:
+                pid = parent_ref.get("id")
+                if pid is not None:
+                    children_by_parent.setdefault(int(pid), []).append(c)
+            else:
+                raw = c.get("content", {}).get("raw", "")
+                if self._REVUE_FP_SENTINEL in raw:
+                    revue_parents.append(c)
+
+        def _is_resolved(parent: dict) -> bool:
+            for reply in children_by_parent.get(int(parent["id"]), []):
+                raw = reply.get("content", {}).get("raw", "")
+                if any(m in raw for m in self._RESOLUTION_MARKERS):
+                    return True
+            return False
+
+        resolved = sorted(
+            (p for p in revue_parents if _is_resolved(p)),
+            key=lambda c: c.get("created_on", ""),
+        )
+        if not resolved:
+            return 0
+
+        deleted = 0
+        for parent in resolved:
+            parent_id = int(parent["id"])
+            for reply in children_by_parent.get(parent_id, []):
+                self.delete_comment(pr_id, str(reply["id"]))
+            if self.delete_comment(pr_id, str(parent_id)):
+                deleted += 1
+                _log.info("evict: deleted resolved thread %s on PR %s", parent_id, pr_id)
+
+        _log.info("evict: removed %d resolved Revue thread(s) from PR %s", deleted, pr_id)
+        return deleted
 
     def get_comment_replies(
         self,
@@ -754,7 +857,7 @@ class BitbucketAdapter(PlatformAdapter):
             if values:
                 existing_url = values[0].get("links", {}).get("html", {}).get("href", "")
         except Exception:
-            _log.exception("[REVUE-112] Failed to search for existing Bitbucket lessons PR")
+            _log.exception("Failed to search for existing Bitbucket lessons PR")
 
         # Always commit the updated .revue.yml to the branch
         src_url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/src"
@@ -980,22 +1083,11 @@ class GitHubAdapter(PlatformAdapter):
             raise RuntimeError(f"GraphQL error: {data['errors']}")
         return data
 
-    def fetch_review_thread_ids(
-        self,
-        pr_number: int,
-        repo_owner: str,
-        repo_name: str,
-    ) -> list[dict]:
-        """Fetch all review threads for a PR via GraphQL.
-
-        Returns list of dicts:
-        [{"thread_id": "PRRT_xxx", "comment_id": int, "is_resolved": bool}, ...]
-        """
-        query = """
-        query($owner: String!, $name: String!, $pr: Int!) {
+    _REVIEW_THREADS_QUERY = """
+        query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
           repository(owner: $owner, name: $name) {
             pullRequest(number: $pr) {
-              reviewThreads(first: 100) {
+              reviewThreads(first: 100, after: $cursor) {
                 nodes {
                   id
                   isResolved
@@ -1005,29 +1097,74 @@ class GitHubAdapter(PlatformAdapter):
                     }
                   }
                 }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
               }
             }
           }
         }
         """
+
+    def _fetch_review_threads_page(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        cursor: "str | None",
+    ) -> dict:
+        """Execute one GraphQL page request and return the reviewThreads dict.
+
+        Returns the raw ``reviewThreads`` object (``nodes`` + ``pageInfo``).
+        """
         variables = {
             "owner": repo_owner,
             "name": repo_name,
             "pr": pr_number,
+            "cursor": cursor,
         }
+        result = self._graphql(self._REVIEW_THREADS_QUERY, variables)
+        return (
+            result.get("data", {})
+            .get("repository", {})
+            .get("pullRequest", {})
+            .get("reviewThreads", {})
+        )
 
-        result = self._graphql(query, variables)
-        threads = result.get("data", {}).get("repository", {}).get("pullRequest", {}).get("reviewThreads", {}).get("nodes", [])
+    def fetch_review_thread_ids(
+        self,
+        pr_number: int,
+        repo_owner: str,
+        repo_name: str,
+    ) -> list[dict]:
+        """Fetch all review threads for a PR, paginating past the 100-node limit.
 
-        normalised = []
-        for t in threads:
-            comment_id = t.get("comments", {}).get("nodes", [{}])[0].get("databaseId")
-            if comment_id is not None:
-                normalised.append({
-                    "thread_id": t["id"],
-                    "comment_id": comment_id,
-                    "is_resolved": t.get("isResolved", False),
-                })
+        Returns list of dicts:
+        [{"thread_id": "PRRT_xxx", "comment_id": int, "is_resolved": bool}, ...]
+        """
+        normalised: list[dict] = []
+        cursor = None
+        while True:
+            page = self._fetch_review_threads_page(repo_owner, repo_name, pr_number, cursor)
+            for t in page.get("nodes", []):
+                comment_id = t.get("comments", {}).get("nodes", [{}])[0].get("databaseId")
+                if comment_id is not None:
+                    normalised.append({
+                        "thread_id": t["id"],
+                        "comment_id": comment_id,
+                        "is_resolved": t.get("isResolved", False),
+                    })
+            page_info = page.get("pageInfo", {})
+            if not page_info.get("hasNextPage"):
+                break
+            cursor = page_info.get("endCursor")
+            if cursor is None:
+                _log.warning(
+                    "fetch_review_thread_ids: hasNextPage=True but endCursor=null — "
+                    "stopping pagination to avoid infinite loop"
+                )
+                break
         return normalised
 
     def resolve_thread(self, thread_id: str) -> bool:

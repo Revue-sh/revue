@@ -9,7 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from revue.core.metrics import MetricsCollector, MetricsEvent, RoutingMetricsData
+from revue.core.metrics import (
+    MetricsCollector,
+    MetricsEvent,
+    RoutingMetricsData,
+    SynthesisMetricsData,
+)
 
 
 class JsonlMetricsCollector(MetricsCollector):
@@ -20,6 +25,7 @@ class JsonlMetricsCollector(MetricsCollector):
         self.events: list[MetricsEvent] = []
         self._last_totals: dict | None = None
         self._routing: RoutingMetricsData | None = None
+        self._synthesis: SynthesisMetricsData | None = None
 
     def record(self, event: MetricsEvent) -> None:
         """Accumulate an event in memory."""
@@ -29,10 +35,16 @@ class JsonlMetricsCollector(MetricsCollector):
         """Store routing observability data to be included in the next flush."""
         self._routing = data
 
+    def record_synthesis(self, data: SynthesisMetricsData) -> None:
+        """Store synthesis observability data to be included in the next flush."""
+        self._synthesis = data
+
     def flush(self, run_id: str) -> None:
         """Write accumulated events to .revue/metrics.jsonl as a single JSON object."""
         routing = self._routing
         self._routing = None
+        synthesis = self._synthesis
+        self._synthesis = None
         if not self.events:
             return
 
@@ -113,6 +125,14 @@ class JsonlMetricsCollector(MetricsCollector):
                 "final_agents": routing.final_agents,
                 "routing_source": routing.routing_source,
                 "model_used": routing.model_used,
+            }
+
+        # Include synthesis observability data if recorded (REVUE-179 AC4)
+        if synthesis is not None:
+            run_record["findings"] = {
+                "total": synthesis.total_findings,
+                "synthesised": synthesis.synthesised_count,
+                "synthesis_events": synthesis.synthesis_events,
             }
 
         # Store totals in memory before clearing (for verbose_summary())

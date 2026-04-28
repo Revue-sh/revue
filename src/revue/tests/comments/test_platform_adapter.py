@@ -522,7 +522,8 @@ def test_fetch_review_thread_ids_returns_list() -> None:
                                     "nodes": [{"databaseId": 101}]
                                 },
                             }
-                        ]
+                        ],
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
                     }
                 }
             }
@@ -547,7 +548,10 @@ def test_fetch_review_thread_ids_empty_pr() -> None:
         "data": {
             "repository": {
                 "pullRequest": {
-                    "reviewThreads": {"nodes": []}
+                    "reviewThreads": {
+                        "nodes": [],
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    }
                 }
             }
         }
@@ -557,6 +561,86 @@ def test_fetch_review_thread_ids_empty_pr() -> None:
         result = gh.fetch_review_thread_ids(4, "owner", "repo")
 
     assert result == []
+
+
+def test_fetch_review_thread_ids_paginates_beyond_100() -> None:
+    """fetch_review_thread_ids follows pageInfo.hasNextPage to collect all threads."""
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    gh = GitHubAdapter("ghp_tok")
+
+    page1 = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {"id": "PRRT_p1", "isResolved": False, "comments": {"nodes": [{"databaseId": 1}]}},
+                        ],
+                        "pageInfo": {"hasNextPage": True, "endCursor": "cursor_abc"},
+                    }
+                }
+            }
+        }
+    }
+    page2 = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {"id": "PRRT_p2", "isResolved": True, "comments": {"nodes": [{"databaseId": 2}]}},
+                        ],
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    }
+                }
+            }
+        }
+    }
+
+    with patch.object(gh, "_graphql", side_effect=[page1, page2]) as mock_gql:
+        result = gh.fetch_review_thread_ids(7, "owner", "repo")
+
+    assert mock_gql.call_count == 2
+    # First call: cursor=None
+    assert mock_gql.call_args_list[0][0][1]["cursor"] is None
+    # Second call: cursor from page1
+    assert mock_gql.call_args_list[1][0][1]["cursor"] == "cursor_abc"
+    assert len(result) == 2
+    assert result[0] == {"thread_id": "PRRT_p1", "comment_id": 1, "is_resolved": False}
+    assert result[1] == {"thread_id": "PRRT_p2", "comment_id": 2, "is_resolved": True}
+
+
+def test_fetch_review_thread_ids_breaks_on_null_end_cursor() -> None:
+    """EC-3: When GitHub returns hasNextPage=True but endCursor=null (malformed API response),
+    the loop must break rather than looping forever with cursor=None."""
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    gh = GitHubAdapter("ghp_tok")
+
+    # API returns hasNextPage=True but endCursor=null — infinite loop without fix
+    malformed_page = {
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {
+                        "nodes": [
+                            {"id": "PRRT_x1", "isResolved": False,
+                             "comments": {"nodes": [{"databaseId": 99}]}},
+                        ],
+                        "pageInfo": {"hasNextPage": True, "endCursor": None},
+                    }
+                }
+            }
+        }
+    }
+
+    with patch.object(gh, "_graphql", return_value=malformed_page) as mock_gql:
+        result = gh.fetch_review_thread_ids(1, "owner", "repo")
+
+    # Must terminate after exactly one call (not loop forever)
+    assert mock_gql.call_count == 1
+    assert len(result) == 1
 
 
 def test_resolve_thread_calls_mutation() -> None:

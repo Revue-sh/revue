@@ -35,7 +35,13 @@ revue-review:
     APP_ENV: staging
     GIT_DEPTH: "0"
     REPOSITORY: $CI_PROJECT_PATH
+    REVUE_METRICS_ENABLED: "1"
   allow_failure: true
+  artifacts:
+    when: always
+    paths:
+      - .revue/metrics.jsonl
+    expire_in: 30 days
   script:
     - apt-get update -qq && apt-get install -y -qq git curl
     - pip install openai anthropic httpx pyyaml tomli-w --quiet

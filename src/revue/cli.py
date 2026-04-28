@@ -366,12 +366,13 @@ def cmd_review(
         config_style = getattr(config, "comment_style", None)
         args.comment_style = config_style if config_style in ("per-issue", "summary") else "per-issue"
     platform = getattr(args, "platform", None)
+    posting_result: tuple[int, int] | None = None
     if platform == "bitbucket":
-        _post_to_bitbucket(args, review_results, config, fallback_mode=fallback_mode)
+        posting_result = _post_to_bitbucket(args, review_results, config, fallback_mode=fallback_mode)
     elif platform == "github":
-        _post_to_github(args, review_results, config, fallback_mode=fallback_mode)
+        posting_result = _post_to_github(args, review_results, config, fallback_mode=fallback_mode)
     elif platform == "gitlab":
-        _post_to_gitlab(args, review_results, config, fallback_mode=fallback_mode)
+        posting_result = _post_to_gitlab(args, review_results, config, fallback_mode=fallback_mode)
 
     # Fail the pipeline when any agent failed — review is incomplete.
     # We post findings from successful agents first (above) so developers
@@ -400,6 +401,11 @@ def cmd_review(
             print(f"## {r['file']}")
             print(r["review"])
 
+    if posting_result is not None:
+        _posted, _failed = posting_result
+        if _posted == 0 and _failed > 0:
+            return 1
+
     print("[revue] ✅ Review cycle complete.", flush=True)
     return 0
 
@@ -419,6 +425,14 @@ _AGENT_DISPLAY_NAMES: dict[str, str] = {
     "zara": "Zara",
     "kai": "Kai",
     "maya": "Maya",
+    "nova": "Nova",
+}
+_AGENT_EMOJIS: dict[str, str] = {
+    "leo": "🏗️",
+    "zara": "🔒",
+    "kai": "⚡",
+    "maya": "✨",
+    "nova": "🌟",
 }
 _CATEGORY_CLEAN_LABELS = {
     "Architecture": "SOLID compliant, no structural issues",
@@ -457,6 +471,25 @@ def _star_rating(
     empty = 5 - full - half
     stars = "⭐" * full + ("✨" if half else "") + "☆" * empty
     return f"{stars} {score:.1f}/5.0"
+
+
+def _format_synthesis_attribution(contributors: list) -> str:
+    """Format synthesis attribution as 'Agents: Kai ⚡ **Performance** | Zara 🔒 **Security** → Nova 🌟 (synthesised)'.
+
+    contributors: list of (agent_name, category) pairs — tuples or 2-element lists.
+    """
+    def agent_label(name: str, category: str) -> str:
+        display = _AGENT_DISPLAY_NAMES.get(name, name.title())
+        emoji = _AGENT_EMOJIS.get(name, "")
+        label = f"{display} {emoji}" if emoji else display
+        return f"{label} **{category.replace('-', ' ').title()}**"
+
+    unique = list(dict.fromkeys((c[0], c[1]) for c in contributors))
+    agents_str = " | ".join(agent_label(name, cat) for name, cat in unique)
+    nova_display = _AGENT_DISPLAY_NAMES.get("nova", "Nova")
+    nova_emoji = _AGENT_EMOJIS.get("nova", "")
+    nova_label = f"{nova_display} {nova_emoji}" if nova_emoji else nova_display
+    return f"Agents: {agents_str} → {nova_label} (synthesised)"
 
 
 def _build_enhanced_summary(
@@ -845,6 +878,40 @@ def _build_merged_comment_body(group_items: list[tuple[str, str, str]], fp: str)
     return body
 
 
+def _post_or_evict_and_retry(
+    adapter,
+    pr_num: int,
+    position,
+    body: str,
+    eviction_state: list[bool],
+) -> str | None:
+    """Post a review comment, evicting resolved threads once if the 200-comment limit is hit.
+
+    ``eviction_state`` is a single-element list used as a mutable flag so the
+    caller's loop can share state across iterations without a nonlocal.  Set
+    ``eviction_state[0] = False`` before the loop; the function flips it to
+    True on the first eviction attempt so subsequent calls skip the expensive
+    API round-trip.
+
+    Returns the posted comment ID on success, or None on failure.
+    """
+    comment_id = adapter.post_review_comment(pr_id=pr_num, position=position, body=body)
+    if comment_id is not None:
+        return comment_id
+
+    if not getattr(adapter, "comment_limit_reached", False) or eviction_state[0]:
+        return None
+
+    eviction_state[0] = True
+    evicted = adapter.evict_resolved_revue_comments(pr_num)
+    if evicted == 0:
+        return None
+
+    print(f"[revue] 🗑️ Evicted {evicted} resolved Revue comment(s) to free up space")
+    adapter.comment_limit_reached = False
+    return adapter.post_review_comment(pr_id=pr_num, position=position, body=body)
+
+
 def _run_per_issue_dedup(
     adapter,
     pr_num: int,
@@ -852,7 +919,7 @@ def _run_per_issue_dedup(
     review_results: list,
     diff_by_file: dict,
     dedup_store,
-) -> tuple[int, int, dict[str, int], int]:
+) -> tuple[int, int, dict[str, int], int, int]:
     """Core per-issue dedup loop shared across all platform posting functions.
 
     Nova's consolidated list is the authoritative set of findings — every item
@@ -864,13 +931,16 @@ def _run_per_issue_dedup(
     fingerprints derived from inline comment metadata prevent re-posting without
     any stored state.
 
-    Returns ``(posted, skipped, total_findings, previously_tracked)`` where:
+    Returns ``(posted, skipped, total_findings, previously_tracked, failed)`` where:
     - ``total_findings``     — severity breakdown for findings requiring attention
                                (new postings + open-prior skips; excludes resolved-prior)
     - ``previously_tracked`` — count of findings skipped because they matched a
                                RESOLVED prior thread (won't-fix decisions). These are
                                excluded from total_findings so the summary does not
-                               claim they 'require attention'.
+                               claim they 'require attention'
+    - ``failed``             — count of findings where the API call was attempted but
+                               returned an error (e.g. 403 Forbidden). Non-zero means
+                               the review is incomplete and the user should check credentials.
 
     Order guarantee: total_findings is incremented AFTER the resolved-prior check
     so that resolved won't-fix findings are never counted toward the summary total.
@@ -888,8 +958,10 @@ def _run_per_issue_dedup(
     merged_prior = {**api_fps, **prior_unresolved}
     posted = 0
     skipped = 0
+    failed = 0
     previously_tracked = 0
     total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
+    _eviction_state: list[bool] = [False]  # shared mutable flag for _post_or_evict_and_retry
     # Hunk fps seen this cycle — used by AC5 to detect fixed findings.
     seen_hunk_fps: set[str] = set()
 
@@ -969,7 +1041,11 @@ def _run_per_issue_dedup(
             sev, issue, rec, details, cat, f = group_items[0]
             emoji = SEVERITY_EMOJI.get(sev, "⚪")
             body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
-            if cat:
+            synthesised_from = f.get("synthesised_from")
+            if synthesised_from:
+                attribution = _format_synthesis_attribution(synthesised_from)
+                body_parts.append(f"*{attribution}*")
+            elif cat:
                 display_cat = cat.replace('-', ' ').title()
                 display_agent = _AGENT_DISPLAY_NAMES.get(f.get("agent_name", ""), "")
                 label = f"{display_agent} · {display_cat}" if display_agent else display_cat
@@ -1006,7 +1082,7 @@ def _run_per_issue_dedup(
             skipped += len(group_items)
             continue
 
-        comment_id = adapter.post_review_comment(pr_id=pr_num, position=position, body=body)
+        comment_id = _post_or_evict_and_retry(adapter, pr_num, position, body, _eviction_state)
 
         if comment_id is not None:
             posted += 1
@@ -1019,6 +1095,8 @@ def _run_per_issue_dedup(
                 line_number=line,
                 comment_body=body,
             )
+        else:
+            failed += 1
 
     # AC5: auto-resolve findings absent from new review.
     # Use merged_prior so API-seeded entries (fresh CI) are also considered.
@@ -1043,7 +1121,7 @@ def _run_per_issue_dedup(
                     reason="auto-resolved",
                 )
 
-    return posted, skipped, total_findings, previously_tracked
+    return posted, skipped, total_findings, previously_tracked, failed
 
 
 def _post_to_platform(
@@ -1060,7 +1138,7 @@ def _post_to_platform(
     fallback_mode: str = "normal",
     show_reviewed_files: bool = True,
     rating_cfg: dict | None = None,
-) -> None:
+) -> tuple[int, int]:
     """Shared posting logic for Bitbucket, GitHub, and GitLab (Winston #2).
 
     All three platforms share identical dedup, summary tracking, and comment
@@ -1235,7 +1313,7 @@ def _post_to_platform(
             )
             _post_or_update_summary(summary_body)
 
-        posted, skipped, total_findings, previously_tracked = _run_per_issue_dedup(
+        posted, skipped, total_findings, previously_tracked, failed = _run_per_issue_dedup(
             adapter, pr_num, platform_str, review_results, diff_by_file, dedup_store
         )
         # total_findings is now reassigned to the post-dedup accurate counts.
@@ -1254,12 +1332,18 @@ def _post_to_platform(
             )
             _post_or_update_summary(summary_body)
 
+        if failed:
+            if getattr(adapter, "comment_limit_reached", False):
+                print(f"[revue] ❌ {pr_label} #{pr_id} has reached Bitbucket's 200-comment limit — resolve or delete old Revue comments to make room for new ones")
+            else:
+                print(f"[revue] ❌ {failed} comment(s) could not be posted to {pr_label} #{pr_id} — API error (check token permissions)")
         if skipped > 0:
             print(f"[revue] Review posted to {pr_label} #{pr_id} — {posted} new, {skipped} preserved inline comment(s)")
         else:
             print(f"[revue] Review posted to {pr_label} #{pr_id} — {posted} inline comment(s)")
     else:
         posted = 0
+        failed = 0
         total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
         file_sections = []
         for rr in review_results:
@@ -1286,8 +1370,10 @@ def _post_to_platform(
         _post_or_update_summary(summary_body)
         print(f"[revue] Review posted to {pr_label} #{pr_id} — {posted} file(s) in summary comment")
 
+    return posted, failed
 
-def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> None:
+
+def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> tuple[int, int] | None:
     """Resolve Bitbucket credentials and delegate to _post_to_platform."""
     from revue.comments.platform_adapter import BitbucketAdapter
     from revue.core.diff_parser import parse_diff_file
@@ -1318,7 +1404,7 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=No
         repo_slug=repo_slug,
     )
     diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
-    _post_to_platform(
+    return _post_to_platform(
         adapter=adapter, pr_id=pr_id,
         platform_str="bitbucket", platform_enum=Platform.BITBUCKET,
         repo_owner=workspace, repo_name=repo_slug,
@@ -1330,7 +1416,7 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=No
     )
 
 
-def _post_to_github(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> None:
+def _post_to_github(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> tuple[int, int] | None:
     """Resolve GitHub credentials and delegate to _post_to_platform."""
     from revue.core.github_adapter import GitHubAdapter
     from revue.core.diff_parser import parse_diff_file
@@ -1363,7 +1449,7 @@ def _post_to_github(args: argparse.Namespace, review_results: list, config=None,
     rating_cfg = getattr(config, "rating_weights", None) if config else None
     adapter = GitHubAdapter(token=token, repo=repo)
     diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
-    _post_to_platform(
+    return _post_to_platform(
         adapter=adapter, pr_id=pr_id,
         platform_str="github", platform_enum=Platform.GITHUB,
         repo_owner=repo_owner, repo_name=repo_name,
@@ -1375,7 +1461,7 @@ def _post_to_github(args: argparse.Namespace, review_results: list, config=None,
     )
 
 
-def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> None:
+def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> tuple[int, int] | None:
     """Resolve GitLab credentials and delegate to _post_to_platform."""
     from revue.core.gitlab_adapter import GitLabAdapter
     from revue.core.diff_parser import parse_diff_file
@@ -1408,7 +1494,7 @@ def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None,
     rating_cfg = getattr(config, "rating_weights", None) if config else None
     adapter = GitLabAdapter(token=token, project_id=project_id)
     diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
-    _post_to_platform(
+    return _post_to_platform(
         adapter=adapter, pr_id=pr_id,
         platform_str="gitlab", platform_enum=Platform.GITLAB,
         repo_owner=repo_owner, repo_name=repo_name,

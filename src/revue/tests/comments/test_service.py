@@ -86,6 +86,39 @@ def test_analyse_reply_threads_batches_into_one_call() -> None:
 
 
 # ---------------------------------------------------------------------------
+# TC1c: large thread list is split into multiple batches
+# ---------------------------------------------------------------------------
+
+def test_analyse_reply_threads_splits_large_list_into_batches() -> None:
+    """TC1c: 20 threads (> batch size of 15) → 2 AI calls; all decisions returned."""
+    from revue.core.dedup_consolidator import _THREAD_BATCH_SIZE
+
+    batch_size = _THREAD_BATCH_SIZE  # 15
+    total = batch_size + 5           # 20 — needs exactly 2 calls
+
+    def _batch_decisions(threads: list[dict]) -> str:
+        return json.dumps(
+            [{"fingerprint": t["fingerprint"], "decision": "reason_missing", "reply_draft": "x"}
+             for t in threads]
+        )
+
+    all_threads = _make_threads(total)
+    client = MagicMock()
+    # Return decisions for whatever batch the AI receives
+    client.complete.side_effect = lambda msgs, **kw: _cr(
+        _batch_decisions(json.loads(msgs[0]["content"].split("\n\n", 1)[1]))
+    )
+    nova = NovaConsolidator(client)
+
+    result = nova.analyse_reply_threads(all_threads)
+
+    assert client.complete.call_count == 2
+    assert len(result) == total
+    returned_fps = {d["fingerprint"] for d in result}
+    assert returned_fps == {t["fingerprint"] for t in all_threads}
+
+
+# ---------------------------------------------------------------------------
 # TC2: AI response parsed correctly
 # ---------------------------------------------------------------------------
 
@@ -152,45 +185,83 @@ def test_parse_thread_decisions_strips_trailing_commas() -> None:
 
 
 # ---------------------------------------------------------------------------
-# TC4: Invalid JSON from AI → ValueError raised (AC10)
+# TC4: Invalid JSON from AI → batch skipped, returns [] (EC-2 per-batch isolation)
 # ---------------------------------------------------------------------------
 
-def test_analyse_reply_threads_invalid_json_raises() -> None:
-    """TC4: Malformed AI response → ValueError raised (pipeline fails)."""
+def test_analyse_reply_threads_invalid_json_returns_empty() -> None:
+    """TC4: Malformed AI response in a batch → that batch is skipped, [] returned.
+    Per-batch isolation means a single bad response does not raise to the caller."""
     client = MagicMock()
     client.complete.return_value = _cr("this is not json at all")
     nova = NovaConsolidator(client)
 
-    with pytest.raises(ValueError, match="malformed JSON"):
-        nova.analyse_reply_threads(_make_threads(1))
+    result = nova.analyse_reply_threads(_make_threads(1))
+    assert result == []
 
 
 # ---------------------------------------------------------------------------
-# TC5: AI returns non-list JSON → ValueError raised (AC10)
+# TC5: AI returns non-list JSON → batch skipped, returns []
 # ---------------------------------------------------------------------------
 
-def test_analyse_reply_threads_non_list_json_raises() -> None:
-    """TC5: AI returns object instead of array → ValueError raised."""
+def test_analyse_reply_threads_non_list_json_returns_empty() -> None:
+    """TC5: AI returns object instead of array → batch skipped, [] returned."""
     client = MagicMock()
     client.complete.return_value = _cr('{"error": "unexpected"}')
     nova = NovaConsolidator(client)
 
-    with pytest.raises(ValueError, match="non-list JSON"):
-        nova.analyse_reply_threads(_make_threads(1))
+    result = nova.analyse_reply_threads(_make_threads(1))
+    assert result == []
 
 
 # ---------------------------------------------------------------------------
-# TC6: AI call raises → exception re-raised (AC10)
+# TC6: AI call raises → batch skipped, returns []
 # ---------------------------------------------------------------------------
 
-def test_analyse_reply_threads_reraises_ai_exception() -> None:
-    """TC6: AC10 — any AI exception must propagate, not be swallowed."""
+def test_analyse_reply_threads_ai_exception_returns_empty() -> None:
+    """TC6: AI call raises → batch skipped, [] returned. Exception must not propagate."""
     client = MagicMock()
     client.complete.side_effect = RuntimeError("API unavailable")
     nova = NovaConsolidator(client)
 
-    with pytest.raises(RuntimeError, match="API unavailable"):
-        nova.analyse_reply_threads(_make_threads(1))
+    result = nova.analyse_reply_threads(_make_threads(1))
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# EC-2: Partial batch failure must not discard prior successful results
+# ---------------------------------------------------------------------------
+
+def test_analyse_reply_threads_partial_batch_failure_returns_prior_results() -> None:
+    """EC-2: When batch N fails, results from batches 1..N-1 are preserved.
+    Prior to the fix, any batch failure discarded all accumulated decisions."""
+    from revue.core.dedup_consolidator import _THREAD_BATCH_SIZE
+
+    batch_size = _THREAD_BATCH_SIZE  # 15
+    total = batch_size + 1           # 16 threads → 2 batches
+
+    batch1_decisions = [
+        {"fingerprint": f"fp{i:04d}", "decision": "reason_missing", "reply_draft": "x"}
+        for i in range(batch_size)
+    ]
+    batch1_json = json.dumps(batch1_decisions)
+
+    call_count = [0]
+
+    def side_effect(msgs, **kw):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return _cr(batch1_json)        # batch 1: succeeds
+        raise RuntimeError("transient error")  # batch 2: fails
+
+    client = MagicMock()
+    client.complete.side_effect = side_effect
+    nova = NovaConsolidator(client)
+
+    result = nova.analyse_reply_threads(_make_threads(total))
+
+    assert len(result) == batch_size, (
+        "Batch 1 results must be returned even when batch 2 fails"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -244,20 +315,18 @@ def test_wont_fix_service_skips_ai_when_no_replies(tmp_path) -> None:
 
     client = MagicMock()
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        # Adapter returns no replies for any comment
-        instance.get_comment_replies.return_value = []
+    mock_adapter = MagicMock()
+    # Adapter returns no replies for any comment
+    mock_adapter.get_comment_replies.return_value = []
 
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=client,
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
-        svc.process_wont_fix_replies(pr_number=42)
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=client,
+        repo_owner="ws",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
+    svc.process_wont_fix_replies(pr_number=42)
 
     client.complete.assert_not_called()
 
@@ -293,11 +362,10 @@ def test_wont_fix_service_updates_state_to_wont_fix(tmp_path) -> None:
     ]
     client = _ai_client_returning(decisions)
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter, \
-         patch("revue.comments.service.WontFixReplyService._ensure_lessons_pr",
+    mock_adapter = MagicMock()
+    with patch("revue.comments.service.WontFixReplyService._ensure_lessons_pr",
                return_value="https://bitbucket.org/ws/repo/pull-requests/99"):
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
+        mock_adapter.get_all_pr_comments.return_value = [
             {
                 "id": 100,
                 "inline": {"path": "src/main.py", "to": 42},
@@ -313,10 +381,10 @@ def test_wont_fix_service_updates_state_to_wont_fix(tmp_path) -> None:
         svc = WontFixReplyService(
             repo_path=str(tmp_path),
             ai_client=client,
-            bitbucket_username="u",
-            bitbucket_app_password="p",
             repo_owner="ws",
             repo_name="repo",
+            platform="bitbucket",
+            adapter=mock_adapter,
         )
         svc.process_wont_fix_replies(pr_number=1)
 
@@ -353,42 +421,41 @@ def test_wont_fix_service_reason_missing_posts_reply_no_state_change(tmp_path) -
     ]
     client = _ai_client_returning(decisions)
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            {
-                "id": 200,
-                "inline": {"path": "src/foo.py", "to": 10},
-                "content": {"raw": "**🔴 [HIGH] Security issue\n*Security*"},
-            },
-            {
-                "id": 201,
-                "parent": {"id": 200},
-                "content": {"raw": "I don't want to fix this"},
-            },
-        ]
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 200,
+            "inline": {"path": "src/foo.py", "to": 10},
+            "content": {"raw": "**🔴 [HIGH] Security issue\n*Security*"},
+        },
+        {
+            "id": 201,
+            "parent": {"id": 200},
+            "content": {"raw": "I don't want to fix this"},
+        },
+    ]
 
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=client,
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
-        svc.process_wont_fix_replies(pr_number=2)
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=client,
+        repo_owner="ws",
+        repo_name="repo",
+        platform="bitbucket",
+        adapter=mock_adapter,
+    )
+    svc.process_wont_fix_replies(pr_number=2)
 
     # State must remain unresolved (reason_missing does not mark resolved)
     unresolved = store.get_unresolved_fingerprints("bitbucket", 2)
     assert "deadbeef" in unresolved
 
     # Reply must have been posted
-    instance.post_reply.assert_called_once()
-    reply_body = instance.post_reply.call_args[0][5]
+    mock_adapter.post_reply.assert_called_once()
+    reply_body = mock_adapter.post_reply.call_args[0][5]
     assert "explain" in reply_body.lower() or "reason" in reply_body.lower()
 
     # Thread must NOT be resolved — reason_missing is an open question, not a closed decision
-    instance.resolve_comment.assert_not_called()
+    mock_adapter.resolve_comment.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -419,40 +486,39 @@ def test_wont_fix_service_not_acknowledged_posts_reply_no_state_change(tmp_path)
     ]
     client = _ai_client_returning(decisions)
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            {
-                "id": 300,
-                "inline": {"path": "src/bar.py", "to": 5},
-                "content": {"raw": "**🔴 [HIGH] XSS vulnerability\n*Security*"},
-            },
-            {
-                "id": 301,
-                "parent": {"id": 300},
-                "content": {"raw": "lgtm"},
-            },
-        ]
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 300,
+            "inline": {"path": "src/bar.py", "to": 5},
+            "content": {"raw": "**🔴 [HIGH] XSS vulnerability\n*Security*"},
+        },
+        {
+            "id": 301,
+            "parent": {"id": 300},
+            "content": {"raw": "lgtm"},
+        },
+    ]
 
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=client,
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
-        svc.process_wont_fix_replies(pr_number=3)
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=client,
+        repo_owner="ws",
+        repo_name="repo",
+        platform="bitbucket",
+        adapter=mock_adapter,
+    )
+    svc.process_wont_fix_replies(pr_number=3)
 
     # State unchanged (not_acknowledged does not mark resolved)
     unresolved = store.get_unresolved_fingerprints("bitbucket", 3)
     assert "cafebabe" in unresolved
 
     # Thread must NOT be resolved — not_acknowledged keeps the finding open
-    instance.resolve_comment.assert_not_called()
+    mock_adapter.resolve_comment.assert_not_called()
 
     # Reply posted
-    instance.post_reply.assert_called_once()
+    mock_adapter.post_reply.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -492,11 +558,10 @@ def test_wont_fix_service_injects_lessons_pr_url_into_reply(tmp_path) -> None:
         call_order.append("lessons_pr")
         return pr_url
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter, \
-         patch("revue.comments.service.WontFixReplyService._ensure_lessons_pr",
+    mock_adapter = MagicMock()
+    with patch("revue.comments.service.WontFixReplyService._ensure_lessons_pr",
                side_effect=mock_ensure_pr):
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
+        mock_adapter.get_all_pr_comments.return_value = [
             {
                 "id": 400,
                 "inline": {"path": "src/x.py", "to": 1},
@@ -512,15 +577,15 @@ def test_wont_fix_service_injects_lessons_pr_url_into_reply(tmp_path) -> None:
         def record_post_reply(*args, **kwargs):
             call_order.append("post_reply")
 
-        instance.post_reply.side_effect = record_post_reply
+        mock_adapter.post_reply.side_effect = record_post_reply
 
         svc = WontFixReplyService(
             repo_path=str(tmp_path),
             ai_client=client,
-            bitbucket_username="u",
-            bitbucket_app_password="p",
             repo_owner="ws",
             repo_name="repo",
+            platform="bitbucket",
+            adapter=mock_adapter,
         )
         svc.process_wont_fix_replies(pr_number=10)
 
@@ -528,7 +593,7 @@ def test_wont_fix_service_injects_lessons_pr_url_into_reply(tmp_path) -> None:
     assert call_order.index("lessons_pr") < call_order.index("post_reply")
 
     # URL must be injected into the reply
-    posted_body = instance.post_reply.call_args[0][5]
+    posted_body = mock_adapter.post_reply.call_args[0][5]
     assert pr_url in posted_body
     assert "[LESSONS_PR_URL]" not in posted_body
 
@@ -555,37 +620,35 @@ def test_wont_fix_service_degrades_gracefully_on_ai_exception(tmp_path) -> None:
     client = MagicMock()
     client.complete.side_effect = RuntimeError("AI service down")
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            {
-                "id": 500,
-                "inline": {"path": "src/z.py", "to": 1},
-                "content": {"raw": "**🔵 [LOW] Issue\n*Code Quality*"},
-            },
-            {
-                "id": 501,
-                "parent": {"id": 500},
-                "content": {"raw": "Won't fix — not applicable here"},
-            },
-        ]
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 500,
+            "inline": {"path": "src/z.py", "to": 1},
+            "content": {"raw": "**🔵 [LOW] Issue\n*Code Quality*"},
+        },
+        {
+            "id": 501,
+            "parent": {"id": 500},
+            "content": {"raw": "Won't fix — not applicable here"},
+        },
+    ]
 
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=client,
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=client,
+        repo_owner="ws",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
 
-        # classify() must not raise — it degrades gracefully so the pipeline continues
-        result = svc.classify(pr_number=20)
-        assert result.decisions == []
-        assert result.patterns_to_allow == []
+    # classify() must not raise — it degrades gracefully so the pipeline continues
+    result = svc.classify(pr_number=20)
+    assert result.decisions == []
+    assert result.patterns_to_allow == []
 
-        # process_wont_fix_replies (thin wrapper) must also complete without raising
-        svc.process_wont_fix_replies(pr_number=20)
+    # process_wont_fix_replies (thin wrapper) must also complete without raising
+    svc.process_wont_fix_replies(pr_number=20)
 
 
 # ---------------------------------------------------------------------------
@@ -618,13 +681,12 @@ def test_wont_fix_service_lessons_pr_failure_posts_yaml_block(tmp_path) -> None:
     ]
     client = _ai_client_returning(decisions)
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter, \
-         patch(
+    mock_adapter = MagicMock()
+    with patch(
              "revue.comments.service.WontFixReplyService._ensure_lessons_pr",
              side_effect=RuntimeError("Bitbucket API unavailable"),
          ):
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
+        mock_adapter.get_all_pr_comments.return_value = [
             {
                 "id": 600,
                 "inline": {"path": "src/auth.py", "to": 15},
@@ -640,17 +702,17 @@ def test_wont_fix_service_lessons_pr_failure_posts_yaml_block(tmp_path) -> None:
         svc = WontFixReplyService(
             repo_path=str(tmp_path),
             ai_client=client,
-            bitbucket_username="u",
-            bitbucket_app_password="p",
             repo_owner="ws",
             repo_name="repo",
+            platform="bitbucket",
+            adapter=mock_adapter,
         )
         # Must NOT raise — pipeline continues on lessons PR failure
         svc.process_wont_fix_replies(pr_number=30)
 
     # Reply must have been posted with a YAML block for manual application
-    instance.post_reply.assert_called_once()
-    posted_body = instance.post_reply.call_args[0][5]
+    mock_adapter.post_reply.assert_called_once()
+    posted_body = mock_adapter.post_reply.call_args[0][5]
     assert "```yaml" in posted_body
 
     # State must still be updated to wont_fix (finding resolved)
@@ -716,17 +778,15 @@ def test_classify_returns_classification_result(tmp_path) -> None:
         },
     ]
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter, \
-         patch.object(NovaConsolidator, "analyse_reply_threads", return_value=ai_decisions):
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = api_comments
+    mock_adapter = MagicMock()
+    with patch.object(NovaConsolidator, "analyse_reply_threads", return_value=ai_decisions):
+        mock_adapter.get_all_pr_comments.return_value = api_comments
         svc = WontFixReplyService(
             repo_path=str(tmp_path),
             ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
             repo_owner="ws",
             repo_name="repo",
+            adapter=mock_adapter,
         )
         result = svc.classify(42)
 
@@ -776,21 +836,19 @@ def test_classify_performs_no_writes(tmp_path) -> None:
         },
     ]
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter, \
-         patch.object(NovaConsolidator, "analyse_reply_threads", return_value=ai_decisions):
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = api_comments
+    mock_adapter = MagicMock()
+    with patch.object(NovaConsolidator, "analyse_reply_threads", return_value=ai_decisions):
+        mock_adapter.get_all_pr_comments.return_value = api_comments
         svc = WontFixReplyService(
             repo_path=str(tmp_path),
             ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
             repo_owner="ws",
             repo_name="repo",
+            adapter=mock_adapter,
         )
         with patch.object(svc, "_append_pattern_to_config") as mock_append, \
              patch.object(svc, "_ensure_lessons_pr") as mock_pr, \
-             patch.object(instance, "post_reply") as mock_reply:
+             patch.object(mock_adapter, "post_reply") as mock_reply:
             svc.classify(42)
 
     mock_append.assert_not_called()
@@ -808,18 +866,16 @@ def test_classify_empty_threads_returns_empty_result(tmp_path) -> None:
     from revue.core.models import ClassificationResult
     from revue.core.dedup_consolidator import NovaConsolidator
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter, \
-         patch.object(NovaConsolidator, "analyse_reply_threads") as mock_ai:
-        instance = MockAdapter.return_value
+    mock_adapter = MagicMock()
+    with patch.object(NovaConsolidator, "analyse_reply_threads") as mock_ai:
         # No finding-format comments → empty threads → AI never called
-        instance.get_all_pr_comments.return_value = []
+        mock_adapter.get_all_pr_comments.return_value = []
         svc = WontFixReplyService(
             repo_path=str(tmp_path),
             ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
             repo_owner="ws",
             repo_name="repo",
+            adapter=mock_adapter,
         )
         result = svc.classify(42)
 
@@ -865,24 +921,22 @@ def test_classify_api_driven_no_store_no_n_plus_one(tmp_path) -> None:
         }
     ]
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter, \
-         patch.object(NovaConsolidator, "analyse_reply_threads", return_value=ai_decisions):
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = api_comments
+    mock_adapter = MagicMock()
+    with patch.object(NovaConsolidator, "analyse_reply_threads", return_value=ai_decisions):
+        mock_adapter.get_all_pr_comments.return_value = api_comments
         # Empty store — no save_finding calls
         svc = WontFixReplyService(
             repo_path=str(tmp_path),
             ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
             repo_owner="ws",
             repo_name="repo",
+            adapter=mock_adapter,
         )
         result = svc.classify(42)
 
     # One API call, no per-comment calls
-    instance.get_all_pr_comments.assert_called_once_with("ws", "repo", 42)
-    instance.get_comment_replies.assert_not_called()
+    mock_adapter.get_all_pr_comments.assert_called_once_with("ws", "repo", 42)
+    mock_adapter.get_comment_replies.assert_not_called()
     # Found the thread despite empty store
     assert len(result.decisions) == 1
     assert result.decisions[0]["fingerprint"] == "555"
@@ -914,14 +968,13 @@ def test_respond_posts_replies_and_creates_lessons_pr(tmp_path) -> None:
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter, \
-         patch("revue.comments.service.WontFixReplyService._append_pattern_to_config") as mock_append, \
+    mock_adapter = MagicMock()
+    with patch("revue.comments.service.WontFixReplyService._append_pattern_to_config") as mock_append, \
          patch("revue.comments.service.WontFixReplyService._ensure_lessons_pr",
                return_value="https://bitbucket.org/ws/repo/pull-requests/10") as mock_pr:
-        instance = MockAdapter.return_value
         # respond() re-fetches threads via get_all_pr_comments to resolve comment IDs.
         # id=101 matches platform_comment_id in store → fingerprint resolved to "fp0001".
-        instance.get_all_pr_comments.return_value = [
+        mock_adapter.get_all_pr_comments.return_value = [
             {
                 "id": 101,
                 "inline": {"path": "a.py", "to": 5},
@@ -936,21 +989,21 @@ def test_respond_posts_replies_and_creates_lessons_pr(tmp_path) -> None:
         svc = WontFixReplyService(
             repo_path=str(tmp_path),
             ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
             repo_owner="ws",
             repo_name="repo",
+            platform="bitbucket",
+            adapter=mock_adapter,
         )
         svc.respond(result, 42)
 
     mock_append.assert_called_once()
     mock_pr.assert_called_once()
-    instance.post_reply.assert_called_once()
+    mock_adapter.post_reply.assert_called_once()
     # Sentinel appended so subsequent runs skip this thread
-    posted_body = instance.post_reply.call_args[0][5]
+    posted_body = mock_adapter.post_reply.call_args[0][5]
     assert "[//]: # (revue:ack)" in posted_body
     # Thread resolved in Bitbucket — won't-fix is a closed decision
-    instance.resolve_comment.assert_called_once_with("ws", "repo", 42, "101", None)
+    mock_adapter.resolve_comment.assert_called_once_with("ws", "repo", 42, "101", None)
     # State updated to wont_fix
     unresolved = store.get_unresolved_fingerprints("bitbucket", 42)
     assert "fp0001" not in unresolved
@@ -980,39 +1033,37 @@ def test_respond_skips_thread_where_bot_already_acknowledged(tmp_path) -> None:
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            {
-                "id": 101,
-                "inline": {"path": "a.py", "to": 5},
-                "content": {"raw": "**🟡 [MEDIUM] Finding A\n*Code Quality*"},
-            },
-            {
-                "id": 201,
-                "parent": {"id": 101},
-                "content": {"raw": "won't fix — legacy"},
-            },
-            {
-                "id": 202,
-                "parent": {"id": 101},
-                # Bot already replied in a previous run — sentinel present
-                "content": {"raw": "This finding still stands.\n\n[//]: # (revue:ack)"},
-            },
-        ]
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
-        svc.respond(result, 42)
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 101,
+            "inline": {"path": "a.py", "to": 5},
+            "content": {"raw": "**🟡 [MEDIUM] Finding A\n*Code Quality*"},
+        },
+        {
+            "id": 201,
+            "parent": {"id": 101},
+            "content": {"raw": "won't fix — legacy"},
+        },
+        {
+            "id": 202,
+            "parent": {"id": 101},
+            # Bot already replied in a previous run — sentinel present
+            "content": {"raw": "This finding still stands.\n\n[//]: # (revue:ack)"},
+        },
+    ]
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="ws",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
+    svc.respond(result, 42)
 
     # Bot must not post again — idempotency
-    instance.post_reply.assert_not_called()
-    instance.resolve_comment.assert_not_called()
+    mock_adapter.post_reply.assert_not_called()
+    mock_adapter.resolve_comment.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1040,39 +1091,37 @@ def test_respond_skips_already_handled_decision(tmp_path) -> None:
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            {
-                "id": 101,
-                "inline": {"path": "a.py", "to": 5},
-                "content": {"raw": "**🟡 [MEDIUM] Finding A\n*Code Quality*"},
-            },
-            {
-                "id": 201,
-                "parent": {"id": 101},
-                "content": {"raw": "won't fix — legacy"},
-            },
-            {
-                "id": 202,
-                "parent": {"id": 101},
-                # Bot already replied in a previous run — sentinel present
-                "content": {"raw": "This finding still stands.\n\n[//]: # (revue:ack)"},
-            },
-        ]
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
-        svc.respond(result, 42)
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 101,
+            "inline": {"path": "a.py", "to": 5},
+            "content": {"raw": "**🟡 [MEDIUM] Finding A\n*Code Quality*"},
+        },
+        {
+            "id": 201,
+            "parent": {"id": 101},
+            "content": {"raw": "won't fix — legacy"},
+        },
+        {
+            "id": 202,
+            "parent": {"id": 101},
+            # Bot already replied in a previous run — sentinel present
+            "content": {"raw": "This finding still stands.\n\n[//]: # (revue:ack)"},
+        },
+    ]
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="ws",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
+    svc.respond(result, 42)
 
     # already_handled → no new reply, no resolve
-    instance.post_reply.assert_not_called()
-    instance.resolve_comment.assert_not_called()
+    mock_adapter.post_reply.assert_not_called()
+    mock_adapter.resolve_comment.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1099,32 +1148,31 @@ def test_respond_acknowledged_fixed_posts_reply_and_resolves(tmp_path) -> None:
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            {
-                "id": 101,
-                "inline": {"path": "a.py", "to": 5},
-                "content": {"raw": "**🟡 [MEDIUM] Finding A\n*Code Quality*"},
-            },
-            {
-                "id": 201,
-                "parent": {"id": 101},
-                "content": {"raw": "Fixed in d4668d3"},
-            },
-        ]
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
-        svc.respond(result, 42)
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 101,
+            "inline": {"path": "a.py", "to": 5},
+            "content": {"raw": "**🟡 [MEDIUM] Finding A\n*Code Quality*"},
+        },
+        {
+            "id": 201,
+            "parent": {"id": 101},
+            "content": {"raw": "Fixed in d4668d3"},
+        },
+    ]
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="ws",
+        repo_name="repo",
+        platform="bitbucket",
+        adapter=mock_adapter,
+    )
+    svc.respond(result, 42)
 
-    instance.post_reply.assert_called_once()
-    instance.resolve_comment.assert_called_once_with("ws", "repo", 42, "101", None)
+    mock_adapter.post_reply.assert_called_once()
+    mock_adapter.resolve_comment.assert_called_once_with("ws", "repo", 42, "101", None)
     unresolved = store.get_unresolved_fingerprints("bitbucket", 42)
     assert "fp0001" not in unresolved
 
@@ -1141,43 +1189,41 @@ def test_classify_skips_resolved_threads(tmp_path) -> None:
     decisions = [{"fingerprint": "200", "decision": "not_acknowledged", "reply_draft": "Still stands."}]
     client = _ai_client_returning(decisions)
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            # Thread A — already resolved, must be skipped
-            {
-                "id": 100,
-                "inline": {"path": "a.py", "to": 5},
-                "content": {"raw": "**🟡 [MEDIUM] Resolved finding\n*Code Quality*"},
-                "resolution": {"type": "comment_resolution"},  # resolved
-            },
-            {
-                "id": 101,
-                "parent": {"id": 100},
-                "content": {"raw": "Fixed."},
-            },
-            # Thread B — still open, must be processed
-            {
-                "id": 200,
-                "inline": {"path": "b.py", "to": 10},
-                "content": {"raw": "**🔴 [HIGH] Open finding\n*Security*"},
-                # no resolution field
-            },
-            {
-                "id": 201,
-                "parent": {"id": 200},
-                "content": {"raw": "Won't fix — acceptable risk."},
-            },
-        ]
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=client,
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
-        result = svc.classify(pr_number=1)
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        # Thread A — already resolved, must be skipped
+        {
+            "id": 100,
+            "inline": {"path": "a.py", "to": 5},
+            "content": {"raw": "**🟡 [MEDIUM] Resolved finding\n*Code Quality*"},
+            "resolution": {"type": "comment_resolution"},  # resolved
+        },
+        {
+            "id": 101,
+            "parent": {"id": 100},
+            "content": {"raw": "Fixed."},
+        },
+        # Thread B — still open, must be processed
+        {
+            "id": 200,
+            "inline": {"path": "b.py", "to": 10},
+            "content": {"raw": "**🔴 [HIGH] Open finding\n*Security*"},
+            # no resolution field
+        },
+        {
+            "id": 201,
+            "parent": {"id": 200},
+            "content": {"raw": "Won't fix — acceptable risk."},
+        },
+    ]
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=client,
+        repo_owner="ws",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
+    result = svc.classify(pr_number=1)
 
     # Only thread B (id=200) should have reached the AI — thread A was resolved
     threads_passed = client.complete.call_args[0][0]
@@ -1199,15 +1245,14 @@ def test_process_wont_fix_replies_is_thin_wrapper(tmp_path) -> None:
     empty = ClassificationResult([], [], [], [])
     call_order: list[str] = []
 
-    with patch("revue.comments.service.BitbucketAdapter"):
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
+    mock_adapter = MagicMock()
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="ws",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
 
     with patch.object(svc, "classify",
                       side_effect=lambda n: (call_order.append("classify"), empty)[1]) as mock_classify, \
@@ -1244,38 +1289,37 @@ def test_respond_acknowledged_deferred_posts_reply_and_resolves(tmp_path) -> Non
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            {
-                "id": 101,
-                "inline": {"path": "src/service.py", "to": 10},
-                "content": {"raw": "**🟡 [MEDIUM] N+1 query"},
-            },
-            {
-                "id": 201,
-                "parent": {"id": 101},
-                "content": {"raw": "Not intentional — tracked, will fix after this PR."},
-            },
-        ]
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
-        svc.respond(result, 42)
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 101,
+            "inline": {"path": "src/service.py", "to": 10},
+            "content": {"raw": "**🟡 [MEDIUM] N+1 query"},
+        },
+        {
+            "id": 201,
+            "parent": {"id": 101},
+            "content": {"raw": "Not intentional — tracked, will fix after this PR."},
+        },
+    ]
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="ws",
+        repo_name="repo",
+        platform="bitbucket",
+        adapter=mock_adapter,
+    )
+    svc.respond(result, 42)
 
     # Must post the confirmation reply with sentinel appended
-    instance.post_reply.assert_called_once()
-    posted_body = instance.post_reply.call_args[0][5]
+    mock_adapter.post_reply.assert_called_once()
+    posted_body = mock_adapter.post_reply.call_args[0][5]
     assert "Got it" in posted_body
     assert "[//]: # (revue:ack)" in posted_body
 
     # Must resolve the thread — deferred acknowledgement closes the discussion
-    instance.resolve_comment.assert_called_once()
+    mock_adapter.resolve_comment.assert_called_once()
 
     # No lessons PR created — acknowledged_deferred is not a permanent decision
     unresolved = store.get_unresolved_fingerprints("bitbucket", 42)
@@ -1286,32 +1330,29 @@ def test_respond_acknowledged_deferred_posts_reply_and_resolves(tmp_path) -> Non
 # REVUE-119 T3: WontFixReplyService platform param
 # ---------------------------------------------------------------------------
 
-def test_wont_fix_service_platform_default_is_bitbucket(tmp_path) -> None:
-    """T3.1: WontFixReplyService without explicit platform= defaults to 'bitbucket'."""
+def test_wont_fix_service_platform_default_is_github(tmp_path) -> None:
+    """T3.1: WontFixReplyService without explicit platform= defaults to 'github'."""
     from revue.comments.service import WontFixReplyService
 
-    with patch("revue.comments.service.BitbucketAdapter"):
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="ws",
-            repo_name="repo",
-        )
-    assert svc._platform == "bitbucket"
+    mock_adapter = MagicMock()
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="ws",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
+    assert svc._platform == "github"
 
 
 def test_wont_fix_service_platform_param_stored(tmp_path) -> None:
-    """T3.1: platform kwarg is stored on the instance."""
+    """T3.1: platform kwarg is stored on the mock_adapter."""
     from revue.comments.service import WontFixReplyService
     from revue.comments.platform_adapter import GitHubAdapter
 
     svc = WontFixReplyService(
         repo_path=str(tmp_path),
         ai_client=MagicMock(),
-        bitbucket_username="",
-        bitbucket_app_password="",
         repo_owner="owner",
         repo_name="repo",
         platform="github",
@@ -1343,8 +1384,6 @@ def test_collect_threads_uses_platform_for_store_lookup(tmp_path) -> None:
     svc = WontFixReplyService(
         repo_path=str(tmp_path),
         ai_client=MagicMock(),
-        bitbucket_username="",
-        bitbucket_app_password="",
         repo_owner="owner",
         repo_name="repo",
         platform="github",
@@ -1419,8 +1458,6 @@ def test_respond_marks_resolved_with_correct_platform(tmp_path) -> None:
         svc = WontFixReplyService(
             repo_path=str(tmp_path),
             ai_client=client,
-            bitbucket_username="",
-            bitbucket_app_password="",
             repo_owner="owner",
             repo_name="repo",
             platform="github",
@@ -1433,6 +1470,57 @@ def test_respond_marks_resolved_with_correct_platform(tmp_path) -> None:
     assert "ghfp001" not in unresolved_github, (
         "respond() must use self._platform ('github') not 'bitbucket' in mark_resolved"
     )
+
+
+# ---------------------------------------------------------------------------
+# Bugfix: apply_state_updates() must use self._platform, not hardcoded 'bitbucket'
+# ---------------------------------------------------------------------------
+
+def test_apply_state_updates_uses_correct_platform(tmp_path) -> None:
+    """apply_state_updates() must write to self._platform bucket, not 'bitbucket'.
+
+    Regression test: the bug caused GitHub/GitLab decisions to be stored under
+    the 'bitbucket' key so the dedup layer never saw them as resolved on the next run.
+    """
+    from revue.comments.service import WontFixReplyService
+    from revue.core.models import ClassificationResult
+    from revue.comments.platform_adapter import GitHubAdapter
+
+    store = PerPRCommentStore(tmp_path)
+    store.save_finding(
+        platform="github",
+        pr_number=5,
+        file_path="app.py",
+        fingerprint="fp_gh_001",
+        platform_comment_id="501",
+        line_number=10,
+        comment_body="some finding",
+    )
+
+    result = ClassificationResult(
+        patterns_to_allow=[{"pattern": "intentional", "rationale": "by design"}],
+        patterns_to_disallow=[],
+        state_updates=[{"fingerprint": "fp_gh_001", "file_path": "app.py", "decision": "allowed_pattern"}],
+        decisions=[],
+    )
+
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="owner",
+        repo_name="repo",
+        platform="github",
+        adapter=MagicMock(spec=GitHubAdapter),
+    )
+    svc.apply_state_updates(result, pr_number=5)
+
+    unresolved_github = store.get_unresolved_fingerprints("github", 5)
+    assert "fp_gh_001" not in unresolved_github, (
+        "apply_state_updates() must use self._platform ('github'), not hardcoded 'bitbucket'"
+    )
+    # Confirm it was NOT written under 'bitbucket' either
+    unresolved_bitbucket = store.get_unresolved_fingerprints("bitbucket", 5)
+    assert "fp_gh_001" not in unresolved_bitbucket
 
 
 # ---------------------------------------------------------------------------
@@ -1470,8 +1558,6 @@ def test_collect_threads_includes_thread_id(tmp_path) -> None:
     svc = WontFixReplyService(
         repo_path=str(tmp_path),
         ai_client=MagicMock(),
-        bitbucket_username="",
-        bitbucket_app_password="",
         repo_owner="owner",
         repo_name="repo",
         platform="gitlab",
@@ -1525,8 +1611,6 @@ def test_respond_passes_thread_id_to_gitlab_post_reply(tmp_path) -> None:
     svc = WontFixReplyService(
         repo_path=str(tmp_path),
         ai_client=MagicMock(),
-        bitbucket_username="",
-        bitbucket_app_password="",
         repo_owner="owner",
         repo_name="repo",
         platform="gitlab",
@@ -1581,8 +1665,6 @@ def test_respond_passes_thread_id_to_gitlab_resolve_comment(tmp_path) -> None:
     svc = WontFixReplyService(
         repo_path=str(tmp_path),
         ai_client=MagicMock(),
-        bitbucket_username="",
-        bitbucket_app_password="",
         repo_owner="owner",
         repo_name="repo",
         platform="gitlab",
@@ -1613,8 +1695,6 @@ def test_ensure_lessons_pr_delegates_to_adapter(tmp_path) -> None:
     svc = WontFixReplyService(
         repo_path=str(tmp_path),
         ai_client=MagicMock(),
-        bitbucket_username="",
-        bitbucket_app_password="",
         repo_owner="owner",
         repo_name="repo",
         platform="gitlab",
@@ -1677,8 +1757,6 @@ def test_respond_gitlab_disallowed_pattern_calls_adapter_ensure_lessons_pr(tmp_p
     svc = WontFixReplyService(
         repo_path=str(tmp_path),
         ai_client=MagicMock(),
-        bitbucket_username="",
-        bitbucket_app_password="",
         repo_owner="owner",
         repo_name="repo",
         platform="gitlab",
@@ -1761,8 +1839,6 @@ def test_respond_two_allowed_patterns_both_delegate_to_adapter(tmp_path) -> None
     svc = WontFixReplyService(
         repo_path=str(tmp_path),
         ai_client=MagicMock(),
-        bitbucket_username="",
-        bitbucket_app_password="",
         repo_owner="owner",
         repo_name="repo",
         platform="gitlab",
@@ -1801,8 +1877,6 @@ def _sentinel_svc(tmp_path, adapter, platform="bitbucket"):
     return WontFixReplyService(
         repo_path=str(tmp_path),
         ai_client=MagicMock(),
-        bitbucket_username="u",
-        bitbucket_app_password="p",
         repo_owner="owner",
         repo_name="repo",
         platform=platform,
@@ -1889,32 +1963,30 @@ def test_respond_processes_thread_when_dev_reply_after_sentinel(tmp_path) -> Non
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            _c(101, body=_FINDING_BODY_S),
-            _c(201, parent_id=101, body="won't fix — unclear"),
-            _c(202, parent_id=101, body=f"Please clarify.\n\n{_SENTINEL}"),
-            # Developer provides reason AFTER the bot's sentinel reply
-            _c(203, parent_id=101, body="It's a rate-limit delay — pre-existing, tracked in REVUE-140."),
-        ]
-        instance.ensure_lessons_pr.return_value = "https://bitbucket.org/ws/repo/pull-requests/9"
-        instance.get_pr_template.return_value = None
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix — unclear"),
+        _c(202, parent_id=101, body=f"Please clarify.\n\n{_SENTINEL}"),
+        # Developer provides reason AFTER the bot's sentinel reply
+        _c(203, parent_id=101, body="It's a rate-limit delay — pre-existing, tracked in REVUE-140."),
+    ]
+    mock_adapter.ensure_lessons_pr.return_value = "https://bitbucket.org/ws/repo/pull-requests/9"
+    mock_adapter.get_pr_template.return_value = None
 
-        with patch("revue.comments.service.WontFixReplyService._append_pattern_to_config"):
-            svc = WontFixReplyService(
-                repo_path=str(tmp_path),
-                ai_client=MagicMock(),
-                bitbucket_username="u",
-                bitbucket_app_password="p",
-                repo_owner="owner",
-                repo_name="repo",
-            )
-            svc.respond(result, 1)
+    with patch("revue.comments.service.WontFixReplyService._append_pattern_to_config"):
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path),
+            ai_client=MagicMock(),
+            repo_owner="owner",
+            repo_name="repo",
+            adapter=mock_adapter,
+        )
+        svc.respond(result, 1)
 
     # Must have posted — old sentinel does not block when it's not the last reply
-    instance.post_reply.assert_called_once()
-    posted_body = instance.post_reply.call_args[0][5]
+    mock_adapter.post_reply.assert_called_once()
+    posted_body = mock_adapter.post_reply.call_args[0][5]
     assert "https://bitbucket.org/ws/repo/pull-requests/9" in posted_body
 
 
@@ -1935,25 +2007,23 @@ def test_respond_reason_missing_posts_fallback_when_reply_draft_empty(tmp_path) 
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            _c(101, body=_FINDING_BODY_S),
-            _c(201, parent_id=101, body="won't fix"),
-        ]
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix"),
+    ]
 
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="owner",
-            repo_name="repo",
-        )
-        svc.respond(result, 1)
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="owner",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
+    svc.respond(result, 1)
 
-    instance.post_reply.assert_called_once()
-    posted_body = instance.post_reply.call_args[0][5]
+    mock_adapter.post_reply.assert_called_once()
+    posted_body = mock_adapter.post_reply.call_args[0][5]
     # Must contain a human-readable message, not just the sentinel.
     # reason_missing now uses revue:rm sentinel (not revue:ack).
     assert _RM_SENTINEL in posted_body
@@ -2017,26 +2087,24 @@ def test_respond_resolves_thread_when_already_terminal(tmp_path) -> None:
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            _c(101, body=_FINDING_BODY_S),
-            _c(201, parent_id=101, body="won't fix — pre-existing"),
-            _c(202, parent_id=101, body=f"Won't fix: tracked.\n\n{_SENTINEL}\n{_RESOLVED_SENTINEL}"),
-        ]
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix — pre-existing"),
+        _c(202, parent_id=101, body=f"Won't fix: tracked.\n\n{_SENTINEL}\n{_RESOLVED_SENTINEL}"),
+    ]
 
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="owner",
-            repo_name="repo",
-        )
-        svc.respond(result, 1)
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="owner",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
+    svc.respond(result, 1)
 
-    instance.resolve_comment.assert_called_once()
-    instance.post_reply.assert_not_called()
+    mock_adapter.resolve_comment.assert_called_once()
+    mock_adapter.post_reply.assert_not_called()
 
 
 def test_respond_does_not_resolve_ack_only_already_handled(tmp_path) -> None:
@@ -2055,26 +2123,24 @@ def test_respond_does_not_resolve_ack_only_already_handled(tmp_path) -> None:
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            _c(101, body=_FINDING_BODY_S),
-            _c(201, parent_id=101, body="won't fix"),
-            _c(202, parent_id=101, body=f"Please provide a reason.\n\n{_SENTINEL}"),
-        ]
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix"),
+        _c(202, parent_id=101, body=f"Please provide a reason.\n\n{_SENTINEL}"),
+    ]
 
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="owner",
-            repo_name="repo",
-        )
-        svc.respond(result, 1)
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="owner",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
+    svc.respond(result, 1)
 
-    instance.resolve_comment.assert_not_called()
-    instance.post_reply.assert_not_called()
+    mock_adapter.resolve_comment.assert_not_called()
+    mock_adapter.post_reply.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -2171,21 +2237,20 @@ def test_reason_missing_posts_revue_rm_sentinel(tmp_path) -> None:
         decisions=[{"fingerprint": "101", "decision": "reason_missing", "reply_draft": "Please clarify."}],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            _c(101, body=_FINDING_BODY_S),
-            _c(201, parent_id=101, body="won't fix"),
-        ]
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path), ai_client=MagicMock(),
-            bitbucket_username="u", bitbucket_app_password="p",
-            repo_owner="owner", repo_name="repo",
-        )
-        svc.respond(result, 1)
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix"),
+    ]
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path), ai_client=MagicMock(),
+        repo_owner="owner", repo_name="repo",
+        adapter=mock_adapter,
+    )
+    svc.respond(result, 1)
 
-    instance.post_reply.assert_called_once()
-    posted = instance.post_reply.call_args[0][5]
+    mock_adapter.post_reply.assert_called_once()
+    posted = mock_adapter.post_reply.call_args[0][5]
     assert _RM_SENTINEL in posted
     assert _SENTINEL not in posted
 
@@ -2200,21 +2265,20 @@ def test_not_acknowledged_posts_revue_not_ack_sentinel(tmp_path) -> None:
         decisions=[{"fingerprint": "101", "decision": "not_acknowledged", "reply_draft": "This finding still applies."}],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            _c(101, body=_FINDING_BODY_S),
-            _c(201, parent_id=101, body="(no dev reply)"),
-        ]
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path), ai_client=MagicMock(),
-            bitbucket_username="u", bitbucket_app_password="p",
-            repo_owner="owner", repo_name="repo",
-        )
-        svc.respond(result, 1)
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="(no dev reply)"),
+    ]
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path), ai_client=MagicMock(),
+        repo_owner="owner", repo_name="repo",
+        adapter=mock_adapter,
+    )
+    svc.respond(result, 1)
 
-    instance.post_reply.assert_called_once()
-    posted = instance.post_reply.call_args[0][5]
+    mock_adapter.post_reply.assert_called_once()
+    posted = mock_adapter.post_reply.call_args[0][5]
     assert _NOT_ACK_SENTINEL in posted
     assert _SENTINEL not in posted
 
@@ -2233,20 +2297,19 @@ def test_idempotency_guard_recognises_all_sentinels(tmp_path) -> None:
             patterns_to_allow=[], patterns_to_disallow=[], state_updates=[],
             decisions=[{"fingerprint": "101", "decision": "reason_missing", "reply_draft": "Please clarify."}],
         )
-        with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-            instance = MockAdapter.return_value
-            instance.get_all_pr_comments.return_value = [
-                _c(101, body=_FINDING_BODY_S),
-                _c(201, parent_id=101, body="won't fix"),
-                _c(202, parent_id=101, body=f"Bot reply.\n\n{sentinel}"),
-            ]
-            svc = WontFixReplyService(
-                repo_path=str(tmp_path), ai_client=MagicMock(),
-                bitbucket_username="u", bitbucket_app_password="p",
-                repo_owner="owner", repo_name="repo",
-            )
-            svc.respond(result, 1)
-        if instance.post_reply.called:
+        mock_adapter = MagicMock()
+        mock_adapter.get_all_pr_comments.return_value = [
+            _c(101, body=_FINDING_BODY_S),
+            _c(201, parent_id=101, body="won't fix"),
+            _c(202, parent_id=101, body=f"Bot reply.\n\n{sentinel}"),
+        ]
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path), ai_client=MagicMock(),
+            repo_owner="owner", repo_name="repo",
+            adapter=mock_adapter,
+        )
+        svc.respond(result, 1)
+        if mock_adapter.post_reply.called:
             pytest.fail(f"Should not post when last reply has {sentinel!r}")
 
 
@@ -2260,20 +2323,19 @@ def test_no_duplicate_reply_when_sentinel_is_last(tmp_path) -> None:
             patterns_to_allow=[], patterns_to_disallow=[], state_updates=[],
             decisions=[{"fingerprint": "101", "decision": "reason_missing", "reply_draft": "..."}],
         )
-        with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-            instance = MockAdapter.return_value
-            instance.get_all_pr_comments.return_value = [
-                _c(101, body=_FINDING_BODY_S),
-                _c(201, parent_id=101, body="won't fix"),
-                _c(202, parent_id=101, body=f"Please clarify.\n\n{sentinel}"),
-            ]
-            svc = WontFixReplyService(
-                repo_path=str(tmp_path), ai_client=MagicMock(),
-                bitbucket_username="u", bitbucket_app_password="p",
-                repo_owner="owner", repo_name="repo",
-            )
-            svc.respond(result, 1)
-        if instance.post_reply.called:
+        mock_adapter = MagicMock()
+        mock_adapter.get_all_pr_comments.return_value = [
+            _c(101, body=_FINDING_BODY_S),
+            _c(201, parent_id=101, body="won't fix"),
+            _c(202, parent_id=101, body=f"Please clarify.\n\n{sentinel}"),
+        ]
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path), ai_client=MagicMock(),
+            repo_owner="owner", repo_name="repo",
+            adapter=mock_adapter,
+        )
+        svc.respond(result, 1)
+        if mock_adapter.post_reply.called:
             pytest.fail(f"Duplicate reply guard failed for {sentinel!r}")
 
 
@@ -2330,25 +2392,24 @@ def test_terminal_decisions_still_use_revue_ack(tmp_path) -> None:
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            _c(101, body=_FINDING_BODY_S),
-            _c(201, parent_id=101, body="won't fix — pre-existing"),
-        ]
-        instance.ensure_lessons_pr.return_value = "https://bitbucket.org/ws/repo/pull-requests/9"
-        instance.get_pr_template.return_value = None
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        _c(101, body=_FINDING_BODY_S),
+        _c(201, parent_id=101, body="won't fix — pre-existing"),
+    ]
+    mock_adapter.ensure_lessons_pr.return_value = "https://bitbucket.org/ws/repo/pull-requests/9"
+    mock_adapter.get_pr_template.return_value = None
 
-        with patch("revue.comments.service.WontFixReplyService._append_pattern_to_config"):
-            svc = WontFixReplyService(
-                repo_path=str(tmp_path), ai_client=MagicMock(),
-                bitbucket_username="u", bitbucket_app_password="p",
-                repo_owner="owner", repo_name="repo",
-            )
-            svc.respond(result, 1)
+    with patch("revue.comments.service.WontFixReplyService._append_pattern_to_config"):
+        svc = WontFixReplyService(
+            repo_path=str(tmp_path), ai_client=MagicMock(),
+            repo_owner="owner", repo_name="repo",
+            adapter=mock_adapter,
+        )
+        svc.respond(result, 1)
 
-    instance.post_reply.assert_called_once()
-    posted = instance.post_reply.call_args[0][5]
+    mock_adapter.post_reply.assert_called_once()
+    posted = mock_adapter.post_reply.call_args[0][5]
     assert _SENTINEL in posted
     assert _RM_SENTINEL not in posted
     assert _NOT_ACK_SENTINEL not in posted
@@ -2387,36 +2448,34 @@ def test_post_acknowledgement_reply_resolves_conversation(tmp_path) -> None:
         }],
     )
 
-    with patch("revue.comments.service.BitbucketAdapter") as MockAdapter:
-        instance = MockAdapter.return_value
-        instance.get_all_pr_comments.return_value = [
-            {
-                "id": 101,
-                "inline": {"path": "src/sec.py", "to": 10},
-                "content": {"raw": "**🔴 [HIGH] Security issue"},
-            },
-            {
-                "id": 201,
-                "parent": {"id": 101},
-                "content": {"raw": "Fixed in latest commit"},
-            },
-        ]
-        instance.get_pr_template.return_value = None
+    mock_adapter = MagicMock()
+    mock_adapter.get_all_pr_comments.return_value = [
+        {
+            "id": 101,
+            "inline": {"path": "src/sec.py", "to": 10},
+            "content": {"raw": "**🔴 [HIGH] Security issue"},
+        },
+        {
+            "id": 201,
+            "parent": {"id": 101},
+            "content": {"raw": "Fixed in latest commit"},
+        },
+    ]
+    mock_adapter.get_pr_template.return_value = None
 
-        svc = WontFixReplyService(
-            repo_path=str(tmp_path),
-            ai_client=MagicMock(),
-            bitbucket_username="u",
-            bitbucket_app_password="p",
-            repo_owner="owner",
-            repo_name="repo",
-        )
-        svc.respond(result, 1)
+    svc = WontFixReplyService(
+        repo_path=str(tmp_path),
+        ai_client=MagicMock(),
+        repo_owner="owner",
+        repo_name="repo",
+        adapter=mock_adapter,
+    )
+    svc.respond(result, 1)
 
     # Both post_reply and resolve_conversation should be called
-    instance.post_reply.assert_called_once()
-    instance.resolve_conversation.assert_called_once()
-    call_args = instance.resolve_conversation.call_args[0]
+    mock_adapter.post_reply.assert_called_once()
+    mock_adapter.resolve_conversation.assert_called_once()
+    call_args = mock_adapter.resolve_conversation.call_args[0]
     assert call_args[0] == "owner"   # repo_owner
     assert call_args[1] == "repo"    # repo_name
     assert call_args[2] == 1         # pr_number as int

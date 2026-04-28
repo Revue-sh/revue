@@ -13,6 +13,19 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+## Deferred from: code review of revue-179-nova-contradiction-synthesis (2026-04-27)
+
+- **W1** — AI exception path makes metrics ambiguous: `synthesised_count=0` is indistinguishable from "no contradictions found" vs "synthesis failed". Would need an explicit `synthesis_failed` flag on `ConsolidationResult` or a separate metrics event type to distinguish. Post-MVP observability.
+- **W2** — Synthesis data silently discarded when `flush()` has no token events: `self._synthesis = None` is cleared before the `if not self.events: return` guard in `metrics_writer.py`, so a run that produces synthesis but no token events (e.g. mocked client in some test paths) loses the synthesis record. Inherited flush design; low practical risk in production.
+- **W3** — `_build_synthesis_prompt` docstring says "TOML-encoded" but produces non-standard structured text (`[[` prefix, `key = "value"` syntax). Misleading label; LLMs handle it correctly in practice. Rename docstring and clarify format post-MVP.
+- **W4** — `synthesised_from` carries `list[tuple[str, str]]` but serialises to `list[list[str]]` through JSON round-trip. Currently handled correctly by `(c[0], c[1])` repacking in cli.py:481. Type annotation is a lie across the service boundary; add a `to_dict()` / `from_dict()` normalisation method on `AIReview` post-MVP.
+- **W5** — `group_by_key` dict comprehension in `_synthesise_contradictions` silently overwrites if two contradiction groups share the same `(file, line)` key. Cannot occur under current `_detect_contradiction_groups` call path; add an assertion guard when refactoring dedup_consolidator.
+- **W6** — Old `.revue/` store entries persisted with hardcoded `"bitbucket"` platform key (pre-REVUE-179) will not match lookups using the correct platform string. Won't-fix decisions made before the upgrade will reappear as unresolved. Add a one-time migration utility or store-version check post-MVP.
+- **W7** — No page limit on `fetch_review_thread_ids` pagination loop. On very large PRs (500+ review threads, many bot reviewers), this makes unbounded sequential GraphQL calls with no progress logging. Add `max_pages` guard and per-page log line post-MVP.
+- **W8** — No user-visible warning when synthesis silently falls back to original findings (LLM returns non-JSON). Users see normal output with no indication synthesis was attempted and failed. Add a `print("[revue] ⚠ Synthesis failed — keeping original findings")` warning on fallback.
+
+---
+
 ## Deferred from REVUE-134 (2026-04-13)
 
 ### D1 — Feature flags have no env-var override path

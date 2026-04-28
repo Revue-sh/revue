@@ -11,7 +11,7 @@ from typing import Any, Optional
 import yaml
 
 from .models import CommentState, Platform, PRComment, SummaryComment
-from .platform_adapter import get_platform_adapter, BitbucketAdapter
+from .platform_adapter import get_platform_adapter
 from .file_store import CommentFileStore
 from .fingerprint import fingerprint
 from .json_store import PerPRCommentStore
@@ -384,7 +384,7 @@ def _terminal_is_last(text: str) -> bool:
 
 
 class WontFixReplyService:
-    """Orchestrate won't-fix reply tracking for Bitbucket PRs (REVUE-112).
+    """Orchestrate won't-fix reply tracking across all platforms.
 
     Dependencies are injected via the constructor (DIP).  No external calls
     are made inside service methods — all I/O goes through the injected
@@ -395,23 +395,16 @@ class WontFixReplyService:
         self,
         repo_path: str,
         ai_client: Any,
-        bitbucket_username: str,
-        bitbucket_app_password: str,
         repo_owner: str,
         repo_name: str,
-        platform: str = "bitbucket",
-        adapter: Any = None,
+        adapter: Any,
+        platform: str = "github",
     ) -> None:
         self.repo_path = Path(repo_path)
         self._store = PerPRCommentStore(repo_path)
         self._client = ai_client
         self._platform = platform
-        if adapter is not None:
-            self._adapter = adapter
-        else:
-            self._adapter = BitbucketAdapter(bitbucket_username, bitbucket_app_password)
-        self._bb_username = bitbucket_username
-        self._bb_password = bitbucket_app_password
+        self._adapter = adapter
         self._repo_owner = repo_owner
         self._repo_name = repo_name
 
@@ -438,7 +431,7 @@ class WontFixReplyService:
         threads = self._collect_threads_with_replies(pr_number)
         if not threads:
             _log.info(
-                "[REVUE-112] No threads with replies for PR #%d — skipping classify.",
+                "No threads with replies for PR #%d — skipping classify.",
                 pr_number,
             )
             return ClassificationResult(
@@ -470,7 +463,7 @@ class WontFixReplyService:
             decisions += already_handled_decisions
         except Exception:
             _log.exception(
-                "[REVUE-112] analyse_reply_threads failed for PR #%d. Thread count=%d",
+                "analyse_reply_threads failed for PR #%d. Thread count=%d",
                 pr_number,
                 len(threads_for_ai),
             )
@@ -521,7 +514,7 @@ class WontFixReplyService:
         """
         for update in result.state_updates:
             self._store.mark_resolved(
-                "bitbucket",
+                self._platform,
                 pr_number,
                 update.get("file_path", ""),
                 update.get("fingerprint", ""),
@@ -602,12 +595,12 @@ class WontFixReplyService:
                             )
                         else:
                             _log.warning(
-                                "[REVUE-112] resolve_comment returned False for terminal recovery, comment %s",
+                                "resolve_comment returned False for terminal recovery, comment %s",
                                 t_comment_id,
                             )
                     except Exception:
                         _log.exception(
-                            "[REVUE-112] resolve_comment failed for terminal recovery, comment %s",
+                            "resolve_comment failed for terminal recovery, comment %s",
                             t_comment_id,
                         )
                 else:
@@ -617,7 +610,7 @@ class WontFixReplyService:
             thread_entry = thread_by_fp.get(fingerprint_val)
             if thread_entry is None:
                 _log.warning(
-                    "[REVUE-112] No thread found for fingerprint %s — skipping respond.",
+                    "No thread found for fingerprint %s — skipping respond.",
                     fingerprint_val,
                 )
                 continue
@@ -659,7 +652,7 @@ class WontFixReplyService:
                     final_reply = reply_draft.replace("[LESSONS_PR_URL]", lessons_pr_url)
                 except Exception:
                     _log.warning(
-                        "[REVUE-112] Lessons PR creation/update failed for PR #%d pattern '%s'. "
+                        "Lessons PR creation/update failed for PR #%d pattern '%s'. "
                         "Posting YAML block for manual apply.",
                         pr_number,
                         pattern[:60],
@@ -697,7 +690,7 @@ class WontFixReplyService:
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
                     _log.exception(
-                        "[REVUE-112] post_reply failed for comment %s (decision=%s) on PR #%d",
+                        "post_reply failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
 
@@ -714,12 +707,12 @@ class WontFixReplyService:
                         print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
                     else:
                         _log.warning(
-                            "[REVUE-112] resolve_comment returned False for comment %s (decision=%s) on PR #%d",
+                            "resolve_comment returned False for comment %s (decision=%s) on PR #%d",
                             comment_id, dec, pr_number,
                         )
                 except Exception:
                     _log.exception(
-                        "[REVUE-112] resolve_comment failed for comment %s (decision=%s) on PR #%d",
+                        "resolve_comment failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
 
@@ -744,7 +737,7 @@ class WontFixReplyService:
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
                     _log.exception(
-                        "[REVUE-112] post_reply failed for comment %s (decision=%s) on PR #%d",
+                        "post_reply failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
 
@@ -762,7 +755,7 @@ class WontFixReplyService:
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
                     _log.exception(
-                        "[REVUE-112] post_reply failed for comment %s (decision=%s) on PR #%d",
+                        "post_reply failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
 
@@ -783,7 +776,7 @@ class WontFixReplyService:
                         print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                     except Exception:
                         _log.exception(
-                            "[REVUE-112] post_reply failed for comment %s (decision=%s) on PR #%d",
+                            "post_reply failed for comment %s (decision=%s) on PR #%d",
                             comment_id, dec, pr_number,
                         )
                 try:
@@ -798,15 +791,14 @@ class WontFixReplyService:
                         print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
                     else:
                         _log.warning(
-                            "[REVUE-112] resolve_comment returned False for comment %s (decision=%s) on PR #%d",
+                            "resolve_comment returned False for comment %s (decision=%s) on PR #%d",
                             comment_id, dec, pr_number,
                         )
                 except Exception:
                     _log.exception(
-                        "[REVUE-112] resolve_comment failed for comment %s (decision=%s) on PR #%d",
+                        "resolve_comment failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
-                # REVUE-161: Resolve thread via Bitbucket API; no-op on GitHub/GitLab.
                 self._adapter.resolve_conversation(
                     self._repo_owner,
                     self._repo_name,
@@ -836,7 +828,7 @@ class WontFixReplyService:
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
                     _log.exception(
-                        "[REVUE-112] post_reply failed for comment %s (decision=%s) on PR #%d",
+                        "post_reply failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
                 try:
@@ -851,15 +843,14 @@ class WontFixReplyService:
                         print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
                     else:
                         _log.warning(
-                            "[REVUE-112] resolve_comment returned False for comment %s (decision=%s) on PR #%d",
+                            "resolve_comment returned False for comment %s (decision=%s) on PR #%d",
                             comment_id, dec, pr_number,
                         )
                 except Exception:
                     _log.exception(
-                        "[REVUE-112] resolve_comment failed for comment %s (decision=%s) on PR #%d",
+                        "resolve_comment failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
-                # REVUE-161: Resolve thread via Bitbucket API; no-op on GitHub/GitLab.
                 self._adapter.resolve_conversation(
                     self._repo_owner,
                     self._repo_name,
@@ -895,7 +886,7 @@ class WontFixReplyService:
             )
         except Exception:
             _log.exception(
-                "[REVUE-112] Failed to fetch PR comments for PR #%d", pr_number
+                "Failed to fetch PR comments for PR #%d", pr_number
             )
             print(f"[revue]   💬  ERROR: could not fetch PR comments — won't-fix tracking skipped.", flush=True)
             return []

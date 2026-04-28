@@ -770,7 +770,7 @@ def test_resolved_prior_excluded_from_summary_count(tmp_path) -> None:
     ]
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, total_findings, previously_tracked = _run_per_issue_dedup(
+    posted, skipped, total_findings, previously_tracked, _failed = _run_per_issue_dedup(
         mock_adapter, 42, "gitlab", review_results, {}, store
     )
 
@@ -815,7 +815,7 @@ def test_open_prior_still_counted_in_summary(tmp_path) -> None:
     ]
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, total_findings, previously_tracked = _run_per_issue_dedup(
+    posted, skipped, total_findings, previously_tracked, _failed = _run_per_issue_dedup(
         mock_adapter, 42, "gitlab", review_results, {}, store
     )
 
@@ -861,7 +861,7 @@ def test_open_prior_uses_original_comment_severity_not_reanalysis(tmp_path) -> N
     ]
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, total_findings, previously_tracked = _run_per_issue_dedup(
+    posted, skipped, total_findings, previously_tracked, _failed = _run_per_issue_dedup(
         mock_adapter, 42, "gitlab", review_results, {}, store
     )
 
@@ -972,7 +972,7 @@ def test_merge_three_findings_same_line(tmp_path) -> None:
     mock_adapter.post_review_comment.return_value = "merged-1"
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, _tf, _pt = _run_per_issue_dedup(
+    posted, skipped, _tf, _pt, _failed = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 
@@ -1116,7 +1116,7 @@ def test_single_finding_no_regression(tmp_path) -> None:
     mock_adapter.post_review_comment.return_value = "single-1"
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, _tf, _pt = _run_per_issue_dedup(
+    posted, skipped, _tf, _pt, _failed = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 
@@ -1144,7 +1144,7 @@ def test_two_findings_different_severity_merged(tmp_path) -> None:
     mock_adapter.post_review_comment.return_value = "merged-5"
 
     store = PerPRCommentStore(tmp_path)
-    posted, _sk, _tf, _pt = _run_per_issue_dedup(
+    posted, _sk, _tf, _pt, _failed = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 
@@ -1198,7 +1198,7 @@ def test_merged_three_findings_total_findings_per_finding(tmp_path) -> None:
     mock_adapter.post_review_comment.return_value = "merged-7"
 
     store = PerPRCommentStore(tmp_path)
-    _posted, _skipped, total_findings, _pt = _run_per_issue_dedup(
+    _posted, _skipped, total_findings, _pt, _failed = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 
@@ -1250,7 +1250,7 @@ def test_merge_single_review_result_two_findings_same_line(tmp_path) -> None:
     mock_adapter.post_review_comment.return_value = "merged-9"
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, _tf, _pt = _run_per_issue_dedup(
+    posted, skipped, _tf, _pt, _failed = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 
@@ -1279,7 +1279,7 @@ def test_two_groups_different_lines_posts_twice(tmp_path) -> None:
     mock_adapter.post_review_comment.side_effect = ["post-line5", "post-line10"]
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, _tf, _pt = _run_per_issue_dedup(
+    posted, skipped, _tf, _pt, _failed = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 

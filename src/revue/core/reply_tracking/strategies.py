@@ -46,6 +46,7 @@ class BitbucketReplyTrackingStrategy:
         ai_client: Any,
     ) -> "Optional[WontFixReplyService]":
         from revue.comments.service import WontFixReplyService
+        from revue.comments.platform_adapter import BitbucketAdapter
 
         bb_user = os.environ.get("BITBUCKET_USERNAME", "")
         bb_password = os.environ.get("BITBUCKET_API_TOKEN", "")
@@ -59,11 +60,10 @@ class BitbucketReplyTrackingStrategy:
         return WontFixReplyService(
             repo_path=pr_context.repo_path,
             ai_client=ai_client,
-            bitbucket_username=bb_user,
-            bitbucket_app_password=bb_password,
             repo_owner=pr_context.repo_owner,
             repo_name=pr_context.repo_name,
             platform="bitbucket",
+            adapter=BitbucketAdapter(bb_user, bb_password),
         )
 
 
@@ -92,8 +92,6 @@ class GitHubReplyTrackingStrategy:
         return WontFixReplyService(
             repo_path=pr_context.repo_path,
             ai_client=ai_client,
-            bitbucket_username="",
-            bitbucket_app_password="",
             repo_owner=pr_context.repo_owner,
             repo_name=pr_context.repo_name,
             platform="github",
@@ -123,8 +121,6 @@ class GitLabReplyTrackingStrategy:
         return WontFixReplyService(
             repo_path=pr_context.repo_path,
             ai_client=ai_client,
-            bitbucket_username="",
-            bitbucket_app_password="",
             repo_owner=pr_context.repo_owner,
             repo_name=pr_context.repo_name,
             platform="gitlab",

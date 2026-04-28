@@ -279,3 +279,87 @@ def test_p3_routing_cleared_when_flush_exits_early_due_to_no_events() -> None:
         assert "routing" not in records[0], (
             "Stale _routing from a previous flush (with no events) must not persist to the next run"
         )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-179: AC4 — synthesis events in flush record
+# ---------------------------------------------------------------------------
+
+def test_synthesis_events_in_flush_record() -> None:
+    """AC4: flush() includes a 'findings' key with synthesis event data when
+    record_synthesis() has been called. Every field is asserted by name."""
+    from revue.core.metrics import MetricsEvent, SynthesisMetricsData
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        collector.record(MetricsEvent(
+            event_type="agent_call",
+            timestamp="2026-04-27T10:00:00Z",
+            agent_name="nova",
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            input_tokens=200,
+            output_tokens=80,
+        ))
+        collector.record_synthesis(SynthesisMetricsData(
+            total_findings=4,
+            synthesised_count=2,
+            synthesis_events=[
+                {
+                    "from_agents": ["kai", "zara"],
+                    "file": "src/api/users.py",
+                    "line": 47,
+                    "severity_in": ["high", "critical"],
+                    "severity_out": "critical",
+                },
+                {
+                    "from_agents": ["maya", "leo"],
+                    "file": "src/models/order.py",
+                    "line": 12,
+                    "severity_in": ["medium", "high"],
+                    "severity_out": "high",
+                },
+            ],
+        ))
+        collector.flush("run-synthesis")
+
+        metrics_file = Path(tmpdir) / ".revue" / "metrics.jsonl"
+        data = json.loads(metrics_file.read_text().strip())
+
+        assert "findings" in data, "flush record must contain 'findings' key"
+        f = data["findings"]
+        assert f["total"] == 4
+        assert f["synthesised"] == 2
+        assert len(f["synthesis_events"]) == 2
+
+        e0 = f["synthesis_events"][0]
+        assert e0["from_agents"] == ["kai", "zara"]
+        assert e0["file"] == "src/api/users.py"
+        assert e0["line"] == 47
+        assert e0["severity_in"] == ["high", "critical"]
+        assert e0["severity_out"] == "critical"
+
+
+def test_no_synthesis_data_flush_has_no_findings_key() -> None:
+    """When record_synthesis() is not called, flush record has no 'findings' key."""
+    from revue.core.metrics import MetricsEvent
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        collector.record(MetricsEvent(
+            event_type="agent_call",
+            timestamp="2026-04-27T10:00:00Z",
+            agent_name="zara",
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            input_tokens=100,
+            output_tokens=50,
+        ))
+        collector.flush("run-no-synthesis")
+
+        metrics_file = Path(tmpdir) / ".revue" / "metrics.jsonl"
+        data = json.loads(metrics_file.read_text().strip())
+
+        assert "findings" not in data

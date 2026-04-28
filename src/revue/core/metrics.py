@@ -33,6 +33,15 @@ class RoutingMetricsData:
     model_used: str
 
 
+@dataclass
+class SynthesisMetricsData:
+    """Synthesis observability data from Nova consolidation (REVUE-179 AC4)."""
+
+    total_findings: int
+    synthesised_count: int
+    synthesis_events: list[dict] = field(default_factory=list)
+
+
 class MetricsCollector(Protocol):
     """Protocol for collecting and storing metrics events."""
 
@@ -52,6 +61,10 @@ class MetricsCollector(Protocol):
         """Record routing observability data for the current run."""
         ...
 
+    def record_synthesis(self, data: SynthesisMetricsData) -> None:
+        """Record synthesis observability data for the current run."""
+        ...
+
 
 class NullMetricsCollector:
     """Default no-op metrics collector (used when metrics disabled)."""
@@ -68,6 +81,9 @@ class NullMetricsCollector:
     def record_routing(self, data: RoutingMetricsData) -> None:
         pass
 
+    def record_synthesis(self, data: SynthesisMetricsData) -> None:
+        pass
+
 
 class CapturingMetricsCollector:
     """Test double — accumulates events in memory."""
@@ -75,6 +91,7 @@ class CapturingMetricsCollector:
     def __init__(self) -> None:
         self.events: list[MetricsEvent] = []
         self.routing_events: list[RoutingMetricsData] = []
+        self.synthesis_events: list[SynthesisMetricsData] = []
 
     def record(self, event: MetricsEvent) -> None:
         self.events.append(event)
@@ -87,3 +104,6 @@ class CapturingMetricsCollector:
 
     def record_routing(self, data: RoutingMetricsData) -> None:
         self.routing_events.append(data)
+
+    def record_synthesis(self, data: SynthesisMetricsData) -> None:
+        self.synthesis_events.append(data)

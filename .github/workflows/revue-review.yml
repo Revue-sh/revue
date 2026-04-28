@@ -53,11 +53,13 @@ jobs:
           # Set the API key matching your configured provider:
           #   anthropic → ANTHROPIC_API_KEY
           #   openai    → OPENAI_API_KEY  (see REVUE-148 for per-provider key docs)
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           REVUE_TIER_OVERRIDE: ${{ vars.REVUE_TIER_OVERRIDE }}
           GITHUB_TOKEN: ${{ secrets.REVUE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           APP_ENV: staging
+          REVUE_METRICS_ENABLED: "1"
         run: |
           echo "[revue] Starting AI code review..."
           PYTHONPATH="$(pwd)/src" python3 -u src/revue/cli.py review \
@@ -68,3 +70,11 @@ jobs:
             --comment-style per-issue \
             --pr-description-file /tmp/revue_pr_description.txt
           echo "[revue] Review complete"
+
+      - name: Upload metrics artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: revue-metrics
+          path: .revue/metrics.jsonl
+          if-no-files-found: ignore
