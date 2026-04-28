@@ -45,3 +45,7 @@ src/web/.venv/
 # BMad planning artifacts (working docs, not deliverables)
 _bmad-output/
 context/ai-code-review-service
+
+# Bitbucket Pipelines runner (machine-specific, contains credentials)
+atlassian-bitbucket-pipelines-runner.tar.gz
+atlassian-bitbucket-pipelines-runner/

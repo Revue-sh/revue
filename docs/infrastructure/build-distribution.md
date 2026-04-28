@@ -1,100 +1,113 @@
 # Build Distribution — Production Readiness
 
-**Status:** In Progress
-**Updated:** 2026-04-19
+**Status:** Active
+**Updated:** 2026-04-28
 
 ---
 
 ## Overview
 
-The Bitbucket Pipelines build matrix compiles `revue/core/` to native `.so` binaries and packages
-them into platform-specific wheels. Two infrastructure gaps must be closed before compiled wheels
-reach customers.
+The Bitbucket Pipelines build matrix compiles `revue/core/` to native `.so` binaries via Nuitka
+and packages them into platform-specific wheels. Nuitka compilation is the primary IP protection
+mechanism — it makes the review logic, agent prompts, and routing logic non-trivially reversible.
+Shipping plain Python is not acceptable for distribution.
 
 ---
 
-## Gap 1 — Self-hosted runners for ARM64 and macOS
+## Platform support decisions
 
-The Linux x86_64 build runs on Bitbucket Cloud. The other two platforms require self-hosted runners
-registered in the Bitbucket workspace.
+### Supported platforms
 
-### Required runners
-
-| Pipeline step | Runner labels required | Host OS |
+| Platform | Build runner | Rationale |
 |---|---|---|
-| Build Linux ARM64 | `self.hosted`, `linux.arm64` | Ubuntu 22.04+ on ARM64 hardware or VM |
-| Build macOS ARM64 | `self.hosted`, `macos.arm64` | macOS 14+ on Apple Silicon |
+| Linux x86_64 | Bitbucket Cloud managed | ~50% of target users (servers, CI, Linux devs). Zero infrastructure cost. |
+| macOS ARM64 | Self-hosted on dev machine | ~30% of target users. Apple Silicon is the majority of new Mac sales since 2021. Intel Mac users run ARM64 binaries via Rosetta 2 with near-zero overhead. |
 
-### Registration steps
+### Dropped platforms
 
-1. In Bitbucket workspace settings → **Runners**, create a new runner for each platform.
-2. Bitbucket generates a runner token and a Docker run command (Linux) or shell script (macOS).
-3. Execute the command on the target host — the runner agent registers itself and begins polling.
-4. Verify the runner appears as **Online** in workspace settings before triggering a build.
-
-Reference: [Bitbucket Pipelines self-hosted runners](https://support.atlassian.com/bitbucket-cloud/docs/runners/)
-
-### Current behaviour without runners
-
-Steps tagged with unregistered labels queue indefinitely. They are marked `fail-fast: false` so
-they do not block the x86_64 build or the Collect Artifacts step. The missing wheels are silently
-absent from `dist/wheels/`.
+| Platform | Reason |
+|---|---|
+| Linux ARM64 | <1% of target users for a developer CLI tool. Requires a self-hosted runner with no available hardware. Linux ARM64 users can install from source via `pip install revue`. |
 
 ---
 
-## Gap 2 — Wheel registry publishing
+## Pipeline structure
 
-After the build matrix completes, wheels exist only as ephemeral Bitbucket pipeline artifacts.
-No publish step exists yet. The "Collect Artifacts" step in `bitbucket-pipelines.yml` is a
-placeholder (`ls -la dist/wheels/`).
+### Sequential, not parallel
 
-### Decision required: registry target
+The two build steps run **sequentially** — Linux x86_64 first, then macOS ARM64.
 
-Choose one of the following before implementing:
+**Why not parallel:** Bitbucket Pipelines v5 self-hosted runners consume a concurrency slot from
+the workspace plan. Running a managed runner and a self-hosted runner simultaneously uses 2 slots
+concurrently, which triggers additional charges. Sequential execution uses 1 slot at a time —
+no extra cost, no change to the IP protection guarantee.
 
-| Option | Pros | Cons |
-|---|---|---|
-| **Bitbucket Downloads** (workspace-level) | Zero infrastructure, built-in to Bitbucket | No access control per tier; not a standard pip index |
-| **Private PyPI (pypiserver / Artifactory / Gemfury)** | Standard `pip install`, per-token auth, tier gating possible | Requires hosting or paid SaaS |
-| **PyPI (public)** | Easiest customer install | Source wheel would expose compiled binaries publicly; no tier gating |
-| **GitHub Releases (cbscd/revue-dist)** | Simple, pip can install from GitHub releases | Non-standard, fragile URLs |
+**Trade-off:** Total pipeline duration is longer (~16 min x86_64 + macOS build time vs. ~16 min
+total in parallel). For a main branch pipeline that triggers on infrequent merges, this is
+acceptable.
 
-Recommendation: private PyPI index (Gemfury or self-hosted `pypiserver`) — standard install UX,
-supports per-customer tokens for tier enforcement.
-
-### Publish step to add (once registry chosen)
-
-Add the following after the parallel build matrix in `bitbucket-pipelines.yml`:
+**To revert to parallel** if dedicated build infrastructure is available in future:
 
 ```yaml
-- step:
-    name: "Publish Wheels"
-    script:
-      - pip install twine
-      - twine upload
-          --repository-url $PYPI_REGISTRY_URL
-          --username $PYPI_USERNAME
-          --password $PYPI_PASSWORD
-          dist/wheels/*.whl
-    artifacts:
-      - dist/wheels/*.whl
+# Replace the two sequential step entries with:
+- parallel:
+    steps:
+      - step:
+          name: "Build Linux x86_64"
+          # ... (managed runner, no runs-on needed)
+      - step:
+          name: "Build macOS ARM64"
+          runs-on:
+            - self.hosted
+            - macos.arm64
+          # ... (remove fail-fast: false — runners are reliable)
 ```
 
-Repository variables to add in Bitbucket:
+---
 
-| Variable | Value |
+## macOS ARM64 self-hosted runner setup
+
+The macOS build step uses a Bitbucket v5 self-hosted runner registered on an Apple Silicon Mac.
+
+### Registration (one-time)
+
+1. Go to **Bitbucket repo → Repository settings → Pipelines → Runners → Add runner**
+2. Select macOS as the platform
+3. Follow the agent install instructions Bitbucket generates
+4. Verify the runner appears as **Online** before merging to main
+
+### Runner availability
+
+The runner must be online when a main branch pipeline triggers. If it is offline, the macOS
+build step queues until it comes back online (Bitbucket does not time out self-hosted steps
+immediately). The pipeline will not fail fast — it will wait.
+
+If the runner will be offline for an extended period, the macOS build step can be temporarily
+commented out of `bitbucket-pipelines.yml` to unblock the Linux x86_64 + deploy flow.
+
+---
+
+## Wheel publishing
+
+Wheels are published to **public PyPI** after both builds complete.
+
+| Variable | Purpose |
 |---|---|
-| `PYPI_REGISTRY_URL` | URL of chosen private index |
-| `PYPI_USERNAME` | Registry username or `__token__` |
-| `PYPI_PASSWORD` | Registry token (mark as **secured**) |
+| `PYPI_API_TOKEN` | PyPI upload token (secured pipeline variable) |
+
+The "Collect Artifacts" step lists available wheels before publishing. If the macOS runner is
+offline, only the Linux x86_64 wheel is published for that release. macOS users can still
+`pip install revue` and receive the Linux wheel, which runs under Rosetta 2, or wait for the
+next release when the runner is online.
 
 ---
 
 ## Milestone checklist
 
-- [ ] ARM64 Linux runner registered and online
+- [x] Linux x86_64 build on Bitbucket Cloud managed runner
+- [x] Nuitka CI hang fixed (`--assume-yes-for-downloads`, `--no-progressbar`)
+- [x] Build output visible in CI log (`python -u`)
+- [x] PyPI publish step wired (`PYPI_API_TOKEN`)
+- [x] Fly.io deploy step wired (`FLY_API_TOKEN`)
 - [ ] macOS ARM64 runner registered and online
-- [ ] Registry target decided and provisioned
-- [ ] `PYPI_REGISTRY_URL`, `PYPI_USERNAME`, `PYPI_PASSWORD` added as secured pipeline variables
-- [ ] Publish step added to `bitbucket-pipelines.yml`
-- [ ] End-to-end test: push to main → all three wheels built → published → `pip install revue` from registry succeeds on each platform
+- [ ] End-to-end test: push to main → both wheels built → published to PyPI → `pip install revue` succeeds on macOS ARM64
