@@ -414,7 +414,50 @@ Ask the main agent: "What skills are currently available in this session?" Store
     <action if="definition-of-done validation fails">HALT - Address DoD failures before completing</action>
   </step>
 
-  <step n="10" goal="Completion communication and user support">
+  <step n="10" goal="Mandatory pre-commit code review gate">
+    <critical>This step MUST complete before any commit or push. Do NOT skip or defer.</critical>
+    <critical>Purpose: catch High-severity issues before CI, eliminating the fix→push cycle.</critical>
+
+    <output>🔍 **Pre-Commit Code Review Required**
+
+      Implementation is complete and tests pass. Before committing, a mandatory code review
+      must run against the uncommitted changes.
+
+      💡 **Tip:** For best results, run this review using a **different** LLM than the one
+      that implemented the story. Open a second Claude session and invoke `/bmad-code-review`.
+    </output>
+
+    <action>Ask {user_name} to invoke `/bmad-code-review` on uncommitted changes, using
+      {story_file} as the spec for full-review mode.
+    </action>
+
+    <action>HALT — wait for {user_name} to provide the code review results.</action>
+
+    <check if="code review results provided by user">
+      <action>Identify any High-severity findings in the results</action>
+
+      <check if="one or more High-severity findings remain unresolved">
+        <output>🚫 **Code Review Gate: BLOCKED**
+
+          The following High-severity findings must be resolved before committing:
+          {{high_severity_findings}}
+
+          Fix each finding, re-run tests, then re-run `/bmad-code-review` on the
+          updated uncommitted changes and provide the new results here.
+        </output>
+        <action>HALT — return here after fixes; repeat until no High findings remain</action>
+      </check>
+
+      <check if="no High-severity findings remain">
+        <action>Record in Dev Agent Record → Completion Notes:
+          "Pre-commit code review passed. Date: {{date}}. High findings: 0."
+        </action>
+        <output>✅ **Code Review Gate: PASSED** — Proceed to commit and push.</output>
+      </check>
+    </check>
+  </step>
+
+  <step n="11" goal="Completion communication and user support">
     <action>Execute the enhanced definition-of-done checklist using the validation framework</action>
     <action>Prepare a concise summary in Dev Agent Record → Completion Notes</action>
 
@@ -440,11 +483,9 @@ Ask the main agent: "What skills are currently available in this session?" Store
       - Review the implemented story and test the changes
       - Verify all acceptance criteria are met
       - Ensure deployment readiness if applicable
-      - Run `code-review` workflow for peer review
       - Optional: If Test Architect module installed, run `/bmad:tea:automate` to expand guardrail tests
     </action>
 
-    <output>💡 **Tip:** For best results, run `code-review` using a **different** LLM than the one that implemented this story.</output>
     <check if="{sprint_status} file exists">
       <action>Suggest checking {sprint_status} to see project progress</action>
     </check>

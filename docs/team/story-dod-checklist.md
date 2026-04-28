@@ -156,15 +156,16 @@ The goal is quality delivery, not just checking boxes.]]
 
    **Required order — do not skip or reorder:**
    1. [ ] All tests pass (unit, integration, E2E)
-   2. [ ] Branch pushed to origin with correct naming: `feat/REVUE-XX-short-description`
-   3. [ ] PR opened with title following Conventional Commits: `feat(scope)[REVUE-XX]: description`
-   4. [ ] PR passes CI (all builds green, no failures)
-   5. [ ] PR reviewed and **merged into main**
-   6. [ ] **Only after merge:** Jira ticket transitioned to **Done** via API — confirm with 204 response
-   7. [ ] Any NEW stories created during implementation are created in Jira immediately
-   8. [ ] Epic status in Jira updated if all stories in the epic are now Done
-   9. [ ] `docs/kanban-board.md` updated to mirror Jira (secondary mirror, never a substitute)
-   10. [ ] **Jira confirmation statement written in DoD summary** — e.g. "REVUE-65 marked Done on Jira after PR #12 merged at 14:30 UTC."
+   2. [ ] `bmad-code-review` run on local **uncommitted** changes; all High-severity findings addressed before any commit
+   3. [ ] Branch pushed to origin with correct naming: `feat/REVUE-XX-short-description`
+   4. [ ] PR opened with title following Conventional Commits: `feat(scope)[REVUE-XX]: description`
+   5. [ ] PR passes CI (all builds green, no failures)
+   6. [ ] PR reviewed and **merged into main**
+   7. [ ] **Only after merge:** Jira ticket transitioned to **Done** via API — confirm with 204 response
+   8. [ ] Any NEW stories created during implementation are created in Jira immediately
+   9. [ ] Epic status in Jira updated if all stories in the epic are now Done
+   10. [ ] `docs/kanban-board.md` updated to mirror Jira (secondary mirror, never a substitute)
+   11. [ ] **Jira confirmation statement written in DoD summary** — e.g. "REVUE-65 marked Done on Jira after PR #12 merged at 14:30 UTC."
 
    **If Jira is unreachable:** STOP. Notify the human. Do NOT mark the story Done. Wait for resolution or get explicit written approval to defer — document the deferral in the session notes.
 
