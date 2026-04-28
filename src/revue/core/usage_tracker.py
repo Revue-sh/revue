@@ -7,6 +7,7 @@ tracking call after completion.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from typing import Optional
 
@@ -14,12 +15,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Using fly.dev host until revue.io domain is purchased and wired (pre-MVP).
-# When the domain is live, swap the active lines with the commented ones below.
-TRACK_URL = "https://revue-io.fly.dev/usage/track"
-UPGRADE_URL = "https://revue-io.fly.dev/upgrade"
-# TRACK_URL = "https://api.revue.io/usage/track"
-# UPGRADE_URL = "https://revue.io/upgrade"
+# Set REVUE_APP_HOST to the production domain once purchased (e.g. revue.io or revue.dev).
+# Defaults to the Fly.io host used during the pre-MVP period.
+_HOST = os.getenv("REVUE_APP_HOST", "revue-io.fly.dev")
+TRACK_URL = f"https://{_HOST}/usage/track"
+UPGRADE_URL = f"https://{_HOST}/upgrade"
 
 
 # ---------------------------------------------------------------------------

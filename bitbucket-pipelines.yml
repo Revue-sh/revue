@@ -115,6 +115,27 @@ pipelines:
             - ls -la dist/wheels/ 2>/dev/null || echo "No wheels built (self-hosted runners may be offline)"
           artifacts:
             - dist/wheels/*.whl
+      - parallel:
+          steps:
+            - step:
+                name: "Deploy Web → Fly.io"
+                script:
+                  - curl -L https://fly.io/install.sh | sh
+                  - export PATH="$HOME/.fly/bin:$PATH"
+                  # FLY_APP defaults to revue-io; change to the new app name after domain purchase.
+                  - flyctl deploy --app "${FLY_APP:-revue-io}" --config src/web/fly.toml --remote-only
+            - step:
+                name: "Publish CLI → PyPI"
+                script:
+                  - pip install --quiet twine
+                  - |
+                    if ls dist/wheels/*.whl 2>/dev/null; then
+                      export TWINE_USERNAME=__token__
+                      export TWINE_PASSWORD=$PYPI_API_TOKEN
+                      python -m twine upload --non-interactive dist/wheels/*.whl
+                    else
+                      echo "No wheels found — skipping PyPI upload"
+                    fi
     develop:
       - step: *run-tests
 
