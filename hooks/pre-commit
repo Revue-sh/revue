@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# pre-commit orchestrator — runs every check in hooks/checks/*.sh
+# Add a new check by dropping a new script in hooks/checks/; no edits needed here.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CHECKS_DIR="$REPO_ROOT/hooks/checks"
+FAILED=0
+
+for check in "$CHECKS_DIR"/*.sh; do
+  [[ -x "$check" ]] || continue
+  if ! bash "$check"; then
+    echo "[pre-commit] FAILED: $(basename "$check")" >&2
+    FAILED=1
+  fi
+done
+
+exit $FAILED

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# commit-msg stub — extend to validate commit message format.
+# $1 = path to the file containing the commit message.
+exit 0

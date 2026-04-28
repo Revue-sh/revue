@@ -28,6 +28,8 @@ def compile_module(py_file: Path) -> Path:
         f"--output-dir={OUTPUT_DIR}",
         "--remove-output",
         "--no-pyi-file",
+        "--assume-yes-for-downloads",  # suppress interactive prompts in CI
+        "--no-progressbar",            # avoid TTY escape codes in CI logs
     ]
     print(f"  Compiling {py_file.name} ...")
     result = subprocess.run(cmd, capture_output=True, text=True)

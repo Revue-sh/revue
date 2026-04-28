@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# pre-push stub — extend with hooks/checks/ scripts as needed.
+exit 0

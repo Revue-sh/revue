@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# prepare-commit-msg stub — extend to populate commit message templates.
+# $1 = path to the file containing the commit message.
+# $2 = commit type (message, template, merge, squash, commit).
+exit 0
