@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from revue.core.dedup_consolidator import (
+    AIContradictionSynthesiser,
     consolidate,
     ConsolidationResult,
     SameFileLineStrategy,
@@ -189,7 +190,6 @@ def test_prompt_applies_rules_to_rationale():
 # ---------------------------------------------------------------------------
 
 def _mock_client_returning(response_json: str) -> MagicMock:
-    """Mock AIClient whose complete() returns a text attribute with the given JSON."""
     client = MagicMock()
     result = MagicMock()
     result.text = response_json
@@ -198,9 +198,10 @@ def _mock_client_returning(response_json: str) -> MagicMock:
 
 
 def test_synthesis_before_confidence_filter() -> None:
-    """AC3/TC1: A low-confidence finding that forms a contradiction group with a
+    """AC2/AC3/TC1: A low-confidence finding that forms a contradiction group with a
     high-confidence partner must not be dropped by the confidence filter before
-    synthesis runs.
+    synthesis runs (AC2). The synthesised result passes the filter at max(group)
+    confidence (AC3).
 
     Kai(confidence=0.6) + Zara(confidence=0.9) on the same file+line,
     min_confidence=0.8 → synthesised finding (confidence=0.9) is returned.
@@ -230,7 +231,7 @@ def test_synthesis_before_confidence_filter() -> None:
     )
     client = _mock_client_returning(mock_response)
 
-    result = consolidate([kai, zara], min_confidence=0.8, ai_client=client)
+    result = consolidate([kai, zara], min_confidence=0.8, synthesiser=AIContradictionSynthesiser(client))
 
     assert len(result.findings) == 1, (
         "Synthesised finding (confidence=0.9) must survive min_confidence=0.8 filter; "
@@ -239,12 +240,16 @@ def test_synthesis_before_confidence_filter() -> None:
     synthesised = result.findings[0]
     assert synthesised.confidence == 0.9
     assert synthesised.agent_name == "nova"
+    assert synthesised.issue == "Synthesised issue"
+    assert synthesised.suggestion == "Combined fix"
     assert result.original_count == 2
     assert result.duplicates_removed == 1, (
         "Synthesis collapsed 2 → 1 finding; that collapse must be counted in duplicates_removed "
         "so original_count - duplicates_removed == len(findings)"
     )
     assert len(result.synthesis_events) == 1
+    assert result.synthesis_events[0]["file"] == "app.py"
+    assert result.synthesis_events[0]["line"] == 10
     # Invariant: original_count == len(findings) + duplicates_removed
     assert result.original_count == len(result.findings) + result.duplicates_removed
     client.complete.assert_called_once()
@@ -257,17 +262,17 @@ def test_synthesis_all_below_threshold_after_collapse() -> None:
     which still fails the filter. Result must be empty.
     """
     kai = AIReview(
-        file_path="app.py", line_number=5, severity="minor",
+        file_path="app.py", line_number=5, severity="low",
         issue="Kai", suggestion="fix", confidence=0.3, agent_name="kai",
     )
     zara = AIReview(
-        file_path="app.py", line_number=5, severity="minor",
+        file_path="app.py", line_number=5, severity="low",
         issue="Zara", suggestion="fix", confidence=0.4, agent_name="zara",
     )
     mock_response = '[{"file": "app.py", "line": 5, "issue": "Synthesised", "suggestion": "fix"}]'
     client = _mock_client_returning(mock_response)
 
-    result = consolidate([kai, zara], min_confidence=0.8, ai_client=client)
+    result = consolidate([kai, zara], min_confidence=0.8, synthesiser=AIContradictionSynthesiser(client))
 
     assert result.findings == [], "Synthesised finding (confidence=0.4) must be dropped by filter"
     assert result.original_count == 2
@@ -298,7 +303,7 @@ def test_synthesis_three_way_group_survives_filter() -> None:
     mock_response = '[{"file": "app.py", "line": 20, "issue": "Synthesised", "suggestion": "fix"}]'
     client = _mock_client_returning(mock_response)
 
-    result = consolidate([kai, zara, maya], min_confidence=0.8, ai_client=client)
+    result = consolidate([kai, zara, maya], min_confidence=0.8, synthesiser=AIContradictionSynthesiser(client))
 
     assert len(result.findings) == 1
     assert result.findings[0].confidence == 0.9
@@ -307,3 +312,58 @@ def test_synthesis_three_way_group_survives_filter() -> None:
     # Invariant: original_count == len(findings) + duplicates_removed
     assert result.original_count == len(result.findings) + result.duplicates_removed
     client.complete.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# REVUE-185 retrospective fixes — AC10, AC11, AC12
+# ---------------------------------------------------------------------------
+
+def test_synthesiser_none_confidence_filter_still_applies() -> None:
+    """AC10: confidence filter applies correctly when synthesiser=None (synthesis skipped)."""
+    high = AIReview(
+        file_path="app.py", line_number=1, severity="high",
+        issue="issue", suggestion="fix", confidence=0.9, agent_name="kai",
+    )
+    low = AIReview(
+        file_path="app.py", line_number=2, severity="high",
+        issue="issue", suggestion="fix", confidence=0.2, agent_name="zara",
+    )
+    result = consolidate([high, low], min_confidence=0.8, synthesiser=None)
+    assert len(result.findings) == 1
+    assert result.findings[0].confidence == 0.9
+    assert result.duplicates_removed == 1
+
+
+def test_cross_file_same_line_not_synthesised() -> None:
+    """AC11: findings on the same line number but different files must NOT be synthesised."""
+    mock_synthesiser = MagicMock()
+    a = AIReview(
+        file_path="a.py", line_number=10, severity="high",
+        issue="issue A", suggestion="fix A", confidence=0.9, agent_name="kai",
+    )
+    b = AIReview(
+        file_path="b.py", line_number=10, severity="high",
+        issue="issue B", suggestion="fix B", confidence=0.9, agent_name="zara",
+    )
+    result = consolidate([a, b], synthesiser=mock_synthesiser)
+    assert len(result.findings) == 2
+    mock_synthesiser.synthesise.assert_not_called()
+
+
+def test_synthesis_returning_empty_list_preserves_findings() -> None:
+    """AC12: if synthesiser.synthesise() returns ([], []) the original findings are preserved."""
+    mock_synthesiser = MagicMock()
+    mock_synthesiser.synthesise.return_value = ([], [])
+    kai = AIReview(
+        file_path="app.py", line_number=10, severity="high",
+        issue="Kai issue", suggestion="fix", confidence=0.9, agent_name="kai",
+    )
+    zara = AIReview(
+        file_path="app.py", line_number=10, severity="high",
+        issue="Zara issue", suggestion="fix", confidence=0.8, agent_name="zara",
+    )
+    result = consolidate([kai, zara], synthesiser=mock_synthesiser)
+    assert len(result.findings) == 2, (
+        "synthesis returning empty list must not discard findings — originals must be preserved"
+    )
+    assert result.duplicates_removed == 0

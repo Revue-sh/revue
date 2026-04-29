@@ -1,10 +1,16 @@
-"""Tests for Nova contradiction synthesis — REVUE-179."""
+"""Tests for Nova contradiction synthesis — REVUE-179/REVUE-180."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
 from revue.core.models import AIReview
-from revue.core.dedup_consolidator import consolidate, SameFileLineStrategy, SimilarIssueStrategy
+from revue.core.dedup_consolidator import (
+    AIContradictionSynthesiser,
+    consolidate,
+    SameFileLineStrategy,
+    SimilarIssueStrategy,
+)
+from revue.core.synthesis_protocol import ContradictionSynthesiser
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +40,94 @@ def _mock_client(response_json: str) -> MagicMock:
     return client
 
 
+def _mock_synthesiser(response_json: str) -> AIContradictionSynthesiser:
+    """Real AIContradictionSynthesiser wrapping a mock AIClient.
+
+    Uses the real adapter (not a protocol stub) so tests exercise
+    _synthesise_contradictions() parsing logic end-to-end.
+    """
+    return AIContradictionSynthesiser(_mock_client(response_json))
+
+
+# ---------------------------------------------------------------------------
+# REVUE-180 — TC1: consolidate() delegates to synthesiser.synthesise()
+# ---------------------------------------------------------------------------
+
+def test_consolidate_calls_synthesiser_synthesise() -> None:
+    """TC1 (REVUE-180): consolidate(synthesiser=mock) calls mock.synthesise() with grouped findings."""
+    kai = _finding("kai", "high", issue="Performance concern", category="performance")
+    zara = _finding("zara", "critical", issue="Security risk", category="security")
+
+    synthesised_finding = AIReview(
+        file_path="app.py", line_number=10, severity="critical",
+        issue="Synthesised", suggestion="Fix", confidence=0.9,
+        agent_name="nova",
+        synthesised_from=[("kai", "performance"), ("zara", "security")],
+    )
+    mock_syn = MagicMock(spec=ContradictionSynthesiser)
+    mock_syn.synthesise.return_value = ([synthesised_finding], [
+        {"from_agents": ["kai", "zara"], "file": "app.py", "line": 10,
+         "severity_in": ["high", "critical"], "severity_out": "critical"},
+    ])
+
+    result = consolidate([kai, zara], synthesiser=mock_syn)
+
+    mock_syn.synthesise.assert_called_once()
+    called_findings = mock_syn.synthesise.call_args[0][0]
+    assert {f.agent_name for f in called_findings} == {"kai", "zara"}
+    assert len(result.findings) == 1
+    assert result.findings[0].issue == "Synthesised"
+    assert len(result.synthesis_events) == 1
+    event = result.synthesis_events[0]
+    assert set(event["from_agents"]) == {"kai", "zara"}
+    assert event["file"] == "app.py"
+    assert event["line"] == 10
+
+
+# ---------------------------------------------------------------------------
+# REVUE-180 — TC2: consolidate(synthesiser=None) passes findings through
+# ---------------------------------------------------------------------------
+
+def test_consolidate_synthesiser_none_passes_through() -> None:
+    """TC2 (REVUE-180): consolidate(synthesiser=None) — no synthesis, findings pass through."""
+    kai = _finding("kai", "high")
+    zara = _finding("zara", "critical")
+
+    result = consolidate([kai, zara], synthesiser=None)
+
+    assert len(result.findings) == 2
+    for f in result.findings:
+        assert f.synthesised_from is None
+    assert result.synthesis_events == []
+
+
+# ---------------------------------------------------------------------------
+# REVUE-180 — TC3: AIContradictionSynthesiser unit test
+# ---------------------------------------------------------------------------
+
+def test_ai_contradiction_synthesiser_returns_expected_findings() -> None:
+    """TC3 (REVUE-180): AIContradictionSynthesiser.synthesise() returns expected findings and events."""
+    kai = _finding("kai", "high", issue="Performance concern", category="performance")
+    zara = _finding("zara", "critical", issue="Security risk", category="security")
+
+    mock_response = (
+        '[{"file": "app.py", "line": 10, '
+        '"issue": "Performance and security issue", "suggestion": "Fix both"}]'
+    )
+    synthesiser = AIContradictionSynthesiser(_mock_client(mock_response))
+
+    findings_out, events = synthesiser.synthesise([kai, zara])
+
+    assert len(findings_out) == 1
+    assert findings_out[0].issue == "Performance and security issue"
+    assert findings_out[0].severity == "critical"
+    assert findings_out[0].agent_name == "nova"
+    assert set(findings_out[0].synthesised_from) == {("kai", "performance"), ("zara", "security")}
+    assert len(events) == 1
+    assert set(events[0]["from_agents"]) == {"kai", "zara"}
+    assert events[0]["severity_out"] == "critical"
+
+
 # ---------------------------------------------------------------------------
 # TC1 — Two-agent contradiction synthesis (AC1, AC2, AC5)
 # ---------------------------------------------------------------------------
@@ -48,9 +142,8 @@ def test_two_agent_contradiction_synthesised() -> None:
         '[{"file": "app.py", "line": 10, '
         '"issue": "Performance and security issue", "suggestion": "Fix both"}]'
     )
-    client = _mock_client(mock_response)
 
-    result = consolidate([kai, zara], ai_client=client)
+    result = consolidate([kai, zara], synthesiser=_mock_synthesiser(mock_response))
 
     assert len(result.findings) == 1
     synthesised = result.findings[0]
@@ -67,14 +160,14 @@ def test_two_agent_contradiction_synthesised() -> None:
 def test_single_finding_no_synthesis() -> None:
     """TC2: Single Kai finding passes through unchanged; synthesised_from is None."""
     kai = _finding("kai", "high")
-    client = _mock_client("[]")
+    mock_syn = MagicMock(spec=ContradictionSynthesiser)
 
-    result = consolidate([kai], ai_client=client)
+    result = consolidate([kai], synthesiser=mock_syn)
 
     assert len(result.findings) == 1
     assert result.findings[0].synthesised_from is None
-    # LLM should not be called when no groups have 2+ findings
-    client.complete.assert_not_called()
+    # synthesiser.synthesise() must not be called when no contradiction groups exist
+    mock_syn.synthesise.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -90,9 +183,8 @@ def test_synthesis_events_populated_on_result() -> None:
         '[{"file": "api.py", "line": 47, '
         '"issue": "Combined finding", "suggestion": "Combined fix"}]'
     )
-    client = _mock_client(mock_response)
 
-    result = consolidate([kai, zara], ai_client=client)
+    result = consolidate([kai, zara], synthesiser=_mock_synthesiser(mock_response))
 
     assert len(result.synthesis_events) == 1
     event = result.synthesis_events[0]
@@ -118,9 +210,8 @@ def test_three_agent_synthesis() -> None:
         '[{"file": "app.py", "line": 10, '
         '"issue": "Three concerns", "suggestion": "Fix all three"}]'
     )
-    client = _mock_client(mock_response)
 
-    result = consolidate([kai, zara, maya], ai_client=client)
+    result = consolidate([kai, zara, maya], synthesiser=_mock_synthesiser(mock_response))
 
     assert len(result.findings) == 1
     synthesised = result.findings[0]
@@ -136,11 +227,11 @@ def test_three_agent_synthesis() -> None:
 # ---------------------------------------------------------------------------
 
 def test_no_ai_client_no_synthesis() -> None:
-    """Without an ai_client, consolidate() passes findings through without synthesis."""
+    """Without a synthesiser, consolidate() passes findings through without synthesis."""
     kai = _finding("kai", "high")
     zara = _finding("zara", "critical")
 
-    result = consolidate([kai, zara], ai_client=None)
+    result = consolidate([kai, zara], synthesiser=None)
 
     # Both findings remain (different severities, not duplicates)
     assert len(result.findings) == 2
@@ -154,14 +245,14 @@ def test_no_ai_client_no_synthesis() -> None:
 # ---------------------------------------------------------------------------
 
 def test_llm_failure_falls_back_to_passthrough() -> None:
-    """If the LLM call raises, consolidate() falls back — no synthesis, no crash."""
+    """If synthesiser.synthesise() raises, consolidate() falls back — no synthesis, no crash."""
     kai = _finding("kai", "high")
     zara = _finding("zara", "critical")
 
-    failing_client = MagicMock()
-    failing_client.complete.side_effect = RuntimeError("LLM unavailable")
+    failing_syn = MagicMock(spec=ContradictionSynthesiser)
+    failing_syn.synthesise.side_effect = RuntimeError("LLM unavailable")
 
-    result = consolidate([kai, zara], ai_client=failing_client)
+    result = consolidate([kai, zara], synthesiser=failing_syn)
 
     # Both findings pass through unchanged
     assert len(result.findings) == 2
@@ -179,9 +270,7 @@ def test_llm_returns_non_dict_entry_falls_back() -> None:
     kai = _finding("kai", "high")
     zara = _finding("zara", "critical")
 
-    client = _mock_client('[42, null, "bad"]')  # all entries are non-dicts
-
-    result = consolidate([kai, zara], ai_client=client)
+    result = consolidate([kai, zara], synthesiser=_mock_synthesiser('[42, null, "bad"]'))
 
     assert len(result.findings) == 2
     assert result.synthesis_events == []
@@ -193,9 +282,7 @@ def test_llm_returns_non_numeric_line_falls_back() -> None:
     zara = _finding("zara", "critical")
 
     bad_json = '[{"file": "app.py", "line": "not-a-number", "issue": "x", "suggestion": "y"}]'
-    client = _mock_client(bad_json)
-
-    result = consolidate([kai, zara], ai_client=client)
+    result = consolidate([kai, zara], synthesiser=_mock_synthesiser(bad_json))
 
     # Bad entry skipped → originals pass through
     assert len(result.findings) == 2
@@ -208,9 +295,7 @@ def test_llm_returns_entry_missing_required_fields_falls_back() -> None:
     zara = _finding("zara", "critical")
 
     bad_json = '[{"line": 10, "suggestion": "fix it"}]'  # missing file and issue
-    client = _mock_client(bad_json)
-
-    result = consolidate([kai, zara], ai_client=client)
+    result = consolidate([kai, zara], synthesiser=_mock_synthesiser(bad_json))
 
     assert len(result.findings) == 2
     assert result.synthesis_events == []
@@ -282,7 +367,7 @@ def test_cross_agent_similar_findings_reach_synthesis() -> None:
     kai = _finding("kai", "high", issue="SQL injection in query builder", category="security")
     zara = _finding("zara", "critical", issue="SQL injection vulnerability query builder", category="security")
 
-    result = consolidate([kai, zara], ai_client=None)
+    result = consolidate([kai, zara], synthesiser=None)
 
     assert len(result.findings) == 2, (
         "Cross-agent similar findings must not be collapsed by SimilarIssueStrategy"
@@ -343,9 +428,8 @@ def test_synthesis_events_agent_names_exclude_empty_string() -> None:
         '[{"file": "app.py", "line": 10, '
         '"issue": "Combined", "suggestion": "Fix both"}]'
     )
-    client = _mock_client(mock_response)
 
-    result = consolidate([kai, unknown], ai_client=client)
+    result = consolidate([kai, unknown], synthesiser=_mock_synthesiser(mock_response))
 
     assert len(result.synthesis_events) == 1
     from_agents = result.synthesis_events[0]["from_agents"]

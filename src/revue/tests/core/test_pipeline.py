@@ -806,6 +806,7 @@ def _cascade_orch(agents: list, run_side_effect=None):
         consolidate=MagicMock(return_value=ConsolidationResult(
             findings=[], duplicates_removed=0, original_count=0
         )),
+        AIContradictionSynthesiser=MagicMock(),
         run_shared_analysis=MagicMock(return_value=shared),
         route=MagicMock(return_value=(MagicMock(), agents)),
         format_selection_message=MagicMock(return_value=""),

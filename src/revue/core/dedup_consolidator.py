@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .agent_names import NOVA
+from .ai_client import AIClient
 from .models import AIReview
+from .synthesis_protocol import ContradictionSynthesiser
 
 _log = logging.getLogger(__name__)
 
@@ -470,6 +472,40 @@ def _synthesise_contradictions(
     return result_findings, synthesis_events
 
 
+class AIContradictionSynthesiser:
+    """Concrete ContradictionSynthesiser that wraps AIClient and delegates to
+    _synthesise_contradictions() (DIP, REVUE-180).
+
+    This adapter is the bridge between the ContradictionSynthesiser Protocol
+    boundary and the AI-backed implementation in _synthesise_contradictions().
+    All JSON parsing, prompt construction, and response handling live in that
+    private function; this class owns only the protocol contract enforcement.
+    """
+
+    def __init__(self, ai_client: AIClient) -> None:
+        if ai_client is None:
+            raise ValueError("AIContradictionSynthesiser requires a non-None AIClient")
+        self._client = ai_client
+
+    def synthesise(
+        self, findings: list[AIReview]
+    ) -> tuple[list[AIReview], list[dict]]:
+        """Synthesise contradiction groups via AI. Returns (findings, events).
+
+        Honors the ContradictionSynthesiser protocol contract: never raises —
+        returns (original_findings, []) on any failure.
+        """
+        try:
+            return _synthesise_contradictions(findings, self._client)
+        except Exception:
+            _log.exception(
+                "AIContradictionSynthesiser.synthesise() failed — passing findings through "
+                "(affected findings: %d)",
+                len(findings),
+            )
+            return findings, []
+
+
 @dataclass
 class ConsolidationResult:
     findings: list[AIReview]
@@ -488,16 +524,18 @@ def consolidate(
     findings: list[AIReview],
     strategies: list[DeduplicationStrategy] | None = None,
     min_confidence: float = 0.0,
-    ai_client: Any | None = None,
+    synthesiser: ContradictionSynthesiser | None = None,
 ) -> ConsolidationResult:
     """
     Deduplicate, synthesise contradictions, and prioritise findings.
 
     - Remove duplicates using strategies (keep highest-confidence finding)
-    - Synthesise contradictions (2+ findings on same file:line) via LLM if ai_client provided
     - Filter out findings below min_confidence threshold
+    - Synthesise contradictions (2+ findings on same file:line from different agents)
+      via synthesiser, but only when _detect_contradiction_groups() returns groups;
+      synthesis is skipped entirely when no groups exist
     - Sort: critical → major → minor → suggestion, then by confidence desc
-    - Falls back gracefully if LLM unavailable or fails
+    - Falls back gracefully if synthesiser is None, no groups found, or synthesiser raises
     """
     active = strategies if strategies is not None else _DEFAULT_STRATEGIES
     original_count = len(findings)
@@ -525,21 +563,22 @@ def consolidate(
         if not is_dup:
             kept.append(candidate)
 
-    # Synthesise contradictions (same file:line with 2+ findings from different agents).
-    # Runs before the confidence filter: a low-confidence finding that belongs to a
-    # contradiction group must not be dropped before synthesis can use it.
-    # The synthesised result gets confidence=max(group) — see line 444 of
-    # _synthesise_contradictions — so the filter evaluates the final post-synthesis
-    # confidence, not the per-contributor confidences.
+    # Synthesise before filter so contradiction-group members aren't dropped prematurely.
     synthesis_events: list[dict] = []
-    if ai_client is not None:
-        pre_synthesis_count = len(kept)
-        kept, new_events = _synthesise_contradictions(kept, ai_client)
-        synthesis_events = new_events
-        removed += pre_synthesis_count - len(kept)  # collapsed findings count as removed
+    if synthesiser is not None and _detect_contradiction_groups(kept):
+        try:
+            pre_synthesis_count = len(kept)
+            new_kept, new_events = synthesiser.synthesise(kept)
+            if new_kept:
+                kept = new_kept
+                synthesis_events = new_events
+                removed += pre_synthesis_count - len(kept)
+            else:
+                _log.warning("consolidate: synthesis returned empty — keeping original findings")
+        except Exception:
+            _log.exception("consolidate: synthesiser.synthesise() failed — passing findings through")
 
-    # Filter by confidence — after synthesis so synthesised findings are evaluated
-    # at their final (max-group) confidence.
+    # Filter by confidence after synthesis so synthesised findings are evaluated at max(group) confidence.
     filtered = [f for f in kept if f.confidence >= min_confidence]
     removed += len(kept) - len(filtered)
 

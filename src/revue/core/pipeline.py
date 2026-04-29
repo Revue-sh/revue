@@ -236,6 +236,7 @@ class OrchestrationModules(NamedTuple):
     load_all_agents: object
     run_agents_parallel: object
     consolidate: object
+    AIContradictionSynthesiser: object
     run_shared_analysis: object
     route: object
     format_selection_message: object
@@ -252,7 +253,7 @@ def _import_orchestration() -> "OrchestrationModules":
     try:
         from revue.core.agent_loader import load_all_agents
         from revue.core.agent_runner import run_agents_parallel, ParallelRunResult
-        from revue.core.dedup_consolidator import consolidate
+        from revue.core.dedup_consolidator import AIContradictionSynthesiser, consolidate
         from revue.core.shared_analysis import run_shared_analysis
         from revue.core.formatting import format_selection_message
         from revue.core.cleo_router import route, assign_files_to_agents
@@ -260,6 +261,7 @@ def _import_orchestration() -> "OrchestrationModules":
             load_all_agents=load_all_agents,
             run_agents_parallel=run_agents_parallel,
             consolidate=consolidate,
+            AIContradictionSynthesiser=AIContradictionSynthesiser,
             run_shared_analysis=run_shared_analysis,
             route=route,
             format_selection_message=format_selection_message,
@@ -658,6 +660,7 @@ class ReviewPipeline:
         load_all_agents = mods.load_all_agents
         run_agents_parallel = mods.run_agents_parallel
         consolidate = mods.consolidate
+        AIContradictionSynthesiser = mods.AIContradictionSynthesiser
         run_shared_analysis = mods.run_shared_analysis
         route = mods.route
         format_selection_message = mods.format_selection_message
@@ -898,7 +901,7 @@ class ReviewPipeline:
             for finding in r.findings
         ]
 
-        consolidation = consolidate(all_findings, ai_client=self._client)
+        consolidation = consolidate(all_findings, synthesiser=AIContradictionSynthesiser(self._client))
         print(
             f"[revue]   {consolidation.original_count} findings → "
             f"{len(consolidation.findings)} after deduplication "
