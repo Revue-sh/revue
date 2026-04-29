@@ -31,5 +31,15 @@ Items surfaced during review but not caused by the current story. Collect here f
 ### D1 — Feature flags have no env-var override path
 `src/revue/core/ai_config.py` / `from_env()`. No feature flag (`preserve_comment_threads`, `show_reviewed_files`) is settable via an environment variable, so CI pipelines cannot toggle them without a `.revue.yml` file present. Pattern would be e.g. `REVUE_SHOW_REVIEWED_FILES=false`. Pre-existing gap, not introduced by REVUE-134.
 
+---
+
+## Deferred from: code review of REVUE-185 (2026-04-29)
+
+- **W1** — No boundary test for `min_confidence=1.0`: synthesised finding inherits `confidence=max(group)`; if all contributors are below 1.0 the synthesised result silently drops. Pre-existing test coverage gap for this boundary.
+- **W2** — Synthesis tests call `consolidate()` without an explicit `strategies=` kwarg, relying on `_DEFAULT_STRATEGIES`. If default strategies change, these tests silently change behaviour without a test signal.
+- **W3** — No negative test for `synthesised.agent_name` when mock response omits the field. Positive assertion (`== "nova"`) is sufficient for the fix but the absent-name path is untested.
+
+---
+
 ### D2 — `rr.file_path` can be `None` or empty string
 `src/revue/cli.py` / reviewed-files dedup block. If a `ReviewResult` has `file_path=None` and a truthy `response`, it passes the `not rr.error and rr.response` filter and renders as `` `None` `` in the published comment. Pre-existing issue (old code had the same behaviour). Should be guarded with `if rr.file_path`.

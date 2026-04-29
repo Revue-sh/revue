@@ -26,6 +26,11 @@ def create_app() -> FastAPI:
     application.include_router(dashboard_router)
     application.include_router(docs_router)
     application.include_router(api_router, prefix="/api")
+
+    @application.get("/health")
+    async def health() -> dict:
+        return {"status": "ok"}
+
     return application
 
 

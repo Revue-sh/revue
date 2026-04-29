@@ -73,6 +73,14 @@ class LicenseInfo:
     expires_at: str
     key: str = field(repr=False)  # never log the raw key
 
+    @property
+    def reviews_left_display(self) -> str:
+        """Human-readable review count for logging."""
+        if self.reviews_left is None:
+            return "unlimited reviews"
+        n = self.reviews_left
+        return f"{n} review{'s' if n != 1 else ''} remaining"
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -172,7 +180,6 @@ def _call_api(
     """POST to the license validation endpoint. Returns the parsed JSON response."""
     payload = {"key": key, "repo_id": repo_id, "ci_run_id": ci_run_id}
     logger.debug("Calling license API: %s", VALIDATE_URL)
-    print(f"[revue] Calling license API...", flush=True)
     try:
         if client is not None:
             resp = client.post(VALIDATE_URL, json=payload, timeout=10.0)

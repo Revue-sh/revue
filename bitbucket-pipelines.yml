@@ -48,7 +48,7 @@ definitions:
           - PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
           - echo "[revue] Starting AI code review..."
           - export PYTHONPATH="$(pwd)/src"
-          - export APP_ENV=staging  # Enable REVUE_TIER_OVERRIDE for CI
+          - export APP_ENV=production  # Use real licence validation via revue-io.fly.dev
           - export REVUE_METRICS_ENABLED=1
           # Provider and model are read from .revue.yml — no --provider/--model flags needed.
           # Set the API key CI variable matching your configured provider:

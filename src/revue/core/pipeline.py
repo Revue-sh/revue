@@ -422,7 +422,6 @@ class ReviewPipeline:
                 signature (OCP).
         """
         # --- License validation ---
-        print("[revue] Validating license key...", flush=True)
         license_info = self._license_info or validate_license(
             repo_id=self.config.gitlab_project_id,
         )
@@ -430,8 +429,7 @@ class ReviewPipeline:
 
         agents_allowed = license_info.agents_allowed or ["orchestrator"]
         print(
-            f"[revue] License valid — tier={license_info.tier}, "
-            f"reviews_left={license_info.reviews_left}",
+            f"[revue] Licence validated — {license_info.tier} plan, {license_info.reviews_left_display}",
             flush=True,
         )
         print(f"[revue] Active agents: {', '.join(agents_allowed)}", flush=True)

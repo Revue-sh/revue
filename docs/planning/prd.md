@@ -551,7 +551,7 @@ notifications:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `REVUE_TOKEN` | Yes | Revue workspace API token |
+| `REVUE_LICENSE_KEY` | Yes | Revue licence key (from revue.io/account) |
 | `AI_API_KEY` | Yes | AI provider API key |
 | `AI_PROVIDER` | No | Default: `anthropic` |
 | `AI_MODEL` | No | Default: `claude-sonnet-4-5` |

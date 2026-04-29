@@ -322,7 +322,35 @@ class TestTierOverride:
         """REVUE_TIER_OVERRIDE is case-insensitive."""
         monkeypatch.setenv("APP_ENV", "staging")
         monkeypatch.setenv("REVUE_TIER_OVERRIDE", "PRO")  # uppercase
-        
+
         result = validate(license_key=None, _http_client=None)
-        
+
         assert result.tier == "pro"  # normalized to lowercase
+
+
+# ---------------------------------------------------------------------------
+# LicenseInfo.reviews_left_display
+# ---------------------------------------------------------------------------
+
+class TestReviewsLeftDisplay:
+    def _make_info(self, reviews_left: int | None) -> LicenseInfo:
+        return LicenseInfo(
+            valid=True,
+            tier="pro",
+            agents_allowed=["orchestrator"],
+            reviews_left=reviews_left,
+            expires_at="2099-01-01",
+            key="lic_test",
+        )
+
+    def test_none_returns_unlimited(self) -> None:
+        assert self._make_info(None).reviews_left_display == "unlimited reviews"
+
+    def test_zero_returns_singular(self) -> None:
+        assert self._make_info(0).reviews_left_display == "0 reviews remaining"
+
+    def test_one_returns_singular(self) -> None:
+        assert self._make_info(1).reviews_left_display == "1 review remaining"
+
+    def test_many_returns_plural(self) -> None:
+        assert self._make_info(5).reviews_left_display == "5 reviews remaining"

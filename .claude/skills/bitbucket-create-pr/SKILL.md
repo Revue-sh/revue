@@ -1,6 +1,6 @@
 ---
 name: bitbucket-create-pr
-model: sonnet
+model: haiku
 description: Create a Bitbucket pull request for the current branch. Reads the PR template, fills every section from branch/Jira/git context, submits via the Bitbucket API, and transitions the Jira ticket to Code Review. Use when the user says "create a PR", "open a PR", "raise a PR", "submit a pull request", or after finishing work on a branch that has a linked Jira ticket.
 allowed-tools: Bash, Read, Write
 ---
