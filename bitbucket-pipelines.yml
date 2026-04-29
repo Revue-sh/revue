@@ -101,9 +101,8 @@ pipelines:
                 name: "Deploy Web → Fly.io"
                 script:
                   - curl -L https://fly.io/install.sh | sh
-                  - export PATH="$HOME/.fly/bin:$PATH"
                   # FLY_APP defaults to revue-io; change to the new app name after domain purchase.
-                  - flyctl deploy --app "${FLY_APP:-revue-io}" --config src/web/fly.toml --remote-only
+                  - $HOME/.fly/bin/flyctl deploy --app "${FLY_APP:-revue-io}" --config src/web/fly.toml --remote-only
             - step:
                 name: "Publish CLI → PyPI"
                 script:
