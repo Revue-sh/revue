@@ -108,7 +108,6 @@ pipelines:
           name: "Tag Release (if warranted)"
           script:
             - apt-get update -qq && apt-get install -y --no-install-recommends git
-            - pip install --quiet python-semantic-release
             - |
               BUMP=$(python3 build/determine_release.py "$(git log -1 --format='%s' HEAD)")
               echo "Commit type → bump: $BUMP"
@@ -144,7 +143,13 @@ pipelines:
               git config user.email "ci@revue.io"
               git config credential.helper '!f() { echo username=${BITBUCKET_USERNAME}; echo password=${BITBUCKET_API_TOKEN}; }; f'
               git remote set-url origin "https://bitbucket.org/${BITBUCKET_REPO_FULL_NAME}"
-              semantic-release version --$BUMP --no-changelog --skip-build --push
+              sed -i "s/^version = \"[^\"]*\"/version = \"${NEXT_VERSION}\"/" src/pyproject.toml
+              git add src/pyproject.toml
+              git commit -m "chore(release): v${NEXT_VERSION} [skip ci]"
+              git tag "v${NEXT_VERSION}"
+              git push origin HEAD:main
+              git push origin "v${NEXT_VERSION}"
+              echo "Released v${NEXT_VERSION}"
       - step:
           name: "Deploy Web → Fly.io"
           script:
