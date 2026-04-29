@@ -93,10 +93,10 @@ def build_wheel():
     record_entries = []
 
     with zipfile.ZipFile(wheel_path, "w", zipfile.ZIP_DEFLATED) as whl:
-        # Add all compiled/copied files under revue/
+        # Add all compiled/copied files — paths are relative to COMPILED_DIR and already include revue/ prefix
         for file_path in sorted(COMPILED_DIR.rglob("*")):
             if file_path.is_file():
-                arc_name = f"revue/{file_path.relative_to(COMPILED_DIR)}"
+                arc_name = str(file_path.relative_to(COMPILED_DIR))
                 data = file_path.read_bytes()
                 whl.writestr(arc_name, data)
                 record_entries.append((arc_name, sha256_digest(data), len(data)))
