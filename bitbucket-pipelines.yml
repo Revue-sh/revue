@@ -149,8 +149,9 @@ pipelines:
           script:
             - apt-get update -qq && apt-get install -y --no-install-recommends curl
             - curl -L https://fly.io/install.sh | sh
+            # cd into src/web so flyctl uses it as the Docker build context (requirements.txt lives there).
             # FLY_APP defaults to revue-io; change to the new app name after domain purchase.
-            - $HOME/.fly/bin/flyctl deploy --app "${FLY_APP:-revue-io}" --config src/web/fly.toml --remote-only
+            - cd src/web && $HOME/.fly/bin/flyctl deploy --app "${FLY_APP:-revue-io}" --remote-only
 
     develop:
       - step: *run-tests
