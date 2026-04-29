@@ -1234,6 +1234,33 @@ def test_merged_comment_no_trailing_dash_when_no_rec(tmp_path) -> None:
     assert "> Fix it" in body
 
 
+def test_single_finding_recommendation_with_code_fence(tmp_path) -> None:
+    """Code block in recommendation renders outside blockquote so Bitbucket/GitHub render it correctly."""
+    from revue.cli import _run_per_issue_dedup
+    from revue.comments.json_store import PerPRCommentStore
+
+    rec = "Compute groups once:\n\n```python\ngroups = _detect()\nif groups:\n    run()\n```"
+    findings = [{"severity": "medium", "issue": "Redundant call", "line": 5, "recommendation": rec}]
+    review_results = [_FakeReviewResult("app.py", _make_review_response(findings))]
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_existing_comments.return_value = []
+    mock_adapter.post_review_comment.return_value = "fence-1"
+
+    store = PerPRCommentStore(tmp_path)
+    _run_per_issue_dedup(mock_adapter, 42, "bitbucket", review_results, {}, store)
+
+    body = mock_adapter.post_review_comment.call_args[1]["body"]
+    assert "> 💡 **Recommendation:** Compute groups once:" in body
+    assert "```python" in body
+    assert "groups = _detect()" in body
+    # Code block must NOT be inside the blockquote line
+    for line in body.splitlines():
+        assert not (line.startswith(">") and "```python" in line), (
+            "Code fence must not be nested inside blockquote — breaks rendering on all platforms"
+        )
+
+
 def test_merge_single_review_result_two_findings_same_line(tmp_path) -> None:
     """Two findings on the same line from a single review_result merge into one comment."""
     from revue.cli import _run_per_issue_dedup

@@ -1053,7 +1053,14 @@ def _run_per_issue_dedup(
             if details:
                 body_parts.append(f"\n{details}")
             if rec:
-                body_parts.append(f"\n> 💡 **Recommendation:** {rec}")
+                if "```" in rec:
+                    fence_idx = rec.index("```")
+                    prose = rec[:fence_idx].rstrip()
+                    code = rec[fence_idx:]
+                    prefix = f"\n> 💡 **Recommendation:** {prose}" if prose else "\n> 💡 **Recommendation:**"
+                    body_parts.append(f"{prefix}\n\n{code}")
+                else:
+                    body_parts.append(f"\n> 💡 **Recommendation:** {rec}")
             body = "\n".join(body_parts) + f"\n\n[//]: # (revue:fp:{fp})"
         else:
             # Multiple findings — use merged format (REVUE-172 AC3).

@@ -43,7 +43,9 @@ _AGENT_CANONICAL_CATEGORY: dict[str, str] = {
 _REVIEW_INSTRUCTIONS = (
     "Respond with a JSON array of findings (no markdown fences, raw JSON only):\n"
     '[{"file_path": "...", "line_number": 1, "severity": "high|medium|low|info", '
-    '"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}]'
+    '"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}]\n'
+    "If your suggestion includes a code example, wrap it in a markdown code fence "
+    "(e.g. ```python\\n...\\n```)."
 )
 
 _SEV_MAP: dict[str, str] = {
