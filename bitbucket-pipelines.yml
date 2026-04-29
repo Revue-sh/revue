@@ -141,9 +141,9 @@ pipelines:
               fi
               git config user.name "Revue CI"
               git config user.email "ci@revue.io"
-              git config credential.helper '!f() { echo username=x-token-auth; echo password=${BITBUCKET_API_TOKEN}; }; f'
+              git config credential.helper '!f() { echo username=${BITBUCKET_USERNAME}; echo password=${BITBUCKET_API_TOKEN}; }; f'
               git remote set-url origin "https://bitbucket.org/${BITBUCKET_REPO_FULL_NAME}"
-              semantic-release version --$BUMP --no-changelog --skip-build
+              semantic-release version --$BUMP --no-changelog --skip-build --push
       - step:
           name: "Deploy Web → Fly.io"
           script:
