@@ -5,9 +5,11 @@ Output: dist/revue_compiled/revue/ with .so files for core/ and
 plain Python/YAML for cli.py, __init__.py, agents/, teams/.
 """
 
+import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,7 +38,7 @@ def compile_module(py_file: Path) -> Path:
     if result.returncode != 0:
         print(f"  FAILED: {py_file.name}", file=sys.stderr)
         print(result.stderr, file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"Nuitka failed for {py_file.name}")
     # Nuitka produces <stem>.cpython-<tag>-<platform>.so in OUTPUT_DIR
     so_files = list(OUTPUT_DIR.glob(f"{py_file.stem}.cpython-*.so"))
     if not so_files:
@@ -44,7 +46,7 @@ def compile_module(py_file: Path) -> Path:
         so_files = list(OUTPUT_DIR.glob(f"{py_file.stem}.cpython-*.pyd"))
     if not so_files:
         print(f"  ERROR: no compiled output found for {py_file.name}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"no compiled output found for {py_file.name}")
     return so_files[0]
 
 
@@ -69,10 +71,22 @@ def main():
         print("ERROR: no .py files found in core/", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Found {len(py_files)} modules in core/")
-    for py_file in py_files:
-        so_path = compile_module(py_file)
-        shutil.copy2(so_path, core_dest / so_path.name)
+    workers = min(os.cpu_count() or 2, 4)
+    print(f"Compiling {len(py_files)} modules (workers={workers}) ...")
+    failed = False
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(compile_module, f): f for f in py_files}
+        for future in as_completed(futures):
+            try:
+                so_path = future.result()
+                shutil.copy2(so_path, core_dest / so_path.name)
+                print(f"  done: {so_path.name}")
+            except RuntimeError as exc:
+                print(f"Build failed: {exc}", file=sys.stderr)
+                failed = True
+                break
+    if failed:
+        sys.exit(1)
 
     # --- Step 2: Copy non-compiled files ---
     print()
