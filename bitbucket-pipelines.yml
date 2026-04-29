@@ -141,8 +141,8 @@ pipelines:
               fi
               git config user.name "Revue CI"
               git config user.email "ci@revue.io"
-              git config credential.helper '!f() { echo username=${BITBUCKET_USERNAME}; echo password=${BITBUCKET_API_TOKEN}; }; f'
-              git remote set-url origin "https://bitbucket.org/${BITBUCKET_REPO_FULL_NAME}"
+              # BITBUCKET_API_TOKEN is a workspace/repo access token — x-token-auth is required as the git credential username.
+              git remote set-url origin "https://x-token-auth:${BITBUCKET_API_TOKEN}@bitbucket.org/${BITBUCKET_REPO_FULL_NAME}"
               sed -i "s/^version = \"[^\"]*\"/version = \"${NEXT_VERSION}\"/" src/pyproject.toml
               git add src/pyproject.toml
               git commit -m "chore(release): v${NEXT_VERSION} [skip ci]"
