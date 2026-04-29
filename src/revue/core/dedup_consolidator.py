@@ -525,15 +525,23 @@ def consolidate(
         if not is_dup:
             kept.append(candidate)
 
-    # Filter by confidence
-    filtered = [f for f in kept if f.confidence >= min_confidence]
-    removed += len(kept) - len(filtered)
-
-    # Synthesise contradictions (same file:line with 2+ findings from different agents)
+    # Synthesise contradictions (same file:line with 2+ findings from different agents).
+    # Runs before the confidence filter: a low-confidence finding that belongs to a
+    # contradiction group must not be dropped before synthesis can use it.
+    # The synthesised result gets confidence=max(group) — see line 444 of
+    # _synthesise_contradictions — so the filter evaluates the final post-synthesis
+    # confidence, not the per-contributor confidences.
     synthesis_events: list[dict] = []
     if ai_client is not None:
-        filtered, new_events = _synthesise_contradictions(filtered, ai_client)
+        pre_synthesis_count = len(kept)
+        kept, new_events = _synthesise_contradictions(kept, ai_client)
         synthesis_events = new_events
+        removed += pre_synthesis_count - len(kept)  # collapsed findings count as removed
+
+    # Filter by confidence — after synthesis so synthesised findings are evaluated
+    # at their final (max-group) confidence.
+    filtered = [f for f in kept if f.confidence >= min_confidence]
+    removed += len(kept) - len(filtered)
 
     # Sort by severity then confidence desc
     sorted_findings = sorted(

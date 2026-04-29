@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import MagicMock
 
 from revue.core.dedup_consolidator import (
     consolidate,
@@ -181,3 +182,128 @@ def test_prompt_applies_rules_to_rationale():
     assert any(phrase in tail for phrase in ("line number", "file path", "invariant", "refactor")), (
         "_REPLY_THREAD_SYSTEM_PROMPT must apply no-specifics / invariant rules to rationale"
     )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-185 — AC3/TC1: synthesis runs before min_confidence filter
+# ---------------------------------------------------------------------------
+
+def _mock_client_returning(response_json: str) -> MagicMock:
+    """Mock AIClient whose complete() returns a text attribute with the given JSON."""
+    client = MagicMock()
+    result = MagicMock()
+    result.text = response_json
+    client.complete.return_value = result
+    return client
+
+
+def test_synthesis_before_confidence_filter() -> None:
+    """AC3/TC1: A low-confidence finding that forms a contradiction group with a
+    high-confidence partner must not be dropped by the confidence filter before
+    synthesis runs.
+
+    Kai(confidence=0.6) + Zara(confidence=0.9) on the same file+line,
+    min_confidence=0.8 → synthesised finding (confidence=0.9) is returned.
+    """
+    kai = AIReview(
+        file_path="app.py",
+        line_number=10,
+        severity="high",
+        issue="Kai issue",
+        suggestion="Kai fix",
+        confidence=0.6,
+        agent_name="kai",
+    )
+    zara = AIReview(
+        file_path="app.py",
+        line_number=10,
+        severity="high",
+        issue="Zara issue",
+        suggestion="Zara fix",
+        confidence=0.9,
+        agent_name="zara",
+    )
+
+    mock_response = (
+        '[{"file": "app.py", "line": 10, '
+        '"issue": "Synthesised issue", "suggestion": "Combined fix"}]'
+    )
+    client = _mock_client_returning(mock_response)
+
+    result = consolidate([kai, zara], min_confidence=0.8, ai_client=client)
+
+    assert len(result.findings) == 1, (
+        "Synthesised finding (confidence=0.9) must survive min_confidence=0.8 filter; "
+        "got empty result — synthesis likely ran after the filter dropped Kai first"
+    )
+    synthesised = result.findings[0]
+    assert synthesised.confidence == 0.9
+    assert synthesised.agent_name == "nova"
+    assert result.original_count == 2
+    assert result.duplicates_removed == 1, (
+        "Synthesis collapsed 2 → 1 finding; that collapse must be counted in duplicates_removed "
+        "so original_count - duplicates_removed == len(findings)"
+    )
+    assert len(result.synthesis_events) == 1
+    # Invariant: original_count == len(findings) + duplicates_removed
+    assert result.original_count == len(result.findings) + result.duplicates_removed
+    client.complete.assert_called_once()
+
+
+def test_synthesis_all_below_threshold_after_collapse() -> None:
+    """Boundary: synthesis collapses two findings but the result is still below min_confidence.
+
+    Kai(0.3) + Zara(0.4), min_confidence=0.8 → synthesised confidence=0.4 (max of group)
+    which still fails the filter. Result must be empty.
+    """
+    kai = AIReview(
+        file_path="app.py", line_number=5, severity="minor",
+        issue="Kai", suggestion="fix", confidence=0.3, agent_name="kai",
+    )
+    zara = AIReview(
+        file_path="app.py", line_number=5, severity="minor",
+        issue="Zara", suggestion="fix", confidence=0.4, agent_name="zara",
+    )
+    mock_response = '[{"file": "app.py", "line": 5, "issue": "Synthesised", "suggestion": "fix"}]'
+    client = _mock_client_returning(mock_response)
+
+    result = consolidate([kai, zara], min_confidence=0.8, ai_client=client)
+
+    assert result.findings == [], "Synthesised finding (confidence=0.4) must be dropped by filter"
+    assert result.original_count == 2
+    assert result.duplicates_removed == 2  # 1 synthesis collapse + 1 confidence filter removal
+    # Invariant: original_count == len(findings) + duplicates_removed
+    assert result.original_count == len(result.findings) + result.duplicates_removed
+    client.complete.assert_called_once()
+
+
+def test_synthesis_three_way_group_survives_filter() -> None:
+    """Three-way contradiction group where only one contributor exceeds min_confidence.
+
+    Kai(0.5) + Zara(0.9) + Maya(0.3), min_confidence=0.8 → synthesised confidence=0.9
+    (max of group) — survives the filter.
+    """
+    kai = AIReview(
+        file_path="app.py", line_number=20, severity="high",
+        issue="Kai", suggestion="fix", confidence=0.5, agent_name="kai",
+    )
+    zara = AIReview(
+        file_path="app.py", line_number=20, severity="high",
+        issue="Zara", suggestion="fix", confidence=0.9, agent_name="zara",
+    )
+    maya = AIReview(
+        file_path="app.py", line_number=20, severity="high",
+        issue="Maya", suggestion="fix", confidence=0.3, agent_name="maya",
+    )
+    mock_response = '[{"file": "app.py", "line": 20, "issue": "Synthesised", "suggestion": "fix"}]'
+    client = _mock_client_returning(mock_response)
+
+    result = consolidate([kai, zara, maya], min_confidence=0.8, ai_client=client)
+
+    assert len(result.findings) == 1
+    assert result.findings[0].confidence == 0.9
+    assert result.original_count == 3
+    assert result.duplicates_removed == 2  # 3 → 1 collapse: 2 contributors removed
+    # Invariant: original_count == len(findings) + duplicates_removed
+    assert result.original_count == len(result.findings) + result.duplicates_removed
+    client.complete.assert_called_once()
