@@ -58,65 +58,115 @@ definitions:
         artifacts:
           - .revue/metrics.jsonl
 
+    - step: &build-macos
+        name: "Build macOS ARM64"
+        runs-on:
+          - self.hosted
+          - macos
+        script:
+          - export PATH="/opt/homebrew/bin:$PATH"
+          - python3.12 -m venv .build-venv
+          - .build-venv/bin/pip install nuitka ordered-set zstandard
+          - .build-venv/bin/pip install -e src/
+          - .build-venv/bin/python -u build/build_nuitka.py
+          - .build-venv/bin/python -u build/build_wheel.py
+        artifacts:
+          - dist/wheels/*.whl
+
+    - step: &build-linux
+        name: "Build Linux x86_64"
+        image: python:3.12-slim
+        caches:
+          - pip
+        script:
+          - apt-get update && apt-get install -y --no-install-recommends gcc patchelf libc6-dev
+          - pip install nuitka ordered-set zstandard
+          - pip install -e src/
+          - python -u build/build_nuitka.py
+          - python -u build/build_wheel.py
+        artifacts:
+          - dist/wheels/*.whl
+
+    - step: &publish-pypi
+        name: "Publish CLI → PyPI"
+        script:
+          - pip install --quiet twine
+          - |
+            if ls dist/wheels/*.whl 2>/dev/null; then
+              export TWINE_USERNAME=__token__
+              export TWINE_PASSWORD=$PYPI_API_TOKEN
+              python -m twine upload --non-interactive --skip-existing dist/wheels/*.whl
+            else
+              echo "No wheels found — skipping PyPI upload"
+            fi
+
 pipelines:
   branches:
     main:
       - step: *run-tests
       - step:
-          name: "Build macOS ARM64"
-          runs-on:
-            - 'self.hosted'
-            - macos
+          name: "Tag Release (if warranted)"
           script:
-            - export PATH="/opt/homebrew/bin:$PATH"
-            - python3.12 -m venv .build-venv
-            - .build-venv/bin/pip install nuitka ordered-set zstandard
-            - .build-venv/bin/pip install -e src/
-            - .build-venv/bin/python -u build/build_nuitka.py
-            - .build-venv/bin/python -u build/build_wheel.py
-          artifacts:
-            - dist/wheels/*.whl
+            - pip install --quiet python-semantic-release
+            - |
+              BUMP=$(python3 build/determine_release.py "$(git log -1 --format='%s' HEAD)")
+              echo "Commit type → bump: $BUMP"
+              if [ "$BUMP" = "none" ]; then
+                echo "No release for this commit type — skipping tag"
+                exit 0
+              fi
+              if [ -z "${BITBUCKET_API_TOKEN:-}" ]; then
+                echo "Error: BITBUCKET_API_TOKEN not set — cannot push tag" >&2
+                exit 1
+              fi
+              case "$BUMP" in
+                major|minor|patch) ;;
+                *) echo "Error: unexpected bump value: $BUMP" >&2; exit 1 ;;
+              esac
+              NEXT_VERSION=$(python3 -c '
+              import tomllib, sys
+              with open("src/pyproject.toml", "rb") as f:
+                  v = tomllib.load(f)["project"]["version"]
+              major, minor, patch_n = map(int, v.split("."))
+              b = sys.argv[1]
+              if b == "major": major += 1; minor = 0; patch_n = 0
+              elif b == "minor": minor += 1; patch_n = 0
+              elif b == "patch": patch_n += 1
+              print(f"{major}.{minor}.{patch_n}")
+              ' "$BUMP")
+              echo "Next version: v${NEXT_VERSION}"
+              if git ls-remote --tags origin "refs/tags/v${NEXT_VERSION}" | grep -q "v${NEXT_VERSION}"; then
+                echo "Tag v${NEXT_VERSION} already exists — skipping duplicate release"
+                exit 0
+              fi
+              git config user.name "Revue CI"
+              git config user.email "ci@revue.io"
+              git config credential.helper '!f() { echo username=x-token-auth; echo password=${BITBUCKET_API_TOKEN}; }; f'
+              git remote set-url origin "https://bitbucket.org/${BITBUCKET_REPO_FULL_NAME}"
+              semantic-release version --$BUMP --no-changelog --skip-build
       - step:
-          name: "Build Linux x86_64"
-          image: python:3.12-slim
-          caches:
-            - pip
+          name: "Deploy Web → Fly.io"
           script:
-            - apt-get update && apt-get install -y --no-install-recommends gcc patchelf libc6-dev
-            - pip install nuitka ordered-set zstandard
-            - pip install -e src/
-            - python -u build/build_nuitka.py
-            - python -u build/build_wheel.py
-          artifacts:
-            - dist/wheels/*.whl
+            - apt-get update -qq && apt-get install -y --no-install-recommends curl
+            - curl -L https://fly.io/install.sh | sh
+            # FLY_APP defaults to revue-io; change to the new app name after domain purchase.
+            - $HOME/.fly/bin/flyctl deploy --app "${FLY_APP:-revue-io}" --config src/web/fly.toml --remote-only
+
+    develop:
+      - step: *run-tests
+
+  tags:
+    'v*':
+      - step: *run-tests
+      - step: *build-macos
+      - step: *build-linux
       - step:
           name: "Collect Artifacts"
           script:
-            - ls -la dist/wheels/ 2>/dev/null || echo "No wheels built (self-hosted runners may be offline)"
+            - ls -la dist/wheels/
           artifacts:
             - dist/wheels/*.whl
-      - parallel:
-          steps:
-            - step:
-                name: "Deploy Web → Fly.io"
-                script:
-                  - curl -L https://fly.io/install.sh | sh
-                  # FLY_APP defaults to revue-io; change to the new app name after domain purchase.
-                  - $HOME/.fly/bin/flyctl deploy --app "${FLY_APP:-revue-io}" --config src/web/fly.toml --remote-only
-            - step:
-                name: "Publish CLI → PyPI"
-                script:
-                  - pip install --quiet twine
-                  - |
-                    if ls dist/wheels/*.whl 2>/dev/null; then
-                      export TWINE_USERNAME=__token__
-                      export TWINE_PASSWORD=$PYPI_API_TOKEN
-                      python -m twine upload --non-interactive dist/wheels/*.whl
-                    else
-                      echo "No wheels found — skipping PyPI upload"
-                    fi
-    develop:
-      - step: *run-tests
+      - step: *publish-pypi
 
   pull-requests:
     "**":
