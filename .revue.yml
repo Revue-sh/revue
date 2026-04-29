@@ -118,11 +118,21 @@ noise_filters:
       is unaffected.
   - pattern: Forward scan for closing fence is safe because JSON encoding escapes
       backtick sequences in string values
-    rationale: In _parse_thread_decisions, the close_idx forward scan identifies
-      a bare ``` line as the closing fence. JSON string encoding guarantees that
-      triple-backticks inside string values are escaped, never emitted as raw characters.
-      A bare ``` line can therefore only be a fence marker, making the scan unambiguous
-      and correct.
+    rationale: In _parse_thread_decisions, the close_idx forward scan identifies a
+      bare ``` line as the closing fence. JSON string encoding guarantees that triple-backticks
+      inside string values are escaped, never emitted as raw characters. A bare ```
+      line can therefore only be a fence marker, making the scan unambiguous and correct.
+  - pattern: A permissive parser that returns a safe default (no release) for unrecognized
+      or malformed input is acceptable when the failure mode is a recoverable false
+      negative rather than a false positive that could ship incorrect code.
+    rationale: 'Strict validation in a release-determination tool creates a high cost:
+      formatting errors block merges even though they don''t affect code safety. By
+      contrast, a permissive parser that conservatively returns ''no release'' for
+      anything it cannot confidently parse ensures that only well-formed conventional
+      commits trigger automated bumps. False negatives (a valid fix that doesn''t
+      bump) are recoverable via manual tagging and pose no risk to production. This
+      trade-off is justified because the cost of blocking merges outweighs the cost
+      of occasional manual intervention.'
   disable: []
   disallowed_patterns:
   - pattern: TODO comments in production code
