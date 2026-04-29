@@ -107,6 +107,7 @@ pipelines:
       - step:
           name: "Tag Release (if warranted)"
           script:
+            - apt-get update -qq && apt-get install -y --no-install-recommends git
             - pip install --quiet python-semantic-release
             - |
               BUMP=$(python3 build/determine_release.py "$(git log -1 --format='%s' HEAD)")
