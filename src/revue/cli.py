@@ -31,6 +31,7 @@ from revue.core.diff_parser import filter_changes, parse_diff_file
 from revue.core.ai_client import create_ai_client
 from revue.core.pipeline import ReviewPipeline
 from revue.core.models import PRContext
+from revue.core.agent_loader import filter_code_replacement
 
 
 # ---------------------------------------------------------------------------
@@ -854,6 +855,60 @@ def _get_highest_severity(severities: list[str]) -> str:
 
 
 
+def _github_suggestion_block(lines: list[str]) -> str:
+    """Return a GitHub native suggestion block for inline PR comments.
+
+    GitHub renders ```suggestion fences as a one-click "Commit suggestion" button.
+    lines should be the exact replacement lines (already string-safe).
+    """
+    return "\n```suggestion\n" + "\n".join(lines) + "\n```\n"
+
+
+def _gitlab_suggestion_block(lines: list[str]) -> str:
+    """Return a GitLab native suggestion block for inline MR comments.
+
+    The ``suggestion:-0+0`` syntax replaces the commented line with `lines` in place
+    (remove 0 lines above, add 0 lines of context below — a single-line swap).
+    GitLab renders this as an "Apply suggestion" button.
+
+    Limitation: this always produces a one-for-one line replacement. Multi-line
+    context-aware diffs (e.g. replacing N lines with M lines) would require
+    ``suggestion:-N+M`` syntax, which is not currently wired through the pipeline.
+    """
+    return "\n```suggestion:-0+0\n" + "\n".join(lines) + "\n```\n"
+
+
+_SUGGESTION_BLOCK_FORMATTERS: dict[str, Callable[[list[str]], str]] = {
+    "github": _github_suggestion_block,
+    "gitlab": _gitlab_suggestion_block,
+}
+
+
+def _format_recommendation(
+    rec: str,
+    code_replacement: "list[str] | None",
+    platform_str: str,
+) -> str:
+    """Format the recommendation section of an inline comment body.
+
+    When code_replacement is non-empty and the platform supports native suggestion
+    blocks, returns the appropriate fenced suggestion block.  Otherwise falls back
+    to the plain blockquote used before REVUE-187.
+
+    Bitbucket is not in _SUGGESTION_BLOCK_FORMATTERS so it always uses the blockquote.
+    """
+    formatter = _SUGGESTION_BLOCK_FORMATTERS.get(platform_str)
+    if formatter and code_replacement:
+        return formatter(code_replacement)
+    if "```" in rec:
+        fence_idx = rec.index("```")
+        prose = rec[:fence_idx].rstrip()
+        code = rec[fence_idx:]
+        prefix = f"\n> 💡 **Recommendation:** {prose}" if prose else "\n> 💡 **Recommendation:**"
+        return f"{prefix}\n\n{code}"
+    return f"\n> 💡 **Recommendation:** {rec}"
+
+
 def _build_merged_comment_body(group_items: list[tuple[str, str, str]], fp: str) -> str:
     """Build merged comment body for N>=2 findings on same line.
 
@@ -1053,14 +1108,10 @@ def _run_per_issue_dedup(
             if details:
                 body_parts.append(f"\n{details}")
             if rec:
-                if "```" in rec:
-                    fence_idx = rec.index("```")
-                    prose = rec[:fence_idx].rstrip()
-                    code = rec[fence_idx:]
-                    prefix = f"\n> 💡 **Recommendation:** {prose}" if prose else "\n> 💡 **Recommendation:**"
-                    body_parts.append(f"{prefix}\n\n{code}")
-                else:
-                    body_parts.append(f"\n> 💡 **Recommendation:** {rec}")
+                code_replacement = filter_code_replacement(f.get("code_replacement"))
+                body_parts.append(
+                    _format_recommendation(rec, code_replacement, platform_str)
+                )
             body = "\n".join(body_parts) + f"\n\n[//]: # (revue:fp:{fp})"
         else:
             # Multiple findings — use merged format (REVUE-172 AC3).

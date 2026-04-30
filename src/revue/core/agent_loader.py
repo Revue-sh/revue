@@ -41,12 +41,41 @@ _AGENT_CANONICAL_CATEGORY: dict[str, str] = {
 }
 
 _REVIEW_INSTRUCTIONS = (
+    # Schema — raw JSON array, no markdown fences
     "Respond with a JSON array of findings (no markdown fences, raw JSON only):\n"
-    '[{"file_path": "...", "line_number": 1, "severity": "high|medium|low|info", '
-    '"issue": "...", "suggestion": "...", "confidence": 0.0-1.0, "category": "architecture|security|performance|code-quality"}]\n'
-    "If your suggestion includes a code example, wrap it in a markdown code fence "
+    "[\n"
+    '  {\n'
+    '    "file_path": "...",\n'
+    '    "line_number": 1,\n'
+    '    "severity": "high|medium|low|info",\n'
+    '    "issue": "...",\n'
+    '    "suggestion": "...",\n'
+    '    "confidence": 0.0,\n'
+    '    "category": "architecture|security|performance|code-quality",\n'
+    '    "code_replacement": ["exact replacement line 1", "line 2"]  // or null\n'
+    "  }\n"
+    "]\n"
+    "\n"
+    "Field guidance:\n"
+    "Set code_replacement to the exact replacement lines when you can provide a precise "
+    "single-location fix; set it to null when the fix requires broader context or is "
+    "descriptive only. Lines must be strings — no integers or nulls in the array. "
+    "If suggestion includes a code example, wrap it in a markdown code fence "
     "(e.g. ```python\\n...\\n```)."
 )
+
+def filter_code_replacement(raw: object) -> "list[str] | None":
+    """Return a sanitised list of string lines from an AI-supplied code_replacement value.
+
+    Filters out any non-string items (integers, nulls) that the AI may return.
+    Strips triple-backtick sequences that would break fenced suggestion blocks.
+    Returns None when the result would be empty.
+    """
+    if not isinstance(raw, list):
+        return None
+    lines = [l.replace("```", "~~~") for l in raw if isinstance(l, str)]
+    return lines or None
+
 
 _SEV_MAP: dict[str, str] = {
     "critical": "high",
@@ -175,6 +204,7 @@ class LoadedAgent:
                     continue
                 raw_sev = item.get("severity", self._def.severity_default).lower()
                 severity = _SEV_MAP.get(raw_sev, "low")
+                code_replacement = filter_code_replacement(item.get("code_replacement"))
                 reviews.append(AIReview(
                     file_path=item.get("file_path", "unknown"),
                     line_number=int(item.get("line_number", 0)),
@@ -186,6 +216,7 @@ class LoadedAgent:
                         item.get("category", ""), self._def.name
                     ),
                     agent_name=self._def.name,
+                    code_replacement=code_replacement,
                 ))
             print(
                 f"[revue]     [{self._def.name}] parsed {len(reviews)} finding(s)",

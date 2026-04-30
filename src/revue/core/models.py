@@ -40,6 +40,7 @@ class AIReview:
     category: str = "general"
     agent_name: str = ""  # name of the agent that produced this finding (e.g. "maya")
     synthesised_from: list[tuple[str, str]] | None = None  # (agent_name, category) pairs for synthesis (e.g., [("kai", "performance"), ("zara", "security")])
+    code_replacement: list[str] | None = None  # exact replacement lines for GitHub/GitLab suggestion blocks
 
 
 @dataclass
