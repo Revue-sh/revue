@@ -133,7 +133,7 @@ class GitHubAdapter:
         return changes
 
     def post_review_comment(
-        self, pr_id: int, position: DiffPosition, body: str
+        self, pr_id: int, position: DiffPosition, body: str, replacement_line_count: int = 1
     ) -> str | None:
         """Post an inline review comment via the GitHub Review API.
 
@@ -141,19 +141,31 @@ class GitHubAdapter:
         ``event=COMMENT`` so the comment is published immediately without
         requiring a pending review.
 
+        For multi-line suggestions (replacement_line_count > 1), uses start_line/line/side
+        instead of position so the comment spans the full replacement range.
+
         Returns:
             The review comment ID as a string on success, None on failure.
             GitHub returns the ID in the first comment of the ``comments`` array.
         """
+        if replacement_line_count > 1:
+            comment: dict[str, Any] = {
+                "path": position.file_path,
+                "start_line": position.line_number,
+                "start_side": "RIGHT",
+                "line": position.line_number + replacement_line_count - 1,
+                "side": "RIGHT",
+                "body": body,
+            }
+        else:
+            comment = {
+                "path": position.file_path,
+                "position": position.position,
+                "body": body,
+            }
         payload: dict[str, Any] = {
             "event": "COMMENT",
-            "comments": [
-                {
-                    "path": position.file_path,
-                    "position": position.position,
-                    "body": body,
-                }
-            ],
+            "comments": [comment],
         }
         try:
             resp = self._request(

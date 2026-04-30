@@ -153,9 +153,12 @@ class GitLabAdapter:
         return extract_gitlab_version_shas(versions)
 
     def post_review_comment(
-        self, pr_id: int, position: DiffPosition, body: str
+        self, pr_id: int, position: DiffPosition, body: str, replacement_line_count: int = 1
     ) -> str | None:
         """Post an inline discussion note on the MR.
+
+        replacement_line_count is accepted for interface symmetry; the multi-line
+        span is already embedded in the body via the suggestion:-0+N fence format.
 
         POST /projects/{project_id}/merge_requests/{iid}/discussions
 

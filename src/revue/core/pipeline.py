@@ -60,6 +60,10 @@ _LICENCE_NAME_TO_AGENT: dict[str, str] = {
     # Pass-throughs — already match agent file names
     "cleo": "cleo",
     "nova": "nova",
+    # Server-side alias mismatch — API returns these names instead of the canonical
+    # "security-expert" / "architecture-expert". Remove once REVUE-204 is resolved.
+    "security-analyst": "zara",
+    "architecture-reviewer": "leo",
 }
 
 # Virtual agents implemented in pipeline code, not as agent files.

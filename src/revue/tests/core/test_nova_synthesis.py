@@ -438,6 +438,31 @@ def test_synthesis_events_agent_names_exclude_empty_string() -> None:
 
 # ---------------------------------------------------------------------------
 
+def test_synthesis_group_with_no_code_replacement_does_not_raise() -> None:
+    """Regression: max() over an empty generator must not raise ValueError.
+
+    When every finding in a contradiction group has code_replacement=None,
+    the source-finding selection must return None gracefully, not crash.
+    The synthesised finding should have code_replacement=None and
+    replacement_line_count=1 (single-line default).
+    """
+    kai = _finding("kai", "high", issue="Missing validation")
+    zara = _finding("zara", "medium", issue="Injection risk")
+    # Neither finding carries a code_replacement — the generator in max() is empty
+
+    mock_response = (
+        '[{"file": "app.py", "line": 10, '
+        '"issue": "Validation and injection risk", "suggestion": "Add guard"}]'
+    )
+
+    result = consolidate([kai, zara], synthesiser=_mock_synthesiser(mock_response))
+
+    assert len(result.findings) == 1
+    synthesised = result.findings[0]
+    assert synthesised.code_replacement is None
+    assert synthesised.replacement_line_count == 1
+
+
 def test_format_synthesis_attribution_preserves_same_agent_different_category() -> None:
     """Same agent with different categories both appear — only exact duplicates are removed."""
     from revue.cli import _format_synthesis_attribution

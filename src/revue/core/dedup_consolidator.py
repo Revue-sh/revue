@@ -437,6 +437,12 @@ def _synthesise_contradictions(
             key=lambda s: _SEVERITY_ORDER.get(s, 99),
         )
 
+        # Preserve code_replacement from the highest-confidence source finding that has one
+        source = max(
+            (f for f in group if f.code_replacement),
+            key=lambda f: f.confidence,
+            default=None,
+        )
         synthesised = AIReview(
             file_path=file_path,
             line_number=line_number,
@@ -446,6 +452,8 @@ def _synthesise_contradictions(
             confidence=max(f.confidence for f in group),
             agent_name=NOVA,
             synthesised_from=[(f.agent_name, f.category) for f in group if f.agent_name],
+            code_replacement=source.code_replacement if source else None,
+            replacement_line_count=source.replacement_line_count if source else 1,
         )
         synthesised_findings[(file_path, line_number)] = synthesised
 

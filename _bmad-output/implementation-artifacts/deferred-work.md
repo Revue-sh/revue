@@ -41,5 +41,23 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+---
+
+## Deferred from: code review of REVUE-201 patch review findings (2026-04-30)
+
+- **D1 (FBH-3)** — `_run_dedup_201` mock returns `DiffPosition(position=5)` unconditionally; tests don't verify that `resolve_position` was called with the snapped line (not the original). Existing `TestSuggestionAnchorIntegration` covers snap correctness directly so this gap is low priority.
+- **D2 (FBH-4)** — `DiffPositionResolver.line_in_diff` calls `_map_diff_lines` independently of `snap()`, parsing the same diff string twice per posting cycle. Negligible for typical diff sizes; refactor if large-diff performance becomes a concern.
+- **D3 (FEH-A)** — Conservative trade-off: when an agent miscounts the anchor by even 1 line and snap relocates it, `replacement_line_count` is reset to 1 even though the intended span might be entirely within the diff. Posts correctly but as single-line rather than multi-line. Intentional per spec; document in agent prompt guidance post-MVP.
+- **D4 (FEH-C)** — `_run_dedup_201` tests don't assert the snapped line was forwarded to `resolve_position`, only that the posted rlc is correct. Add `assert mock_adapter.resolve_position.call_args.args[1] == expected_snapped_line` when adding snapping end-to-end coverage.
+
+---
+
+## Deferred from: dogfood run on fix/REVUE-201-suggestion-anchor-range (2026-04-30)
+
+- **ARCH-1** — `DiffPositionResolver` is a stateless utility class with all `@staticmethod` — namespace anti-pattern (Leo, medium). Convert to module-level functions (`snap()`, `line_in_diff()`, `_map_diff_lines()`). Requires updating all call sites in `cli.py` and all test references. Defer to a dedicated refactor story post-REVUE-201 merge.
+- **WIN-1** — Windows drive-relative paths (e.g. `C:relative`) return `False` from `Path.is_absolute()`, bypassing the absolute-path guard in `DiffPositionResolver.snap()`. Zero risk on macOS/Linux. Revisit if Windows support is added.
+
+---
+
 ### D2 — `rr.file_path` can be `None` or empty string
 `src/revue/cli.py` / reviewed-files dedup block. If a `ReviewResult` has `file_path=None` and a truthy `response`, it passes the `not rr.error and rr.response` filter and renders as `` `None` `` in the published comment. Pre-existing issue (old code had the same behaviour). Should be guarded with `if rr.file_path`.

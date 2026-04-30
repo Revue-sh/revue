@@ -855,27 +855,30 @@ def _get_highest_severity(severities: list[str]) -> str:
 
 
 
-def _github_suggestion_block(lines: list[str]) -> str:
+def _github_suggestion_block(lines: list[str], replacement_line_count: int = 1) -> str:
     """Return a GitHub native suggestion block for inline PR comments.
 
     GitHub renders ```suggestion fences as a one-click "Commit suggestion" button.
     lines should be the exact replacement lines (already string-safe).
+    Multi-line range is handled via start_line/line in the API payload, not the fence.
+    replacement_line_count is accepted for interface symmetry but has no effect here.
     """
     return "\n```suggestion\n" + "\n".join(lines) + "\n```\n"
 
 
-def _gitlab_suggestion_block(lines: list[str]) -> str:
+def _gitlab_suggestion_block(lines: list[str], replacement_line_count: int = 1) -> str:
     """Return a GitLab native suggestion block for inline MR comments.
 
-    The ``:-0+0`` numbers specify context lines (0 above, 0 below the anchor).
-    The replacement content is whatever lines are inside the fence — GitLab
-    replaces the anchor line with all of them, so multi-line replacements work
-    correctly with this syntax. GitLab renders an "Apply suggestion" button.
+    ``suggestion:-0+N`` deletes N+1 original lines total (anchor line + N below it).
+    For replacement_line_count=1 (single line): ``suggestion:-0+0`` (delete anchor only).
+    For replacement_line_count=3 (three lines): ``suggestion:-0+2`` (anchor + 2 more).
+    GitLab renders an "Apply suggestion" button.
     """
-    return "\n```suggestion:-0+0\n" + "\n".join(lines) + "\n```\n"
+    lines_to_delete = max(0, replacement_line_count - 1)
+    return f"\n```suggestion:-0+{lines_to_delete}\n" + "\n".join(lines) + "\n```\n"
 
 
-_SUGGESTION_BLOCK_FORMATTERS: dict[str, Callable[[list[str]], str]] = {
+_SUGGESTION_BLOCK_FORMATTERS: dict[str, Callable[[list[str], int], str]] = {
     "github": _github_suggestion_block,
     "gitlab": _gitlab_suggestion_block,
 }
@@ -885,6 +888,7 @@ def _format_recommendation(
     rec: str,
     code_replacement: "list[str] | None",
     platform_str: str,
+    replacement_line_count: int = 1,
 ) -> str:
     """Format the recommendation section of an inline comment body.
 
@@ -897,7 +901,7 @@ def _format_recommendation(
     formatter = _SUGGESTION_BLOCK_FORMATTERS.get(platform_str)
     if formatter and code_replacement:
         prose = f"\n> 💡 **Recommendation:** {rec}" if rec.strip() else ""
-        return f"{prose}{formatter(code_replacement)}"
+        return f"{prose}{formatter(code_replacement, replacement_line_count=replacement_line_count)}"
     if "```" in rec:
         fence_idx = rec.index("```")
         prose = rec[:fence_idx].rstrip()
@@ -937,6 +941,7 @@ def _post_or_evict_and_retry(
     position,
     body: str,
     eviction_state: list[bool],
+    replacement_line_count: int = 1,
 ) -> str | None:
     """Post a review comment, evicting resolved threads once if the 200-comment limit is hit.
 
@@ -948,7 +953,10 @@ def _post_or_evict_and_retry(
 
     Returns the posted comment ID on success, or None on failure.
     """
-    comment_id = adapter.post_review_comment(pr_id=pr_num, position=position, body=body)
+    comment_id = adapter.post_review_comment(
+        pr_id=pr_num, position=position, body=body,
+        replacement_line_count=replacement_line_count,
+    )
     if comment_id is not None:
         return comment_id
 
@@ -962,7 +970,10 @@ def _post_or_evict_and_retry(
 
     print(f"[revue] 🗑️ Evicted {evicted} resolved Revue comment(s) to free up space")
     adapter.comment_limit_reached = False
-    return adapter.post_review_comment(pr_id=pr_num, position=position, body=body)
+    return adapter.post_review_comment(
+        pr_id=pr_num, position=position, body=body,
+        replacement_line_count=replacement_line_count,
+    )
 
 
 def _run_per_issue_dedup(
@@ -1002,6 +1013,7 @@ def _run_per_issue_dedup(
     """
     from revue.comments.fingerprint import fingerprint as gen_fingerprint
     from revue.comments.models import CommentState
+    from revue.core.diff_position_resolver import DiffPositionResolver
     from revue.core.vcs_adapter import DiffPosition, compute_gitlab_line_code
 
     prior_unresolved = dedup_store.get_unresolved_fingerprints(platform_str, pr_num)
@@ -1089,6 +1101,7 @@ def _run_per_issue_dedup(
                 total_findings[sev] += 1
 
         # Build merged or single comment body — REVUE-172 AC3/AC6.
+        replacement_line_count = 1  # default; overridden below for single findings
         if len(group_items) == 1:
             # Single finding — use existing format with category and details.
             sev, issue, rec, details, cat, f = group_items[0]
@@ -1107,19 +1120,34 @@ def _run_per_issue_dedup(
                 body_parts.append(f"\n{details}")
             if rec:
                 code_replacement = filter_code_replacement(f.get("code_replacement"))
+                replacement_line_count = f.get("replacement_line_count", 1)
                 body_parts.append(
-                    _format_recommendation(rec, code_replacement, platform_str)
+                    _format_recommendation(rec, code_replacement, platform_str, replacement_line_count)
                 )
             body = "\n".join(body_parts) + f"\n\n[//]: # (revue:fp:{fp})"
         else:
             # Multiple findings — use merged format (REVUE-172 AC3).
             group_tuple_list = [(sev, issue, rec) for sev, issue, rec, details, cat, f in group_items]
             body = _build_merged_comment_body(group_tuple_list, fp)
+            replacement_line_count = 1  # merged body has no suggestion fence
+
+        # Snap agent-reported line to a valid diff position before resolving (REVUE-201).
+        # Tier 3 (file-read fallback) is intentionally disabled — repo_path is not available
+        # in local diff review mode; snap/line_in_diff use Tier 1/2 only.
+        snapped_line = DiffPositionResolver.snap(line, diff_content)
+        # F2: snap relocation invalidates the span — reset to single-line anchor.
+        if snapped_line != line:
+            replacement_line_count = 1
+        # F3: end-line must exist in the diff; fall back to single-line if it overshoots.
+        elif replacement_line_count > 1:
+            end_line = snapped_line + replacement_line_count - 1
+            if not DiffPositionResolver.line_in_diff(end_line, diff_content):
+                replacement_line_count = 1
 
         # Resolve position and post — same logic as before.
         if platform_str == "gitlab":
             lc, resolved_line, old_ln = compute_gitlab_line_code(
-                file_path, diff_content, line
+                file_path, diff_content, snapped_line
             )
             position = DiffPosition(
                 file_path=file_path,
@@ -1130,7 +1158,7 @@ def _run_per_issue_dedup(
                 side="RIGHT",
             )
         else:
-            position = adapter.resolve_position(file_path, line, diff_content)
+            position = adapter.resolve_position(file_path, snapped_line, diff_content)
 
         # position=0 is the sentinel for "line outside diff hunks" on both
         # GitHub (500) and Bitbucket (403). Skip rather than attempt to post.
@@ -1138,7 +1166,9 @@ def _run_per_issue_dedup(
             skipped += len(group_items)
             continue
 
-        comment_id = _post_or_evict_and_retry(adapter, pr_num, position, body, _eviction_state)
+        comment_id = _post_or_evict_and_retry(
+            adapter, pr_num, position, body, _eviction_state, replacement_line_count
+        )
 
         if comment_id is not None:
             posted += 1
@@ -1313,8 +1343,12 @@ def _post_to_platform(
                 print(f"[revue] Summary comment updated in-place (Review #{_revision})")
                 return
             else:
-                print("[revue] Existing summary comment not found — posting fresh comment")
-                _revision = 1
+                print(
+                    f"[revue] ⚠ Failed to update existing summary comment {existing_comment_id} "
+                    f"— API may have rate-limited or revoked access. Posting new summary comment.",
+                    file=sys.stderr,
+                )
+                _revision = _revision + 1
         comment_id = adapter.post_summary_comment(pr_id=pr_num, body=body)
         if comment_id:
             summary = SummaryComment(

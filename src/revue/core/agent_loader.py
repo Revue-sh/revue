@@ -53,7 +53,8 @@ _REVIEW_INSTRUCTIONS = (
     '    "suggestion": "One sentence fix.",\n'
     '    "confidence": 0.85,\n'
     '    "category": "architecture|security|performance|code-quality",\n'
-    '    "code_replacement": ["replacement line 1", "line 2"]\n'
+    '    "code_replacement": ["replacement line 1", "line 2"],\n'
+    '    "replacement_line_count": 2\n'
     "  }\n"
     "]\n"
     "\n"
@@ -63,6 +64,9 @@ _REVIEW_INSTRUCTIONS = (
     "single-location fix, set this to an array of strings — one string per source line, "
     "no line numbers, no integers, no nulls inside the array. Leave it null when the fix "
     "requires broader context or is descriptive only.\n"
+    "- replacement_line_count: when code_replacement is provided, set this to the number "
+    "of original source lines being replaced (default 1). For example, if you are replacing "
+    "a function signature that spans 3 lines, set this to 3.\n"
     "- If suggestion includes a code example, wrap it in a markdown code fence "
     "(e.g. ```python\\n...\\n```)."
 )
@@ -114,6 +118,60 @@ class AgentDefinition:
     severity_default: str = "minor"
     enabled: bool = True
     version: str = "1.0"
+
+
+_REPLACEMENT_LINE_COUNT_MAX = 100
+
+
+def _parse_finding_item(
+    item: object,
+    agent_name: str,
+    severity_default: str = "minor",
+) -> "AIReview | None":
+    """Parse one raw finding dict from an AI response into an AIReview.
+
+    Returns None for non-dict items; callers should skip None entries.
+    """
+    if not isinstance(item, dict):
+        return None
+
+    raw_sev = item.get("severity", severity_default)
+    if not isinstance(raw_sev, str):
+        raw_sev = severity_default
+    severity = _SEV_MAP.get(raw_sev.lower(), "low")
+
+    code_replacement = filter_code_replacement(item.get("code_replacement"))
+
+    # replacement_line_count: accept int or float (LLMs often emit 3.0), cap at max,
+    # and coerce to 1 when no replacement is provided.
+    replacement_line_count = 1
+    if code_replacement is not None:
+        try:
+            candidate = item.get("replacement_line_count")
+            if (
+                isinstance(candidate, (int, float))
+                and not isinstance(candidate, bool)
+                and candidate > 0
+            ):
+                replacement_line_count = min(int(candidate), _REPLACEMENT_LINE_COUNT_MAX)
+        except (TypeError, ValueError):
+            pass
+
+    return AIReview(
+        file_path=item.get("file_path", "unknown"),
+        line_number=int(item.get("line_number", 0)),
+        severity=severity,
+        issue=item.get("issue", ""),
+        suggestion=item.get("suggestion", ""),
+        confidence=float(item.get("confidence", 0.7)),
+        category=_normalise_category(
+            item.get("category", "") if isinstance(item.get("category", ""), str) else "",
+            agent_name,
+        ),
+        agent_name=agent_name,
+        code_replacement=code_replacement,
+        replacement_line_count=replacement_line_count,
+    )
 
 
 def _normalise_category(raw: str, agent_name: str) -> str:
@@ -209,24 +267,9 @@ class LoadedAgent:
                 data = data.get("findings", []) if isinstance(data, dict) else []
             reviews = []
             for item in data:
-                if not isinstance(item, dict):
-                    continue
-                raw_sev = item.get("severity", self._def.severity_default).lower()
-                severity = _SEV_MAP.get(raw_sev, "low")
-                code_replacement = filter_code_replacement(item.get("code_replacement"))
-                reviews.append(AIReview(
-                    file_path=item.get("file_path", "unknown"),
-                    line_number=int(item.get("line_number", 0)),
-                    severity=severity,
-                    issue=item.get("issue", ""),
-                    suggestion=item.get("suggestion", ""),
-                    confidence=float(item.get("confidence", 0.7)),
-                    category=_normalise_category(
-                        item.get("category", ""), self._def.name
-                    ),
-                    agent_name=self._def.name,
-                    code_replacement=code_replacement,
-                ))
+                parsed = _parse_finding_item(item, self._def.name, self._def.severity_default)
+                if parsed is not None:
+                    reviews.append(parsed)
             print(
                 f"[revue]     [{self._def.name}] parsed {len(reviews)} finding(s)",
                 flush=True,

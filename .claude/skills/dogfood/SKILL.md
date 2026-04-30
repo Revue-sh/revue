@@ -1,11 +1,11 @@
 ---
 name: dogfood
 model: haiku
-description: Simulate the Bitbucket pipeline Revue review step locally against an open PR. Use when the user says "dogfood", "run the simulation", "simulate the pipeline", or "run the review against PR #N". Mirrors the revue-review step in bitbucket-pipelines.yml exactly — generates the diff, fetches the PR description, validates config, then runs the full AI review and posts inline comments to the PR.
+description: Run a local Revue AI code review against the current branch. Use when the user says "dogfood", "run the simulation", "run the review locally", or "check this before opening a PR". Diffs against origin/main (or a specified base branch), runs the full AI review, and prints findings here — nothing is posted anywhere. No PR required.
 allowed-tools: Bash
 ---
 
-Simulate the `revue-review` CI step locally against a Bitbucket PR.
+Run the Revue AI review locally. Findings print here so you can fix them before opening a PR.
 
 ## Script
 
@@ -13,50 +13,29 @@ Simulate the `revue-review` CI step locally against a Bitbucket PR.
 SKILL_DIR="/Volumes/LexarSSD/Projects/revue.io/.claude/skills/dogfood"
 ```
 
-Single entrypoint:
-
 ```bash
-# Auto-detect PR from current branch
+# Diff vs origin/main (default)
 "$SKILL_DIR/scripts/dogfood.sh"
 
-# Explicit PR number
-"$SKILL_DIR/scripts/dogfood.sh" 58
+# Diff vs a different base branch
+"$SKILL_DIR/scripts/dogfood.sh" develop
 ```
-
-The script:
-1. Resolves the PR number (argument or auto-detect from current branch via Bitbucket API)
-2. Fetches the PR's destination branch and description
-3. Generates `git diff origin/<destination>...HEAD`
-4. Validates `.revue.yml`
-5. Runs `revue review` with `--platform bitbucket`, posting inline comments to the PR
 
 ## Parsing the user's argument
 
 | User says | Call |
 |-----------|------|
-| `/dogfood` | `dogfood.sh` (auto-detect) |
-| `/dogfood 58` | `dogfood.sh 58` |
-| `/dogfood PR #58` | `dogfood.sh 58` |
-
-Strip any `#` or `PR` prefix — pass the bare number.
+| `/dogfood` | `dogfood.sh` (base = main) |
+| `/dogfood develop` | `dogfood.sh develop` |
 
 ## Prerequisites
 
-All credentials are read from `~/.zshenv` by the script — always `source ~/.zshenv` is handled internally. Required env vars:
-
-| Var | Purpose |
-|-----|---------|
-| `ANTHROPIC_API_KEY` | AI review calls |
-| `BITBUCKET_USERNAME` | Bitbucket API auth |
-| `BITBUCKET_API_TOKEN` | Bitbucket API auth |
-| `BITBUCKET_WORKSPACE` | Repo workspace (cbscd) |
-
-If `ANTHROPIC_API_KEY` is missing the script will fail with a clear error from the CLI — tell the user to set it in `~/.zshenv`.
+Only `ANTHROPIC_API_KEY` is required (sourced from `~/.zshenv`). No Bitbucket credentials needed.
 
 ## Output format
 
 After the script completes, present:
 
-1. **Verdict line** — pass the `[revue]` verdict line from output (e.g. `✅ Review cycle complete` or `❌ All agents failed`)
-2. **Finding summary** — count by severity (high/medium/low/info) and list the medium+ findings with file, line, and issue
-3. **Next step** — suggest whether to address any findings before merging, or confirm the PR is clean
+1. **Verdict line** — the `[revue]` verdict line (e.g. `✅ Review cycle complete`)
+2. **Finding summary** — count by severity and list of medium+ findings with file, line, and issue
+3. **Next step** — offer to fix any findings here before the PR is opened

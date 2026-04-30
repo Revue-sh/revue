@@ -498,7 +498,7 @@ class BitbucketAdapter(PlatformAdapter):
             )
 
     def post_review_comment(
-        self, pr_id: int, position: DiffPosition, body: str
+        self, pr_id: int, position: DiffPosition, body: str, replacement_line_count: int = 1
     ) -> str | None:
         """Post an inline comment on a PR (pipeline operation).
 
@@ -576,7 +576,11 @@ class BitbucketAdapter(PlatformAdapter):
             response.raise_for_status()
             return True
         except Exception as exc:
-            _log.warning("update_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
+            _log.error(
+                "update_comment failed for PR %s comment %s — will post new comment instead. "
+                "Error: %s (type: %s)",
+                pr_id, comment_id, exc, type(exc).__name__
+            )
             return False
 
     def get_existing_comments(self, pr_id: int) -> list[dict]:
@@ -910,22 +914,35 @@ class GitHubAdapter(PlatformAdapter):
         file_path: str,
         line_number: int,
         body: str,
-        commit_sha: str
+        commit_sha: str,
+        replacement_line_count: int = 1,
     ) -> tuple[str, Optional[str]]:
-        """Post review comment to GitHub PR."""
+        """Post review comment to GitHub PR.
+
+        For multi-line suggestions (replacement_line_count > 1), includes start_line
+        and line to span the full range.
+        """
         url = f"{self.base_url}/repos/{repo_owner}/{repo_name}/pulls/{pr_number}/comments"
-        
+
         payload = {
             "body": body,
             "commit_id": commit_sha,
             "path": file_path,
-            "line": line_number,
             "side": "RIGHT"
         }
-        
+
+        # GitHub requires start_line < line for multi-line ranges; single-line omits start_line.
+        # rlc > 1 guarantees line = start_line + (rlc-1) >= start_line + 1, so start_line < line always.
+        if replacement_line_count > 1:
+            payload["start_line"] = line_number
+            payload["start_side"] = "RIGHT"
+            payload["line"] = line_number + replacement_line_count - 1
+        else:
+            payload["line"] = line_number
+
         response = httpx.post(url, json=payload, headers=self.headers)
         response.raise_for_status()
-        
+
         data = response.json()
         return (str(data['id']), data.get('pull_request_review_id'))
     
