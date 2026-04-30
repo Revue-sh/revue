@@ -41,26 +41,29 @@ _AGENT_CANONICAL_CATEGORY: dict[str, str] = {
 }
 
 _REVIEW_INSTRUCTIONS = (
-    # Schema — raw JSON array, no markdown fences
-    "Respond with a JSON array of findings (no markdown fences, raw JSON only):\n"
+    # IMPORTANT: output strictly valid JSON — no comments, no trailing commas, no JS syntax.
+    "Respond with a JSON array of findings. Output valid JSON only — no markdown fences, "
+    "no inline comments, no trailing commas.\n"
     "[\n"
     '  {\n'
-    '    "file_path": "...",\n'
-    '    "line_number": 1,\n'
+    '    "file_path": "src/example.py",\n'
+    '    "line_number": 42,\n'
     '    "severity": "high|medium|low|info",\n'
-    '    "issue": "...",\n'
-    '    "suggestion": "...",\n'
-    '    "confidence": 0.0,\n'
+    '    "issue": "One sentence naming the problem.",\n'
+    '    "suggestion": "One sentence fix.",\n'
+    '    "confidence": 0.85,\n'
     '    "category": "architecture|security|performance|code-quality",\n'
-    '    "code_replacement": ["exact replacement line 1", "line 2"]  // or null\n'
+    '    "code_replacement": ["replacement line 1", "line 2"]\n'
     "  }\n"
     "]\n"
     "\n"
-    "Field guidance:\n"
-    "Set code_replacement to the exact replacement lines when you can provide a precise "
-    "single-location fix; set it to null when the fix requires broader context or is "
-    "descriptive only. Lines must be strings — no integers or nulls in the array. "
-    "If suggestion includes a code example, wrap it in a markdown code fence "
+    "Field rules:\n"
+    "- confidence: float 0.0–1.0 reflecting how certain you are this is a real issue.\n"
+    "- code_replacement: when you can provide exact verbatim replacement lines for a "
+    "single-location fix, set this to an array of strings — one string per source line, "
+    "no line numbers, no integers, no nulls inside the array. Leave it null when the fix "
+    "requires broader context or is descriptive only.\n"
+    "- If suggestion includes a code example, wrap it in a markdown code fence "
     "(e.g. ```python\\n...\\n```)."
 )
 
@@ -68,12 +71,18 @@ def filter_code_replacement(raw: object) -> "list[str] | None":
     """Return a sanitised list of string lines from an AI-supplied code_replacement value.
 
     Filters out any non-string items (integers, nulls) that the AI may return.
-    Strips triple-backtick sequences that would break fenced suggestion blocks.
+    Escapes triple-backtick sequences only when they appear at the START of a line —
+    those would close the surrounding suggestion fence prematurely. Backticks that
+    appear mid-line are safe and are left verbatim so committed code is not corrupted.
     Returns None when the result would be empty.
     """
     if not isinstance(raw, list):
         return None
-    lines = [l.replace("```", "~~~") for l in raw if isinstance(l, str)]
+    def _escape(line: str) -> str:
+        if line.lstrip().startswith("```"):
+            return line.replace("```", "~~~", 1)
+        return line
+    lines = [_escape(l) for l in raw if isinstance(l, str)]
     return lines or None
 
 

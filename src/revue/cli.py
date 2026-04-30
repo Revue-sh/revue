@@ -867,13 +867,10 @@ def _github_suggestion_block(lines: list[str]) -> str:
 def _gitlab_suggestion_block(lines: list[str]) -> str:
     """Return a GitLab native suggestion block for inline MR comments.
 
-    The ``suggestion:-0+0`` syntax replaces the commented line with `lines` in place
-    (remove 0 lines above, add 0 lines of context below — a single-line swap).
-    GitLab renders this as an "Apply suggestion" button.
-
-    Limitation: this always produces a one-for-one line replacement. Multi-line
-    context-aware diffs (e.g. replacing N lines with M lines) would require
-    ``suggestion:-N+M`` syntax, which is not currently wired through the pipeline.
+    The ``:-0+0`` numbers specify context lines (0 above, 0 below the anchor).
+    The replacement content is whatever lines are inside the fence — GitLab
+    replaces the anchor line with all of them, so multi-line replacements work
+    correctly with this syntax. GitLab renders an "Apply suggestion" button.
     """
     return "\n```suggestion:-0+0\n" + "\n".join(lines) + "\n```\n"
 
@@ -899,7 +896,8 @@ def _format_recommendation(
     """
     formatter = _SUGGESTION_BLOCK_FORMATTERS.get(platform_str)
     if formatter and code_replacement:
-        return formatter(code_replacement)
+        prose = f"\n> 💡 **Recommendation:** {rec}" if rec.strip() else ""
+        return f"{prose}{formatter(code_replacement)}"
     if "```" in rec:
         fence_idx = rec.index("```")
         prose = rec[:fence_idx].rstrip()

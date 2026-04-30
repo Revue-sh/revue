@@ -118,7 +118,7 @@ def test_github_inline_with_replacement_uses_suggestion_block(tmp_path) -> None:
     body = mock_adapter.post_review_comment.call_args[1]["body"]
     assert "```suggestion" in body
     assert "cursor.execute(query, (user_id,))" in body
-    assert "> 💡 **Recommendation:**" not in body
+    assert "> 💡 **Recommendation:** Use parameterised queries" in body
 
 
 def test_github_inline_with_multiline_replacement(tmp_path) -> None:
@@ -160,7 +160,7 @@ def test_gitlab_inline_with_replacement_uses_suggestion_block(tmp_path) -> None:
     body = mock_adapter.post_review_comment.call_args[1]["body"]
     assert "```suggestion:-0+0" in body
     assert "html.escape(value)" in body
-    assert "> 💡 **Recommendation:**" not in body
+    assert "> 💡 **Recommendation:** Escape output" in body
 
 
 # ---------------------------------------------------------------------------
@@ -265,9 +265,9 @@ def test_format_recommendation_github_with_replacement() -> None:
         code_replacement=["    cursor.execute(query, (user_id,))"],
         platform_str="github",
     )
-    assert result.startswith("\n```suggestion")
+    assert "```suggestion" in result
     assert "cursor.execute(query, (user_id,))" in result
-    assert "```" in result
+    assert "> 💡 **Recommendation:** Use parameterised queries" in result
 
 
 def test_format_recommendation_gitlab_with_replacement() -> None:
@@ -281,6 +281,7 @@ def test_format_recommendation_gitlab_with_replacement() -> None:
     )
     assert "```suggestion:-0+0" in result
     assert "html.escape(value)" in result
+    assert "> 💡 **Recommendation:** Escape output" in result
 
 
 def test_format_recommendation_bitbucket_with_replacement_falls_back() -> None:
@@ -320,6 +321,39 @@ def test_review_instructions_include_code_replacement() -> None:
 
     assert "code_replacement" in _REVIEW_INSTRUCTIONS, (
         "Agent prompt schema must include code_replacement so agents can populate it"
+    )
+
+
+def test_review_instructions_example_shows_array_not_null() -> None:
+    """Schema example must show an array value for code_replacement, not null.
+
+    Showing null as the example value biases the AI toward always returning null,
+    which silently disables all inline suggestion blocks in every review.
+    The null path belongs in the field rules, not in the example object.
+    """
+    from revue.core.agent_loader import _REVIEW_INSTRUCTIONS
+
+    # The example JSON object should demonstrate an array so the AI learns to produce one
+    assert '"code_replacement": [' in _REVIEW_INSTRUCTIONS, (
+        "Schema example must show an array for code_replacement — "
+        "a null example biases the AI toward never producing suggestions"
+    )
+
+
+def test_review_instructions_field_rules_explain_null_fallback() -> None:
+    """Field rules must explain when to use null — not an inline JS comment.
+
+    JS-style comments (// or null) are invalid JSON and can leak into AI output,
+    causing JSONDecodeError in filter_code_replacement. The null guidance belongs
+    in the prose field rules section.
+    """
+    from revue.core.agent_loader import _REVIEW_INSTRUCTIONS
+
+    assert "Leave it null" in _REVIEW_INSTRUCTIONS, (
+        "Field rules must explain the null fallback for code_replacement"
+    )
+    assert "// or null" not in _REVIEW_INSTRUCTIONS, (
+        "JS-style inline comments are invalid JSON and must not appear in the schema example"
     )
 
 
