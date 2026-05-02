@@ -120,6 +120,43 @@ The main addition is **loop orchestration state** that the current `ReviewPipeli
 
 ---
 
+## Track 2 Integration Point
+
+**Track 2** is the conversational Nova capability from the comment-posting redesign (C8/C9, 2026-05-02). It is post-MVP and plugs into the `Consolidator` via the `SynthesisStrategy` Protocol defined in `comments/models.py`. The agentic loop architecture this document describes is the **outer** loop (AI Resolver + round-based re-review); Track 2 is the **inner** loop (Nova negotiating with contributing agents within a single consolidation pass).
+
+### The integration point
+
+```python
+class LangGraphConversationalStrategy:
+    """SynthesisStrategy implementation for Track 2.
+
+    Replaces NovaSingleShotStrategy as the injected synthesis strategy.
+    No changes to Consolidator, BodyBuilder, or Poster required.
+    """
+    def synthesise(self, group: list[AgentFinding]) -> ConsolidatedFinding: ...
+```
+
+The `Consolidator` is unaware of which `SynthesisStrategy` it holds. Swapping from `NovaSingleShotStrategy` to `LangGraphConversationalStrategy` is a **one-line DI change** at the call site. No further refactoring is needed when Track 2 lands — the typed pipeline (Track 1) is the prerequisite, not a blocker.
+
+### Interaction with the outer agentic loop
+
+Track 2 and the outer agentic loop (AI Resolver) are independent post-MVP capabilities. They compose naturally:
+
+- Track 2 produces higher-quality `ConsolidatedFinding` items (findings are cross-checked between agents before posting)
+- The AI Resolver (this document) acts on those findings — triaging, proposing fixes, and passing context to the next review round
+- LangGraph is the shared framework for both; the `StateGraph` that drives the outer loop can host the inner Track 2 conversation nodes without duplication
+
+### What to build first
+
+Build the outer loop (this document's AI Resolver + round state) first if the goal is autonomous resolution. Build Track 2 first if the goal is higher-quality single-pass findings. Either is valid; they are independent.
+
+### References
+
+- `docs/architecture/comment-posting.md §Decision 4` — `SynthesisStrategy` Protocol definition
+- `docs/planning/post-mvp-ideas.md` — Track 2 entry with LangGraph notes
+
+---
+
 ## What NOT to do before MVP
 
 - Do not add the Resolver or loop logic to the current `pipeline.py`

@@ -59,6 +59,10 @@ Most teams have Layer 1. Almost none have Layer 2. Few have Layer 3 done well. R
 ### 3.1 Product Vision
 > Revue is the AI review layer that every engineering team installs once and relies on forever — the safety net that catches what humans miss, at every stage of the development lifecycle.
 
+**Why this matters now.** AI coding tools (Copilot, Cursor, Windsurf) have created a structural paradox (§2.1): code is written 5–10× faster, but AI-generated code carries 2× the bug rate of human-written code, and PR volume grows 10× while reviewer headcount stays flat. The model that wrote the code has context bias — it misses its own mistakes. Human reviewers are the only backstop, and they are overwhelmed.
+
+Revue's job is to remove that bottleneck without forcing teams to trade quality for throughput. Every comment Revue posts must give a developer the same value as a senior teammate's inline review: anchored where the issue is, attributed to who is saying it, and — where possible — one-click applicable. Anything less is noise, and noise makes the bottleneck worse.
+
 ### 3.2 MVP Goals (v1.0)
 - [ ] Multi-agent CI review that runs on GitHub and GitLab PRs/MRs
 - [ ] Configurable specialised agents: Cleo, Zara, Kai, Maya, Leo, Nova
