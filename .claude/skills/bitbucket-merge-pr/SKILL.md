@@ -90,12 +90,10 @@ bash .claude/skills/bitbucket-merge-pr/scripts/sync_remotes.sh
 ```
 
 The script:
-1. Force-pushes `main` to the `github` remote (straight sync, no special handling needed).
-2. Fetches `gitlab` remote to capture any GitLab-only commits (e.g. `.gitlab-ci.yml` tweaks).
-3. Unprotects GitLab `main` via API (required before force-push).
-4. Force-pushes `main` to the `gitlab` remote.
-5. Cherry-picks any GitLab-only commits back on top so the CI configuration is preserved.
-6. Re-protects GitLab `main` at Maintainer level (push=40, merge=40).
+1. Force-pushes `main` to the `github` remote.
+2. Unprotects GitLab `main` via API (required — `allow_force_push` is false by default).
+3. Force-pushes `main` to the `gitlab` remote.
+4. Re-protects GitLab `main` at Maintainer level (push=40, merge=40).
 
 If the script exits non-zero, print the error. **Do not treat a remote-sync failure as a blocker** — the Bitbucket merge already landed; report the error and let the user decide whether to retry.
 
