@@ -4,6 +4,16 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+## Deferred from: code review of revue-209-body-builder (2026-05-03)
+
+- **D1** — `cli.py` dead code: `_format_recommendation`, `_SUGGESTION_BLOCK_FORMATTERS`, `_get_highest_severity` are no longer called from any production path after BodyBuilder integration. Four unit tests in `test_suggestion_blocks.py:259–311` keep `_format_recommendation` alive. Clean up in PR 5 (explicitly out of scope for REVUE-209).
+- **D2** — `build_summary()` not wired to any call site in `cli.py`. PR-level summary posting path not yet migrated to BodyBuilder. Scope: REVUE-214 (Poster / position resolution).
+- **D3** — `_highest_severity()` in `body_builder.py` returns `"info"` for non-canonical severity strings (e.g. `"critical"`). Pre-existing upstream normalization gap — `_extract_finding_fields` also doesn't normalize these. Add severity normalization in `_extract_finding_fields` or add a canonical severity set to `ConsolidatedFinding.__post_init__`.
+- **D4** — `build_grouped()` has no guard against being called with an empty list or single item. Would produce `"ℹ️ [INFO] 0 findings on this line"` or `"1 findings on this line"` ghost comments. Add `if len(items) < 2: raise ValueError(...)` guard. Not currently reachable from `_run_per_issue_dedup`.
+- **D5** — Grammar: "1 findings on this line" in `build_grouped()` header when `n=1`. Add singular/plural: `f"{n} {'finding' if n == 1 else 'findings'} on this line"`. Not currently reachable from `_run_per_issue_dedup` which routes single items to `build()`.
+
+---
+
 ## Deferred from: code review of REVUE-208-implementation-readiness (2026-05-02)
 
 - **D1** — Singleton `AIReview → ConsolidatedFinding` migration crash path: `AIReview.synthesised_from=None` for singleton findings; any REVUE-212 migration code that constructs `ConsolidatedFinding` without manually synthesising `[Attribution(agent_name, category)]` will raise `ValueError`. `AIReview.agent_name` defaults to `""` — migration must validate non-empty before constructing `Attribution`. Scope: REVUE-212 implementation.

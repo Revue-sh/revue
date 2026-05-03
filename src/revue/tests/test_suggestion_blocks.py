@@ -118,7 +118,7 @@ def test_github_inline_with_replacement_uses_suggestion_block(tmp_path) -> None:
     body = mock_adapter.post_review_comment.call_args[1]["body"]
     assert "```suggestion" in body
     assert "cursor.execute(query, (user_id,))" in body
-    assert "> 💡 **Recommendation:** Use parameterised queries" in body
+    assert "> 💡 **Action:** Use parameterised queries" in body
 
 
 def test_github_inline_with_multiline_replacement(tmp_path) -> None:
@@ -160,7 +160,7 @@ def test_gitlab_inline_with_replacement_uses_suggestion_block(tmp_path) -> None:
     body = mock_adapter.post_review_comment.call_args[1]["body"]
     assert "```suggestion:-0+0" in body
     assert "html.escape(value)" in body
-    assert "> 💡 **Recommendation:** Escape output" in body
+    assert "> 💡 **Action:** Escape output" in body
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ def test_github_inline_without_replacement_uses_blockquote(tmp_path) -> None:
     mock_adapter = _run_dedup("github", finding, tmp_path)
 
     body = mock_adapter.post_review_comment.call_args[1]["body"]
-    assert "> 💡 **Recommendation:** Remove the import statement" in body
+    assert "> 💡 **Suggest:** Remove the import statement" in body
     assert "```suggestion" not in body
 
 
@@ -194,7 +194,7 @@ def test_github_inline_with_empty_replacement_uses_blockquote(tmp_path) -> None:
     mock_adapter = _run_dedup("github", finding, tmp_path)
 
     body = mock_adapter.post_review_comment.call_args[1]["body"]
-    assert "> 💡 **Recommendation:** Extract to named constant" in body
+    assert "> 💡 **Suggest:** Extract to named constant" in body
     assert "```suggestion" not in body
 
 
@@ -213,7 +213,7 @@ def test_gitlab_inline_without_replacement_uses_blockquote(tmp_path) -> None:
     mock_adapter = _run_dedup("gitlab", finding, tmp_path)
 
     body = mock_adapter.post_review_comment.call_args[1]["body"]
-    assert "> 💡 **Recommendation:** Reduce log verbosity in production" in body
+    assert "> ℹ️ **Note:** Reduce log verbosity in production" in body
     assert "```suggestion" not in body
 
 
@@ -233,7 +233,7 @@ def test_bitbucket_inline_with_replacement_still_uses_blockquote(tmp_path) -> No
     mock_adapter = _run_dedup("bitbucket", finding, tmp_path)
 
     body = mock_adapter.post_review_comment.call_args[1]["body"]
-    assert "> 💡 **Recommendation:** Move to environment variable" in body
+    assert "> 💡 **Action:** Move to environment variable" in body
     assert "```suggestion" not in body
 
 
@@ -248,7 +248,7 @@ def test_bitbucket_inline_without_replacement_unchanged(tmp_path) -> None:
     mock_adapter = _run_dedup("bitbucket", finding, tmp_path)
 
     body = mock_adapter.post_review_comment.call_args[1]["body"]
-    assert "> 💡 **Recommendation:** Add return type annotation" in body
+    assert "> 💡 **Suggest:** Add return type annotation" in body
     assert "```suggestion" not in body
 
 

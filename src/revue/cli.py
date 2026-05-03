@@ -16,11 +16,14 @@ from pathlib import Path
 from typing import Callable, Optional
 
 # Configure Python logging from REVUE_LOG_LEVEL env var (default: WARNING).
-# Set REVUE_LOG_LEVEL=DEBUG in CI to see cache hit/miss counts from ai_client.py.
+# Set REVUE_LOG_LEVEL=DEBUG in CI to see: [revue:body] logs tracing BodyBuilder routing and platform selection.
 logging.basicConfig(
     level=os.environ.get("REVUE_LOG_LEVEL", "WARNING").upper(),
     format="%(levelname)s %(name)s %(message)s",
 )
+# Always suppress anthropic._base_client RequestOptions/Response spam (includes full diff in payloads).
+# This keeps logs focused on [revue:body] tracing for comment-posting validation (REVUE-209).
+logging.getLogger("anthropic._base_client").setLevel("WARNING")
 
 from revue.core.config_loader import (
     DEFAULT_REVUE_YML,
@@ -32,6 +35,9 @@ from revue.core.ai_client import create_ai_client
 from revue.core.pipeline import ReviewPipeline
 from revue.core.models import PRContext
 from revue.core.agent_loader import filter_code_replacement
+from revue.comments.body_builder import BodyBuilder
+from revue.comments.models import Attribution, ConsolidatedFinding
+from revue.core.logging_utils import _Lazy
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +508,7 @@ def _build_enhanced_summary(
     show_reviewed_files: bool = True,
     rating_cfg: dict | None = None,
     previously_tracked: int = 0,
+    summary_sink: list | None = None,
 ) -> str:
     """Build the rich REVUE-97 summary comment body (AC1–AC7).
 
@@ -631,7 +638,13 @@ def _build_enhanced_summary(
             f"attention. See inline comments for details."
         )
 
-    return "\n".join(lines)
+    body = "\n".join(lines)
+
+    if summary_sink:
+        unanchored_section = BodyBuilder.build_summary(findings=[], summary_sink=summary_sink)
+        body += "\n\n" + unanchored_section
+
+    return body
 
 
 def _parse_findings(response: str) -> tuple[list, str]:
@@ -911,30 +924,6 @@ def _format_recommendation(
     return f"\n> 💡 **Recommendation:** {rec}"
 
 
-def _build_merged_comment_body(group_items: list[tuple[str, str, str]], fp: str) -> str:
-    """Build merged comment body for N>=2 findings on same line.
-
-    group_items: list of (sev, issue, rec) tuples.
-    Returns: formatted body with header + numbered list.
-    """
-    severities = [sev for sev, _, _ in group_items]
-    highest = _get_highest_severity(severities)
-    emoji = SEVERITY_EMOJI.get(highest, "⚪")
-
-    header = f"**{emoji} [{highest.upper()}] {len(group_items)} findings on this line**"
-    parts = [header]
-
-    for i, (sev, issue, rec) in enumerate(group_items, start=1):
-        sev_tag = sev.upper()
-        item = f"{i}. [{sev_tag}] {issue}"
-        if rec:
-            item += f"\n> {rec}"
-        parts.append(item)
-
-    body = "\n\n".join(parts) + f"\n\n[//]: # (revue:fp:{fp})"
-    return body
-
-
 def _post_or_evict_and_retry(
     adapter,
     pr_num: int,
@@ -983,7 +972,7 @@ def _run_per_issue_dedup(
     review_results: list,
     diff_by_file: dict,
     dedup_store,
-) -> tuple[int, int, dict[str, int], int, int]:
+) -> tuple[int, int, dict[str, int], int, int, list]:
     """Core per-issue dedup loop shared across all platform posting functions.
 
     Nova's consolidated list is the authoritative set of findings — every item
@@ -995,7 +984,7 @@ def _run_per_issue_dedup(
     fingerprints derived from inline comment metadata prevent re-posting without
     any stored state.
 
-    Returns ``(posted, skipped, total_findings, previously_tracked, failed)`` where:
+    Returns ``(posted, skipped, total_findings, previously_tracked, failed, summary_sink)`` where:
     - ``total_findings``     — severity breakdown for findings requiring attention
                                (new postings + open-prior skips; excludes resolved-prior)
     - ``previously_tracked`` — count of findings skipped because they matched a
@@ -1005,6 +994,9 @@ def _run_per_issue_dedup(
     - ``failed``             — count of findings where the API call was attempted but
                                returned an error (e.g. 403 Forbidden). Non-zero means
                                the review is incomplete and the user should check credentials.
+    - ``summary_sink``       — unanchored findings (position=0 on GitHub/Bitbucket) that
+                               cannot be posted inline; passed to _build_enhanced_summary
+                               for rendering via BodyBuilder.build_summary() (AC6).
 
     Order guarantee: total_findings is incremented AFTER the resolved-prior check
     so that resolved won't-fix findings are never counted toward the summary total.
@@ -1026,6 +1018,7 @@ def _run_per_issue_dedup(
     failed = 0
     previously_tracked = 0
     total_findings: dict[str, int] = {"high": 0, "medium": 0, "low": 0, "info": 0}
+    summary_sink: list[ConsolidatedFinding] = []
     _eviction_state: list[bool] = [False]  # shared mutable flag for _post_or_evict_and_retry
     # Hunk fps seen this cycle — used by AC5 to detect fixed findings.
     seen_hunk_fps: set[str] = set()
@@ -1066,6 +1059,7 @@ def _run_per_issue_dedup(
 
     # Phase 3: For each group, check merged_prior once (per Jira note: grouping before dedup).
     # Then post merged comment if new, or skip if deduped.
+    _builder = BodyBuilder()
     for (file_path, line), group_items in groups.items():
         diff_content = diff_by_file.get(file_path, "")
         fp = gen_fingerprint(file_path, line, diff_content)
@@ -1100,36 +1094,69 @@ def _run_per_issue_dedup(
             if sev in total_findings:
                 total_findings[sev] += 1
 
-        # Build merged or single comment body — REVUE-172 AC3/AC6.
         replacement_line_count = 1  # default; overridden below for single findings
         if len(group_items) == 1:
-            # Single finding — use existing format with category and details.
             sev, issue, rec, details, cat, f = group_items[0]
-            emoji = SEVERITY_EMOJI.get(sev, "⚪")
-            body_parts = [f"**{emoji} [{sev.upper()}] {issue}**"]
+            agent_name = f.get("agent_name") or "unknown"
+            code_replacement = filter_code_replacement(f.get("code_replacement"))
+            replacement_line_count = f.get("replacement_line_count", 1)
             synthesised_from = f.get("synthesised_from")
             if synthesised_from:
-                attribution = _format_synthesis_attribution(synthesised_from)
-                body_parts.append(f"*{attribution}*")
-            elif cat:
-                display_cat = cat.replace('-', ' ').title()
-                display_agent = _AGENT_DISPLAY_NAMES.get(f.get("agent_name", ""), "")
-                label = f"{display_agent} · {display_cat}" if display_agent else display_cat
-                body_parts.append(f"*{label}*")
-            if details:
-                body_parts.append(f"\n{details}")
-            if rec:
-                code_replacement = filter_code_replacement(f.get("code_replacement"))
-                replacement_line_count = f.get("replacement_line_count", 1)
-                body_parts.append(
-                    _format_recommendation(rec, code_replacement, platform_str, replacement_line_count)
+                attribution = [Attribution(agent_name=a[0], category=a[1]) for a in synthesised_from]
+                logging.debug(
+                    "[revue:body] %s:%s synthesised_from → %d attribution(s): %s",
+                    file_path, line, len(attribution),
+                    _Lazy(lambda: ", ".join(f"{a.agent_name}/{a.category}" for a in attribution)),
                 )
-            body = "\n".join(body_parts) + f"\n\n[//]: # (revue:fp:{fp})"
+            else:
+                attribution = [Attribution(agent_name=agent_name, category=cat or "general")]
+            logging.debug(
+                "[revue:body] %s:%s → singleton  platform=%s  agent=%s  sev=%s  has_code=%s",
+                file_path, line, platform_str, attribution[0].agent_name, sev,
+                code_replacement is not None,
+            )
+            consolidated = ConsolidatedFinding(
+                file_path=file_path,
+                line_number=line,
+                severity=sev,  # type: ignore[arg-type]
+                issue=issue or "Issue found",
+                suggestion=rec or "",
+                confidence=float(f.get("confidence", 0.8)),
+                category=cat or "general",
+                attribution=attribution,
+                code_replacement=code_replacement,
+                replacement_line_count=replacement_line_count,
+                snippet="",
+                group_type="singleton",
+            )
+            body = _builder.build(consolidated, fp=fp, platform=platform_str)
         else:
-            # Multiple findings — use merged format (REVUE-172 AC3).
-            group_tuple_list = [(sev, issue, rec) for sev, issue, rec, details, cat, f in group_items]
-            body = _build_merged_comment_body(group_tuple_list, fp)
-            replacement_line_count = 1  # merged body has no suggestion fence
+            # Multiple findings on same line — use build_grouped() for proper per-item rendering.
+            grouped_items: list[ConsolidatedFinding] = []
+            for sev, iss, rec, details, cat, f in group_items:
+                agent_name = f.get("agent_name") or "unknown"
+                item_code_replacement = filter_code_replacement(f.get("code_replacement"))
+                grouped_items.append(ConsolidatedFinding(
+                    file_path=file_path,
+                    line_number=line,
+                    severity=sev,  # type: ignore[arg-type]
+                    issue=iss or "Issue found",
+                    suggestion=rec or "",
+                    confidence=float(f.get("confidence", 0.8)),
+                    category=cat or "general",
+                    attribution=[Attribution(agent_name=agent_name, category=cat or "general")],
+                    code_replacement=item_code_replacement,
+                    replacement_line_count=f.get("replacement_line_count", 1),
+                    snippet="",
+                    group_type="same_line",
+                ))
+            logging.debug(
+                "[revue:body] %s:%s → grouped(%d)  platform=%s  agents=%s",
+                file_path, line, len(grouped_items), platform_str,
+                ", ".join(gi.attribution[0].agent_name for gi in grouped_items),
+            )
+            body = _builder.build_grouped(grouped_items, fp=fp, platform=platform_str)
+            replacement_line_count = 1
 
         # Snap agent-reported line to a valid diff position before resolving (REVUE-201).
         # Tier 3 (file-read fallback) is intentionally disabled — repo_path is not available
@@ -1161,8 +1188,13 @@ def _run_per_issue_dedup(
             position = adapter.resolve_position(file_path, snapped_line, diff_content)
 
         # position=0 is the sentinel for "line outside diff hunks" on both
-        # GitHub (500) and Bitbucket (403). Skip rather than attempt to post.
+        # GitHub (500) and Bitbucket (403). Collect into summary_sink for
+        # BodyBuilder.build_summary() rather than silently discarding (AC6).
         if platform_str in ("github", "bitbucket") and position.position == 0:
+            if len(group_items) == 1:
+                summary_sink.append(consolidated)
+            else:
+                summary_sink.extend(grouped_items)
             skipped += len(group_items)
             continue
 
@@ -1207,7 +1239,7 @@ def _run_per_issue_dedup(
                     reason="auto-resolved",
                 )
 
-    return posted, skipped, total_findings, previously_tracked, failed
+    return posted, skipped, total_findings, previously_tracked, failed, summary_sink
 
 
 def _post_to_platform(
@@ -1403,7 +1435,7 @@ def _post_to_platform(
             )
             _post_or_update_summary(summary_body)
 
-        posted, skipped, total_findings, previously_tracked, failed = _run_per_issue_dedup(
+        posted, skipped, total_findings, previously_tracked, failed, summary_sink = _run_per_issue_dedup(
             adapter, pr_num, platform_str, review_results, diff_by_file, dedup_store
         )
         # total_findings is now reassigned to the post-dedup accurate counts.
@@ -1419,6 +1451,7 @@ def _post_to_platform(
                 show_reviewed_files=show_reviewed_files,
                 rating_cfg=rating_cfg,
                 previously_tracked=previously_tracked,
+                summary_sink=summary_sink,
             )
             _post_or_update_summary(summary_body)
 

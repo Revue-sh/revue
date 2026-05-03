@@ -33,32 +33,8 @@ Commit and PR title format: `type(scope)[REVUE-XX]: description`
 
 ## Architecture rules
 
-Read `ARCHITECTURE.md` before any structural change. Non-negotiable:
-
-- **Layered**: CLI → Service → Repository → Infrastructure. No layer skipping.
-- **No raw SQL** outside `db/repositories/`
-- **Constructor injection** — never instantiate dependencies inside service methods
-- **Domain models** (`core/models.py`) separate from DB schemas — no tuples/dicts in business logic
-- MVP uses local `.revue/` JSON persistence. `JsonReviewRepository` and `PostgresReviewRepository` share the same interface — swapping is a one-line constructor change.
-
-## Internal flags
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `REVUE_METRICS_ENABLED` | off | Enables `JsonlMetricsCollector`; writes per-run token usage to `.revue/metrics.jsonl`. Never document on any public surface — see `docs/architecture/pipeline-metrics.md` ADR D6. |
+Read `ARCHITECTURE.md` before any structural change. Non-negotiable: layered CLI → Service → Repository → Infrastructure (no skipping), no raw SQL outside `db/repositories/`, constructor injection, domain models in `core/models.py`, `JsonReviewRepository` and `PostgresReviewRepository` share one interface.
 
 ## Key references
 
-| Area | Where to look |
-|------|--------------|
-| Architecture diagram + agent roles | `docs/planning/prd.md` §4.3 (Cleo → Zara/Kai/Maya/Leo → Nova → Comments) |
-| Nova consolidation pipeline | `docs/architecture/consolidation.md` |
-| Post-MVP agentic loop | `docs/architecture/agentic-review-loop.md` |
-| Pipeline code | `src/revue/core/pipeline.py`, `core/cleo_router.py` |
-| Comment posting / threading | `src/revue/comments/service.py`, `comments/platform_adapter.py` |
-| VCS integration | `src/revue/core/vcs_adapter.py` |
-| Domain types | `src/revue/core/models.py` |
-| AI provider | `src/revue/core/ai_client.py` |
-| Config schema | `docs/guides/revue-yml-reference.md` |
-| Testing commands + conventions | `docs/guides/testing.md` |
-| Sprint context | `docs/team/HANDOFF.md` |
+Run `/prime` to load the full reference table and internal flags on demand.

@@ -770,7 +770,7 @@ def test_resolved_prior_excluded_from_summary_count(tmp_path) -> None:
     ]
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, total_findings, previously_tracked, _failed = _run_per_issue_dedup(
+    posted, skipped, total_findings, previously_tracked, _failed, _sink = _run_per_issue_dedup(
         mock_adapter, 42, "gitlab", review_results, {}, store
     )
 
@@ -815,7 +815,7 @@ def test_open_prior_still_counted_in_summary(tmp_path) -> None:
     ]
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, total_findings, previously_tracked, _failed = _run_per_issue_dedup(
+    posted, skipped, total_findings, previously_tracked, _failed, _sink = _run_per_issue_dedup(
         mock_adapter, 42, "gitlab", review_results, {}, store
     )
 
@@ -861,7 +861,7 @@ def test_open_prior_uses_original_comment_severity_not_reanalysis(tmp_path) -> N
     ]
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, total_findings, previously_tracked, _failed = _run_per_issue_dedup(
+    posted, skipped, total_findings, previously_tracked, _failed, _sink = _run_per_issue_dedup(
         mock_adapter, 42, "gitlab", review_results, {}, store
     )
 
@@ -972,7 +972,7 @@ def test_merge_three_findings_same_line(tmp_path) -> None:
     mock_adapter.post_review_comment.return_value = "merged-1"
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, _tf, _pt, _failed = _run_per_issue_dedup(
+    posted, skipped, _tf, _pt, _failed, _sink = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 
@@ -1033,13 +1033,13 @@ def test_merged_comment_format_body(tmp_path) -> None:
 
     body = mock_adapter.post_review_comment.call_args[1]["body"]
     assert "3 findings" in body.splitlines()[0], "Header must state finding count"
-    # Issue and recommendation appear on separate lines (recommendation as blockquote)
+    # Issue and suggestion text appear in the body
     assert "[HIGH] Unsafe deser" in body
-    assert "> Use json.loads" in body
+    assert "Use json.loads" in body
     assert "[MEDIUM] Missing hint" in body
-    assert "> Add annotation" in body
+    assert "Add annotation" in body
     assert "[LOW] Magic number" in body
-    assert "> Extract constant" in body
+    assert "Extract constant" in body
     # Items are visually separated by blank lines
     assert "\n\n" in body
     assert "[//]: # (revue:fp:" in body
@@ -1116,7 +1116,7 @@ def test_single_finding_no_regression(tmp_path) -> None:
     mock_adapter.post_review_comment.return_value = "single-1"
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, _tf, _pt, _failed = _run_per_issue_dedup(
+    posted, skipped, _tf, _pt, _failed, _sink = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 
@@ -1144,7 +1144,7 @@ def test_two_findings_different_severity_merged(tmp_path) -> None:
     mock_adapter.post_review_comment.return_value = "merged-5"
 
     store = PerPRCommentStore(tmp_path)
-    posted, _sk, _tf, _pt, _failed = _run_per_issue_dedup(
+    posted, _sk, _tf, _pt, _failed, _sink = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 
@@ -1198,7 +1198,7 @@ def test_merged_three_findings_total_findings_per_finding(tmp_path) -> None:
     mock_adapter.post_review_comment.return_value = "merged-7"
 
     store = PerPRCommentStore(tmp_path)
-    _posted, _skipped, total_findings, _pt, _failed = _run_per_issue_dedup(
+    _posted, _skipped, total_findings, _pt, _failed, _sink = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 
@@ -1231,7 +1231,7 @@ def test_merged_comment_no_trailing_dash_when_no_rec(tmp_path) -> None:
     assert "[HIGH] No-rec issue —" not in body, "No trailing em-dash when recommendation is absent"
     assert "[HIGH] No-rec issue" in body
     assert "[MEDIUM] With-rec issue" in body
-    assert "> Fix it" in body
+    assert "Fix it" in body
 
 
 def test_single_finding_recommendation_with_code_fence(tmp_path) -> None:
@@ -1251,7 +1251,7 @@ def test_single_finding_recommendation_with_code_fence(tmp_path) -> None:
     _run_per_issue_dedup(mock_adapter, 42, "bitbucket", review_results, {}, store)
 
     body = mock_adapter.post_review_comment.call_args[1]["body"]
-    assert "> 💡 **Recommendation:** Compute groups once:" in body
+    assert "> 💡 **Suggest:** Compute groups once:" in body
     assert "```python" in body
     assert "groups = _detect()" in body
     # Code block must NOT be inside the blockquote line
@@ -1277,7 +1277,7 @@ def test_merge_single_review_result_two_findings_same_line(tmp_path) -> None:
     mock_adapter.post_review_comment.return_value = "merged-9"
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, _tf, _pt, _failed = _run_per_issue_dedup(
+    posted, skipped, _tf, _pt, _failed, _sink = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 
@@ -1306,7 +1306,7 @@ def test_two_groups_different_lines_posts_twice(tmp_path) -> None:
     mock_adapter.post_review_comment.side_effect = ["post-line5", "post-line10"]
 
     store = PerPRCommentStore(tmp_path)
-    posted, skipped, _tf, _pt, _failed = _run_per_issue_dedup(
+    posted, skipped, _tf, _pt, _failed, _sink = _run_per_issue_dedup(
         mock_adapter, 42, "bitbucket", review_results, {}, store
     )
 

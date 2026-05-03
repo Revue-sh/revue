@@ -50,6 +50,7 @@ definitions:
           - export PYTHONPATH="$(pwd)/src"
           - export APP_ENV=production  # Use real licence validation via revue-io.fly.dev
           - export REVUE_METRICS_ENABLED=1
+          - export REVUE_LOG_LEVEL=DEBUG  # Enable logging of BodyBuilder routing and platform selection
           # Provider and model are read from .revue.yml — no --provider/--model flags needed.
           # Set the API key CI variable matching your configured provider:
           #   anthropic → ANTHROPIC_API_KEY   openai → OPENAI_API_KEY  (REVUE-148)
