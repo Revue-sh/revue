@@ -36,6 +36,7 @@ revue-review:
     GIT_DEPTH: "0"
     REPOSITORY: $CI_PROJECT_PATH
     REVUE_METRICS_ENABLED: "1"
+    REVUE_LOG_LEVEL: "DEBUG"
   allow_failure: true
   artifacts:
     when: always
