@@ -1,9 +1,10 @@
-"""Domain models for comment resolution tracking."""
+"""Domain models for comment resolution tracking and pipeline contracts."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Literal, Protocol
 
 
 class Platform(Enum):
@@ -130,3 +131,146 @@ Progress: {progress_bar} {self.progress_percentage}% complete
             return f"Keep going! {self.remaining_count} issues remaining."
         else:
             return f"{self.remaining_count} issues to review."
+
+
+# ---------------------------------------------------------------------------
+# Pipeline contracts (REVUE-208)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Attribution:
+    """One agent's contribution to a finding. Immutable once created."""
+    agent_name: str
+    category: str
+
+    def __post_init__(self) -> None:
+        if not self.agent_name:
+            raise ValueError("Attribution.agent_name must be non-empty")
+
+
+_VALID_SEVERITIES: frozenset[str] = frozenset({"high", "medium", "low", "info"})
+_VALID_GROUP_TYPES: frozenset[str] = frozenset({"singleton", "proximity", "same_line"})
+
+
+@dataclass
+class AgentFinding:
+    """Raw finding output from a single agent."""
+    file_path: str
+    line_number: int
+    severity: Literal["high", "medium", "low", "info"]
+    issue: str
+    suggestion: str
+    confidence: float
+    category: str
+    agent_name: str
+    code_replacement: list[str] | None
+    replacement_line_count: int
+    snippet: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.file_path:
+            raise ValueError("AgentFinding.file_path must be non-empty")
+        if self.line_number <= 0:
+            raise ValueError(f"AgentFinding.line_number must be > 0, got {self.line_number}")
+        if not (0.0 <= self.confidence <= 1.0):
+            raise ValueError(f"AgentFinding.confidence must be in [0.0, 1.0], got {self.confidence}")
+        if self.severity not in _VALID_SEVERITIES:
+            raise ValueError(f"AgentFinding.severity must be one of {_VALID_SEVERITIES}, got {self.severity!r}")
+        if not self.agent_name:
+            raise ValueError("AgentFinding.agent_name must be non-empty")
+
+
+@dataclass
+class SynthesisGroup:
+    """Intermediate grouping produced by GroupingStrategy.group()."""
+    findings: list[AgentFinding]
+    file_path: str
+    line_range: tuple[int, int]
+    group_type: Literal["singleton", "proximity", "same_line"]
+
+    def __post_init__(self) -> None:
+        if not self.file_path:
+            raise ValueError("SynthesisGroup.file_path must be non-empty")
+        if not self.findings:
+            raise ValueError("SynthesisGroup.findings must contain at least one AgentFinding")
+        if self.line_range[0] <= 0 or self.line_range[1] <= 0:
+            raise ValueError(
+                f"SynthesisGroup.line_range must contain positive line numbers, got {self.line_range}"
+            )
+        if self.line_range[0] > self.line_range[1]:
+            raise ValueError(
+                f"SynthesisGroup.line_range must be ordered (start ≤ end), got {self.line_range}"
+            )
+        if self.group_type not in _VALID_GROUP_TYPES:
+            raise ValueError(
+                f"SynthesisGroup.group_type must be one of {_VALID_GROUP_TYPES}, got {self.group_type!r}"
+            )
+
+
+@dataclass
+class ConsolidatedFinding:
+    """Final typed finding ready for BodyBuilder.
+
+    attribution is required and non-nullable — structural guarantee that
+    no comment can be posted without knowing which agent(s) raised it
+    (fixes the MR !22 attribution-drop regressions).
+    """
+    file_path: str
+    line_number: int
+    severity: Literal["high", "medium", "low", "info"]
+    issue: str
+    suggestion: str
+    confidence: float
+    category: str
+    attribution: list[Attribution]
+    code_replacement: list[str] | None
+    replacement_line_count: int
+    snippet: str
+    group_type: Literal["singleton", "proximity", "same_line"] = "singleton"
+
+    def __post_init__(self) -> None:
+        if not self.file_path:
+            raise ValueError("ConsolidatedFinding.file_path must be non-empty")
+        if self.line_number <= 0:
+            raise ValueError(f"ConsolidatedFinding.line_number must be > 0, got {self.line_number}")
+        if not self.attribution:
+            raise ValueError("ConsolidatedFinding.attribution must contain at least one Attribution")
+        if not (0.0 <= self.confidence <= 1.0):
+            raise ValueError(f"ConsolidatedFinding.confidence must be in [0.0, 1.0], got {self.confidence}")
+        if self.group_type not in _VALID_GROUP_TYPES:
+            raise ValueError(
+                f"ConsolidatedFinding.group_type must be one of {_VALID_GROUP_TYPES}, got {self.group_type!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Strategy Protocols (REVUE-208 — Decision 4)
+# All three live in this module alongside the data types they operate on.
+# ---------------------------------------------------------------------------
+
+
+class GroupingStrategy(Protocol):
+    """Pass A: cluster raw agent findings into SynthesisGroups."""
+
+    def group(self, findings: list[AgentFinding]) -> list[SynthesisGroup]: ...
+
+
+class SynthesisStrategy(Protocol):
+    """Pass B: synthesise a SynthesisGroup into a ConsolidatedFinding.
+
+    On LLM failure, implementors must fall back to deterministic concatenation
+    with full attribution preserved — callers cannot observe which path ran.
+    """
+
+    def synthesise(self, group: SynthesisGroup) -> ConsolidatedFinding: ...
+
+
+class FindingPostProcessor(Protocol):
+    """Transform or validate a ConsolidatedFinding.
+
+    Return None to drop the finding from the inline stream.
+    Return the (possibly modified) finding to keep it.
+    """
+
+    def process(self, finding: ConsolidatedFinding) -> ConsolidatedFinding | None: ...

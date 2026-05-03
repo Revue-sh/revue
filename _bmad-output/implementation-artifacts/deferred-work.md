@@ -4,6 +4,13 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+## Deferred from: code review of REVUE-208-implementation-readiness (2026-05-02)
+
+- **D1** — Singleton `AIReview → ConsolidatedFinding` migration crash path: `AIReview.synthesised_from=None` for singleton findings; any REVUE-212 migration code that constructs `ConsolidatedFinding` without manually synthesising `[Attribution(agent_name, category)]` will raise `ValueError`. `AIReview.agent_name` defaults to `""` — migration must validate non-empty before constructing `Attribution`. Scope: REVUE-212 implementation.
+- **D2** — Stub classes (`ProximityAndCountGroupingStrategy`, `NovaSingleShotStrategy`, etc.) do not inherit Protocol interfaces (`GroupingStrategy`, `SynthesisStrategy`). mypy will not catch method-name typos (e.g. `synthesize` vs `synthesise`) until the class is used at a call site. Consider adding Protocol inheritance in REVUE-212/213 when implementations are written.
+
+---
+
 ## Deferred from: code review of revue-170-ai-assisted-routing (2026-04-23)
 
 - **W1** — `_agent_matches_ai_suggestion` false-positive risk on short canonical names (e.g. "leo" matches "paleontologist"); deliberate design, low practical risk with structured LLM output but worth revisiting if custom agents are added.

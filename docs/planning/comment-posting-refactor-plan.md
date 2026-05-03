@@ -13,19 +13,19 @@ This document is a one-time migration roadmap. It captures the PR sequence, Jira
 
 | Ticket | Title | PR |
 |--------|-------|----|
-| REVUE-211 | Comment posting contracts (models + stub modules) | PR 1 |
+| REVUE-208 | Comment posting contracts (models + stub modules) | PR 1 |
 | REVUE-212 | Migrate body building to `comments/body_builder.py` | PR 2 |
 | REVUE-213 | Migrate consolidation to `comments/consolidator.py` | PR 3 |
 | REVUE-214 | Migrate posting to `comments/poster.py` | PR 4 |
 | *(optional)* | `cli.py` dead code cleanup | PR 5 |
 
-Dependencies: REVUE-212, REVUE-213, REVUE-214 are all blocked by REVUE-211. REVUE-212, REVUE-213, REVUE-214 can proceed in parallel once REVUE-211 merges (they each touch different modules and `cli.py` call sites).
+Dependencies: REVUE-212, REVUE-213, REVUE-214 are all blocked by REVUE-208. REVUE-212, REVUE-213, REVUE-214 can proceed in parallel once REVUE-208 merges (they each touch different modules and `cli.py` call sites).
 
 ---
 
 ## PR 1 — Contracts (~200 LOC, behaviour-neutral)
 
-**Jira:** REVUE-211
+**Jira:** REVUE-208
 **Blocking:** All subsequent migration PRs
 
 ### What ships
@@ -54,7 +54,7 @@ This PR is the trellis. It is small enough to review carefully in one sitting. R
 ## PR 2 — Migrate body building
 
 **Jira:** REVUE-212
-**Blocked by:** REVUE-211 (PR 1)
+**Blocked by:** REVUE-208 (PR 1)
 
 ### What ships
 
@@ -75,7 +75,7 @@ This PR is the trellis. It is small enough to review carefully in one sitting. R
 ## PR 3 — Migrate consolidation
 
 **Jira:** REVUE-213
-**Blocked by:** REVUE-211 (PR 1); can run in parallel with PR 2
+**Blocked by:** REVUE-208 (PR 1); can run in parallel with PR 2
 
 ### What ships
 
@@ -98,7 +98,7 @@ This PR is the trellis. It is small enough to review carefully in one sitting. R
 ## PR 4 — Migrate posting
 
 **Jira:** REVUE-214
-**Blocked by:** REVUE-211 (PR 1); best sequenced after PR 2 and PR 3 are merged
+**Blocked by:** REVUE-208 (PR 1); best sequenced after PR 2 and PR 3 are merged
 
 ### What ships
 
