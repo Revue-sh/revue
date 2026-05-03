@@ -1,5 +1,6 @@
 ---
 name: bitbucket-reply-comment
+model: haiku
 description: Post a reply to a Bitbucket PR comment thread. Use when the user wants to respond to a specific PR comment, reply to a thread by ID, or post multiple replies at once. Invoked as /bitbucket-reply-comment [workspace/repo] [PR#] [thread-id] [message].
 argument-hint: "[workspace/repo] [PR#] [parent-comment-id] [\"message\"] | --batch replies.json"
 disable-model-invocation: true

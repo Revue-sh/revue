@@ -1,7 +1,7 @@
 ---
 name: bitbucket-merge-pr
-model: sonnet
-description: Squash-merge an open Bitbucket pull request using the PR title as the exact commit message (no "Merged in..." header). Closes the source branch after merge and syncs the local repo. Use when the user says "merge the PR", "merge PR #N", "merge this PR", "squash merge", or "merge and clean up".
+model: haiku
+description: Squash-merge an open Bitbucket pull request using the PR title as the exact commit message (no "Merged in..." header). Closes the source branch after merge, syncs the local repo, and pushes to GitHub and GitLab mirrors. Use when the user says "merge the PR", "merge PR #N", "merge this PR", "squash merge", or "merge and clean up".
 allowed-tools: Bash, Read
 ---
 
@@ -16,6 +16,7 @@ Always `source ~/.zshenv` before any API or script call.
 | `BITBUCKET_APP_PASSWORD` | App password — preferred for write (POST) calls |
 | `BITBUCKET_API_TOKEN` | API token — fallback if APP_PASSWORD not set |
 | `BITBUCKET_USERNAME` | Bitbucket username / email |
+| `GITLAB_TOKEN` | GitLab PAT — required for protect/unprotect API calls during remote sync |
 
 - Workspace/repo: `cbscd/revue` (override via `BITBUCKET_WORKSPACE` / `BITBUCKET_REPO_SLUG`)
 
@@ -80,6 +81,24 @@ git branch -d SOURCE_BRANCH 2>/dev/null || true
 
 If `git branch -d` fails (branch not local), skip silently — it was already gone.
 
+### Step 4 — Sync GitHub and GitLab mirrors
+
+After local main is up to date, push to the secondary remotes:
+
+```bash
+bash .claude/skills/bitbucket-merge-pr/scripts/sync_remotes.sh
+```
+
+The script:
+1. Force-pushes `main` to the `github` remote (straight sync, no special handling needed).
+2. Fetches `gitlab` remote to capture any GitLab-only commits (e.g. `.gitlab-ci.yml` tweaks).
+3. Unprotects GitLab `main` via API (required before force-push).
+4. Force-pushes `main` to the `gitlab` remote.
+5. Cherry-picks any GitLab-only commits back on top so the CI configuration is preserved.
+6. Re-protects GitLab `main` at Maintainer level (push=40, merge=40).
+
+If the script exits non-zero, print the error. **Do not treat a remote-sync failure as a blocker** — the Bitbucket merge already landed; report the error and let the user decide whether to retry.
+
 ---
 
 ## Output
@@ -90,6 +109,8 @@ Report to the user:
 ✅ Merged: <pr title>
 ✅ main updated (git pull)
 ✅ Branch <source-branch> deleted locally
+✅ GitHub main synced
+✅ GitLab main synced
 ```
 
 If any step fails, report the exact error before stopping.
