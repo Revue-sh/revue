@@ -12,6 +12,7 @@ from revue.core.agent_loader import (
     AgentDefinition, LoadedAgent, YAMLAgentParser, MarkdownAgentParser,
     load_agent_definition, load_agents_from_dir,
     load_custom_agents, load_all_agents,
+    _parse_finding_item,
 )
 from revue.core.ai_client import _CACHE_CONTROL_1H, CompletionResult, TokenUsage
 from revue.core.ai_config import AIConfig
@@ -1006,3 +1007,181 @@ def test_d1_comparison_artifact_committed() -> None:
         f"ANALYSIS.md not yet committed — run scripts/run-d1-regression.sh first\n"
         f"Expected at: {artifact}"
     )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-199 — language field in AIReview and AgentFinding (ACs 1-4)
+# ---------------------------------------------------------------------------
+
+
+class TestParseLanguage:
+    """Test language field detection in _parse_finding_item (AC1, AC2)."""
+
+    def test_parse_finding_item_detects_python_language(self) -> None:
+        item = {
+            "file_path": "src/main.py",
+            "line_number": 42,
+            "severity": "high",
+            "issue": "bad practice",
+            "suggestion": "fix it",
+            "confidence": 0.85,
+            "category": "quality",
+        }
+        finding = _parse_finding_item(item, agent_name="leo")
+        assert finding is not None
+        assert finding.language == "python"
+
+    def test_parse_finding_item_detects_javascript_language(self) -> None:
+        item = {
+            "file_path": "src/app.js",
+            "line_number": 10,
+            "severity": "minor",
+            "issue": "unused var",
+            "suggestion": "remove",
+            "confidence": 0.6,
+        }
+        finding = _parse_finding_item(item, agent_name="kai")
+        assert finding is not None
+        assert finding.language == "javascript"
+
+    def test_parse_finding_item_unknown_extension_defaults_to_unknown(self) -> None:
+        item = {
+            "file_path": "README.unknown_ext",
+            "line_number": 1,
+            "severity": "suggestion",
+            "issue": "doc issue",
+            "suggestion": "improve",
+            "confidence": 0.5,
+        }
+        finding = _parse_finding_item(item, agent_name="zara")
+        assert finding is not None
+        assert finding.language == "unknown"
+
+    def test_parse_finding_item_no_extension_defaults_to_unknown(self) -> None:
+        item = {
+            "file_path": "Dockerfile",
+            "line_number": 5,
+            "severity": "major",
+            "issue": "bad practice",
+            "suggestion": "use alpine",
+            "confidence": 0.9,
+        }
+        finding = _parse_finding_item(item, agent_name="maya")
+        assert finding is not None
+        assert finding.language == "unknown"
+
+    def test_parse_finding_item_detects_typescript_language(self) -> None:
+        item = {
+            "file_path": "lib/types.ts",
+            "line_number": 20,
+            "severity": "medium",
+            "issue": "type issue",
+            "suggestion": "add type annotation",
+            "confidence": 0.75,
+        }
+        finding = _parse_finding_item(item, agent_name="leo")
+        assert finding is not None
+        assert finding.language == "typescript"
+
+    def test_aireview_language_defaults_to_unknown(self) -> None:
+        """AC1: AIReview.language field exists and defaults to 'unknown'."""
+        review = AIReview(
+            file_path="test.py",
+            line_number=1,
+            severity="minor",
+            issue="test",
+            suggestion="test",
+            confidence=0.5,
+        )
+        assert hasattr(review, "language")
+        assert review.language == "unknown"
+
+    def test_aireview_language_is_str_not_optional(self) -> None:
+        """AC1: language field is never None/Optional."""
+        review = AIReview(
+            file_path="test.py",
+            line_number=1,
+            severity="minor",
+            issue="test",
+            suggestion="test",
+            confidence=0.5,
+            language="python",
+        )
+        assert isinstance(review.language, str)
+        assert review.language == "python"
+
+
+class TestAgentFindingLanguage:
+    """Test language field in AgentFinding dataclass (AC3)."""
+
+    def test_agentfinding_has_language_field_defaulting_to_unknown(self) -> None:
+        from revue.comments.models import AgentFinding
+
+        finding = AgentFinding(
+            file_path="test.py",
+            line_number=10,
+            severity="high",
+            issue="test",
+            suggestion="fix",
+            confidence=0.8,
+            category="quality",
+            agent_name="leo",
+            code_replacement=None,
+            replacement_line_count=1,
+        )
+        assert hasattr(finding, "language")
+        assert finding.language == "unknown"
+
+    def test_agentfinding_language_can_be_set_explicitly(self) -> None:
+        from revue.comments.models import AgentFinding
+
+        finding = AgentFinding(
+            file_path="app.js",
+            line_number=20,
+            severity="low",
+            issue="unused var",
+            suggestion="remove",
+            confidence=0.6,
+            category="quality",
+            agent_name="zara",
+            code_replacement=None,
+            replacement_line_count=1,
+            language="javascript",
+        )
+        assert finding.language == "javascript"
+
+
+class TestPipelineLanguageMapping:
+    """Test language field mapping in _air_to_agent_finding (AC4)."""
+
+    def test_air_to_agent_finding_maps_language(self) -> None:
+        from revue.core.pipeline import _air_to_agent_finding
+
+        air = AIReview(
+            file_path="src/app.ts",
+            line_number=15,
+            severity="high",
+            issue="type error",
+            suggestion="fix type",
+            confidence=0.85,
+            category="types",
+            agent_name="leo",
+            language="typescript",
+        )
+        finding = _air_to_agent_finding(air)
+        assert finding.language == "typescript"
+
+    def test_air_to_agent_finding_defaults_language_to_unknown(self) -> None:
+        from revue.core.pipeline import _air_to_agent_finding
+
+        air = AIReview(
+            file_path="test.py",
+            line_number=5,
+            severity="medium",
+            issue="quality",
+            suggestion="improve",
+            confidence=0.7,
+            agent_name="kai",
+        )
+        finding = _air_to_agent_finding(air)
+        assert finding.language == "unknown"

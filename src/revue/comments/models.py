@@ -167,6 +167,7 @@ class AgentFinding:
     code_replacement: list[str] | None
     replacement_line_count: int
     snippet: str = ""
+    language: str = "unknown"  # detected from file extension
 
     def __post_init__(self) -> None:
         if not self.file_path:

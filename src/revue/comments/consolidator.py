@@ -10,6 +10,7 @@ import logging
 import re
 from typing import Any
 
+from ..core.agent_loader import filter_code_replacement
 from .models import (
     AgentFinding,
     Attribution,
@@ -206,8 +207,9 @@ class NovaSingleShotStrategy:
     concatenation with attribution headers. Callers cannot observe which path ran.
     """
 
-    def __init__(self, ai_client: Any) -> None:
+    def __init__(self, ai_client: Any, system_prompt: str | None = None) -> None:
         self._client = ai_client
+        self._system_prompt = system_prompt or _SYNTHESIS_SYSTEM_PROMPT
 
     def synthesise(self, group: SynthesisGroup) -> ConsolidatedFinding:
         """Synthesise a SynthesisGroup into a ConsolidatedFinding."""
@@ -251,7 +253,7 @@ class NovaSingleShotStrategy:
         )
         result = self._client.complete(
             [{"role": "user", "content": prompt_content}],
-            system=_SYNTHESIS_SYSTEM_PROMPT,
+            system=self._system_prompt,
             max_tokens=4096,
             temperature=0.2,
             agent_name=_NOVA,
@@ -275,6 +277,7 @@ class NovaSingleShotStrategy:
                         "severity": f.severity,
                         "issue": f.issue,
                         "suggestion": f.suggestion,
+                        "language": getattr(f, "language", "unknown"),
                     }
                     for f in group.findings
                 ],
@@ -306,12 +309,26 @@ class NovaSingleShotStrategy:
         if severity not in _SEVERITY_ORDER:
             severity = "medium"
 
-        # Pick best code_replacement: from highest-confidence finding that has one
-        best_source = max(
-            (f for f in group.findings if f.code_replacement),
-            key=lambda f: f.confidence,
-            default=None,
-        )
+        # Use unified code_replacement from Nova if valid; fall back to best finding (AC9)
+        nova_code_replacement = syn.get("code_replacement")
+        code_replacement = None
+        replacement_line_count = 1
+
+        if nova_code_replacement is not None:
+            code_replacement = filter_code_replacement(nova_code_replacement)
+            if code_replacement:
+                replacement_line_count = len(code_replacement)
+
+        # Fallback applies when Nova omits code_replacement OR returns an all-invalid list
+        if code_replacement is None:
+            best_source = max(
+                (f for f in group.findings if f.code_replacement),
+                key=lambda f: f.confidence,
+                default=None,
+            )
+            if best_source:
+                code_replacement = best_source.code_replacement
+                replacement_line_count = best_source.replacement_line_count
 
         attribution = [
             Attribution(agent_name=f.agent_name, category=f.category)
@@ -331,8 +348,8 @@ class NovaSingleShotStrategy:
             confidence=max(f.confidence for f in group.findings),
             category=group.findings[0].category,
             attribution=attribution,
-            code_replacement=best_source.code_replacement if best_source else None,
-            replacement_line_count=best_source.replacement_line_count if best_source else 1,
+            code_replacement=code_replacement,
+            replacement_line_count=replacement_line_count,
             snippet=group.findings[0].snippet,
             group_type=group.group_type,
         )

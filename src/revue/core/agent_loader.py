@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .shared_analysis import SharedAnalysisResult
 
 from .ai_client import _CACHE_CONTROL_1H
+from .diff_parser import detect_language
 from .models import FileChange, AIReview
 
 logger = logging.getLogger(__name__)
@@ -60,15 +61,19 @@ _REVIEW_INSTRUCTIONS = (
     "\n"
     "Field rules:\n"
     "- confidence: float 0.0–1.0 reflecting how certain you are this is a real issue.\n"
+    "- suggestion: prose description of the fix. NEVER include inline code examples — all "
+    "code belongs exclusively in code_replacement. The suggestion should be clear and "
+    "actionable without code.\n"
     "- code_replacement: when you can provide exact verbatim replacement lines for a "
     "single-location fix, set this to an array of strings — one string per source line, "
-    "no line numbers, no integers, no nulls inside the array. Leave it null when the fix "
-    "requires broader context or is descriptive only.\n"
+    "no line numbers, no integers, no nulls inside the array. IMPORTANT: code_replacement "
+    "must be a complete and working replacement consistent with the suggestion. Omit "
+    "code_replacement entirely if it would be partial or incomplete (e.g., building a list "
+    "but omitting the join). Leave it null when the fix requires broader context or is "
+    "descriptive only.\n"
     "- replacement_line_count: when code_replacement is provided, set this to the number "
     "of original source lines being replaced (default 1). For example, if you are replacing "
-    "a function signature that spans 3 lines, set this to 3.\n"
-    "- If suggestion includes a code example, wrap it in a markdown code fence "
-    "(e.g. ```python\\n...\\n```)."
+    "a function signature that spans 3 lines, set this to 3."
 )
 
 def filter_code_replacement(raw: object) -> "list[str] | None":
@@ -157,8 +162,9 @@ def _parse_finding_item(
         except (TypeError, ValueError):
             pass
 
+    file_path = item.get("file_path", "unknown")
     return AIReview(
-        file_path=item.get("file_path", "unknown"),
+        file_path=file_path,
         line_number=int(item.get("line_number", 0)),
         severity=severity,
         issue=item.get("issue", ""),
@@ -171,6 +177,7 @@ def _parse_finding_item(
         agent_name=agent_name,
         code_replacement=code_replacement,
         replacement_line_count=replacement_line_count,
+        language=detect_language(file_path),
     )
 
 

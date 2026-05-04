@@ -43,6 +43,7 @@ from revue.comments.consolidator import (
     NovaSingleShotStrategy,
     ProximityAndCountGroupingStrategy,
     UnanchoredFindingExtractor,
+    _SYNTHESIS_SYSTEM_PROMPT,
 )
 
 
@@ -63,6 +64,7 @@ def _make_finding(
     code_replacement: list[str] | None = None,
     replacement_line_count: int = 1,
     snippet: str = "",
+    language: str = "unknown",
 ) -> AgentFinding:
     return AgentFinding(
         file_path=file_path,
@@ -76,6 +78,7 @@ def _make_finding(
         code_replacement=code_replacement,
         replacement_line_count=replacement_line_count,
         snippet=snippet,
+        language=language,
     )
 
 
@@ -668,3 +671,156 @@ def test_deterministic_fallback_preserves_per_finding_category():
     categories = {a.agent_name: a.category for a in result.attribution}
     assert categories.get("leo")  == "security"
     assert categories.get("maya") == "performance"
+
+
+# ---------------------------------------------------------------------------
+# REVUE-199 — language propagation and system_prompt injection
+# ---------------------------------------------------------------------------
+
+
+def test_build_group_payload_includes_language_per_finding() -> None:
+    """AC6c: _build_group_payload includes language on each finding; no redundant group-level field."""
+    mock_client = MagicMock()
+    strategy = NovaSingleShotStrategy(ai_client=mock_client)
+
+    group = SynthesisGroup(
+        findings=[
+            _make_finding(agent_name="leo", language="python"),
+            _make_finding(agent_name="kai", language="python"),
+        ],
+        file_path="app.py",
+        line_range=(10, 12),
+        group_type="proximity",
+    )
+    payload = strategy._build_group_payload(group)
+    assert len(payload) == 1
+    entry = payload[0]
+    assert "language" not in entry  # language lives per-finding, not at group level
+    for f in entry["findings"]:
+        assert f["language"] == "python"
+
+
+def test_build_group_payload_language_defaults_to_unknown() -> None:
+    """AC6c: unknown extension yields 'unknown' language on each finding."""
+    mock_client = MagicMock()
+    strategy = NovaSingleShotStrategy(ai_client=mock_client)
+
+    group = SynthesisGroup(
+        findings=[_make_finding(agent_name="zara", language="unknown")],
+        file_path="Dockerfile",
+        line_range=(5, 5),
+        group_type="singleton",
+    )
+    payload = strategy._build_group_payload(group)
+    assert payload[0]["findings"][0]["language"] == "unknown"
+
+
+def test_nova_uses_injected_system_prompt_not_constant() -> None:
+    """AC7: NovaSingleShotStrategy passes the injected system_prompt to ai_client.complete()."""
+    mock_client = MagicMock()
+    mock_result = MagicMock()
+    mock_result.text = "invalid json"
+    mock_client.complete.return_value = mock_result
+
+    custom_prompt = "Custom synthesis prompt for testing."
+    strategy = NovaSingleShotStrategy(ai_client=mock_client, system_prompt=custom_prompt)
+
+    group = SynthesisGroup(
+        findings=[
+            _make_finding(agent_name="leo"),
+            _make_finding(agent_name="kai"),
+        ],
+        file_path="a.py",
+        line_range=(10, 10),
+        group_type="same_line",
+    )
+    strategy.synthesise(group)
+
+    mock_client.complete.assert_called_once()
+    call_kwargs = mock_client.complete.call_args[1]
+    assert call_kwargs["system"] == custom_prompt
+    assert call_kwargs["system"] != _SYNTHESIS_SYSTEM_PROMPT
+
+
+def test_nova_defaults_to_synthesis_system_prompt_when_none_injected() -> None:
+    """AC7: NovaSingleShotStrategy defaults to _SYNTHESIS_SYSTEM_PROMPT when no prompt injected."""
+    strategy = NovaSingleShotStrategy(ai_client=MagicMock(), system_prompt=None)
+    assert strategy._system_prompt == _SYNTHESIS_SYSTEM_PROMPT
+
+
+def test_build_consolidated_uses_nova_unified_code_replacement() -> None:
+    """AC9: _build_consolidated uses Nova's unified code_replacement, not cherry-pick from findings."""
+    mock_client = MagicMock()
+    strategy = NovaSingleShotStrategy(ai_client=mock_client)
+
+    group = SynthesisGroup(
+        findings=[
+            _make_finding(agent_name="leo", confidence=0.9, code_replacement=["old_leo_line"]),
+            _make_finding(agent_name="kai", confidence=0.7, code_replacement=["old_kai_line"]),
+        ],
+        file_path="a.py",
+        line_range=(10, 10),
+        group_type="same_line",
+    )
+    nova_response = {
+        "file": "a.py",
+        "line": 10,
+        "issue": "unified issue",
+        "suggestion": "unified fix",
+        "severity": "high",
+        "code_replacement": ["nova_unified_line_1", "nova_unified_line_2"],
+    }
+    result = strategy._build_consolidated(group, nova_response)
+    assert result.code_replacement == ["nova_unified_line_1", "nova_unified_line_2"]
+    assert result.replacement_line_count == 2
+
+
+def test_build_consolidated_falls_back_to_finding_when_nova_returns_null() -> None:
+    """AC9: _build_consolidated falls back to highest-confidence finding when Nova returns null."""
+    mock_client = MagicMock()
+    strategy = NovaSingleShotStrategy(ai_client=mock_client)
+
+    group = SynthesisGroup(
+        findings=[
+            _make_finding(agent_name="leo", confidence=0.9, code_replacement=["best_line"]),
+            _make_finding(agent_name="kai", confidence=0.5, code_replacement=["other_line"]),
+        ],
+        file_path="a.py",
+        line_range=(10, 10),
+        group_type="same_line",
+    )
+    nova_response = {
+        "file": "a.py",
+        "line": 10,
+        "issue": "issue",
+        "suggestion": "fix",
+        "severity": "medium",
+        "code_replacement": None,
+    }
+    result = strategy._build_consolidated(group, nova_response)
+    assert result.code_replacement == ["best_line"]
+
+
+def test_build_consolidated_falls_back_when_nova_returns_invalid_code_replacement() -> None:
+    """Finding #5: When Nova returns invalid code_replacement (all non-strings), fallback to findings."""
+    mock_client = MagicMock()
+    strategy = NovaSingleShotStrategy(ai_client=mock_client)
+
+    group = SynthesisGroup(
+        findings=[
+            _make_finding(agent_name="leo", confidence=0.9, code_replacement=["fallback_line"]),
+        ],
+        file_path="a.py",
+        line_range=(10, 10),
+        group_type="singleton",
+    )
+    nova_response = {
+        "file": "a.py",
+        "line": 10,
+        "issue": "issue",
+        "suggestion": "fix",
+        "severity": "medium",
+        "code_replacement": [1, 2, 3],  # all integers — filter_code_replacement returns None
+    }
+    result = strategy._build_consolidated(group, nova_response)
+    assert result.code_replacement == ["fallback_line"]

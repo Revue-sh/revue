@@ -320,6 +320,7 @@ def _air_to_agent_finding(air: object) -> object:
         code_replacement=getattr(air, "code_replacement", None),
         replacement_line_count=getattr(air, "replacement_line_count", 1),
         snippet=getattr(air, "snippet", ""),
+        language=getattr(air, "language", "unknown"),
     )
 
 
@@ -970,6 +971,13 @@ class ReviewPipeline:
             ProximityAndCountGroupingStrategy,
             UnanchoredFindingExtractor,
         )
+        # Get Nova's system prompt from its agent definition.
+        # Nova is in routed_agents (infrastructure agent) but stripped from reviewer_agents.
+        nova_system_prompt = None
+        for agent in routed_agents:
+            if agent.name == "nova" and hasattr(agent, "definition") and agent.definition:
+                nova_system_prompt = getattr(agent.definition, "system_prompt", None)
+                break
         # summary_sink accumulates unanchored findings for the PR-level summary comment.
         # BodyBuilder reads it when building the summary block (wired in REVUE-poster, next story).
         summary_sink: list = []
@@ -978,7 +986,7 @@ class ReviewPipeline:
                 n=self.config.consolidation_proximity_lines,
                 k=self.config.consolidation_max_group_size,
             ),
-            synthesis=NovaSingleShotStrategy(ai_client=self._client),
+            synthesis=NovaSingleShotStrategy(ai_client=self._client, system_prompt=nova_system_prompt),
             post_processors=[NoOpSuggestionDropper(), UnanchoredFindingExtractor(summary_sink)],
         )
         agent_findings = [_air_to_agent_finding(f) for f in raw_findings]

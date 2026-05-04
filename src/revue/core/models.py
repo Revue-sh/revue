@@ -42,6 +42,7 @@ class AIReview:
     synthesised_from: list[tuple[str, str]] | None = None  # (agent_name, category) pairs for synthesis (e.g., [("kai", "performance"), ("zara", "security")])
     code_replacement: list[str] | None = None  # exact replacement lines for GitHub/GitLab suggestion blocks
     replacement_line_count: int = 1  # number of original source lines the code_replacement covers (REVUE-201)
+    language: str = "unknown"  # detected from file extension via diff_parser.detect_language()
 
 
 @dataclass
