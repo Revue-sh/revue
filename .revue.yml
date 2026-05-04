@@ -140,6 +140,9 @@ noise_filters:
   low_confidence_threshold: 0.5
 output:
   comment_style: per-issue
+consolidation:
+  proximity_lines: 3
+  max_group_size: 3
 rating:
   floor: 1.0
   weights:

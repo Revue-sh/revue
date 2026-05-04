@@ -35,7 +35,7 @@ All documents are singular and non-conflicting. Architecture and delivery plan a
 
 ### Context Note
 
-REVUE-208 is a **Task** (PR 1 of 5), not a standalone Epic. It introduces typed contracts only. PRs 2–4 (REVUE-212/213/214) are blocked by this ticket and deliver the actual implementation. No REVUE-208-specific Epic doc exists; the architecture and planning documents together fully specify the story.
+REVUE-208 is a **Task** (PR 1 of 5), not a standalone Epic. It introduces typed contracts only. PRs 2–4 (REVUE-209/213/214) are blocked by this ticket and deliver the actual implementation. No REVUE-208-specific Epic doc exists; the architecture and planning documents together fully specify the story.
 
 ---
 
@@ -90,17 +90,17 @@ REVUE-208 is a **Task** (PR 1 of 5), not a standalone Epic. It introduces typed 
 
 | FR | PRD Requirement (summary) | Ticket / Module | Status |
 |----|--------------------------|-----------------|--------|
-| FR1 | Inline comments with severity | REVUE-208 (`ConsolidatedFinding.severity`) + REVUE-212 (`body_builder`) | ✅ Covered |
-| FR2 | 1-click fix suggestions | REVUE-208 (`ConsolidatedFinding.code_replacement`) + REVUE-212 (`body_builder`) | ✅ Covered |
-| FR3 | Nova merge/dedup/prioritise | REVUE-213 (`consolidator.py`: `NovaSingleShotStrategy`) | ✅ Covered |
+| FR1 | Inline comments with severity | REVUE-208 (`ConsolidatedFinding.severity`) + REVUE-209 (`body_builder`) | ✅ Covered |
+| FR2 | 1-click fix suggestions | REVUE-208 (`ConsolidatedFinding.code_replacement`) + REVUE-209 (`body_builder`) | ✅ Covered |
+| FR3 | Nova merge/dedup/prioritise | REVUE-210 (`consolidator.py`: `NovaSingleShotStrategy`) | ✅ Covered |
 | FR4 | Attribution preserved | REVUE-208 (`attribution` required field) — Decision 1 | ✅ Covered |
 | FR5 | Finding fields: severity, location, description, remediation | REVUE-208 (`AgentFinding`, `ConsolidatedFinding` dataclasses) | ✅ Covered |
-| FR6 | Per-platform position model | REVUE-214 (`poster.py`: VCSAdapter call + position resolution) | ✅ Covered |
-| FR7 | Comment format: severity badge + attribution + remediation | REVUE-212 (`body_builder`: per-platform kind-switching) | ✅ Covered |
-| FR8 | Platform-native suggestion block | REVUE-208 (`code_replacement` field) + REVUE-212 (`body_builder`) | ✅ Covered |
-| FR9 | PR-level summary comment | REVUE-212 (`body_builder`: summary renderer + `summary_sink`) | ✅ Covered |
-| FR10 | Graceful degradation on agent failure | REVUE-213 (`NovaSingleShotStrategy`: deterministic-concatenation fallback) | ✅ Covered |
-| FR11 | Mark failing agent contribution unavailable | REVUE-212 (`body_builder`: unanchored section via `UnanchoredFindingExtractor`) | ✅ Covered |
+| FR6 | Per-platform position model | REVUE-??? (`poster.py`: VCSAdapter call + position resolution) | ✅ Covered |
+| FR7 | Comment format: severity badge + attribution + remediation | REVUE-209 (`body_builder`: per-platform kind-switching) | ✅ Covered |
+| FR8 | Platform-native suggestion block | REVUE-208 (`code_replacement` field) + REVUE-209 (`body_builder`) | ✅ Covered |
+| FR9 | PR-level summary comment | REVUE-209 (`body_builder`: summary renderer + `summary_sink`) | ✅ Covered |
+| FR10 | Graceful degradation on agent failure | REVUE-210 (`NovaSingleShotStrategy`: deterministic-concatenation fallback) | ✅ Covered |
+| FR11 | Mark failing agent contribution unavailable | REVUE-209 (`body_builder`: unanchored section via `UnanchoredFindingExtractor`) | ✅ Covered |
 
 ### Missing Requirements
 
@@ -114,7 +114,7 @@ REVUE-208 is a **Task** (PR 1 of 5), not a standalone Epic. It introduces typed 
 
 ### Note on REVUE-208 Scope
 
-REVUE-208 directly covers FR1 (partial — data types only), FR2 (partial — `code_replacement` field), FR4, and FR5. The remaining FRs are covered by downstream tickets (REVUE-212/213/214), which are explicitly blocked by REVUE-208 and cannot start until PR 1 merges. This sequencing is correct and intentional.
+REVUE-208 directly covers FR1 (partial — data types only), FR2 (partial — `code_replacement` field), FR4, and FR5. The remaining FRs are covered by downstream tickets (REVUE-209/213/214), which are explicitly blocked by REVUE-208 and cannot start until PR 1 merges. This sequencing is correct and intentional.
 
 ---
 
@@ -164,20 +164,20 @@ None identified. The architecture decisions (particularly Decision 1 requiring `
 | Ticket | Title | Framing | Assessment |
 |--------|-------|---------|------------|
 | REVUE-208 | Comment posting contracts — models and stub modules | Technical | ⚠️ Technical title, but user story body correctly states internal developer value |
-| REVUE-212 | Migrate body building to `body_builder.py` | Technical | ⚠️ Technical title — user value is implicit (regression fixes C3 #1) |
-| REVUE-213 | Migrate consolidation to `consolidator.py` | Technical | ⚠️ Technical title — user value is implicit (regression fixes C3 #2 and #3) |
-| REVUE-214 | Migrate posting to `poster.py` | Technical | ⚠️ Technical title — user value is implicit (dedup, position resolution) |
+| REVUE-209 | Migrate body building to `body_builder.py` | Technical | ⚠️ Technical title — user value is implicit (regression fixes C3 #1) |
+| REVUE-210 | Migrate consolidation to `consolidator.py` | Technical | ⚠️ Technical title — user value is implicit (regression fixes C3 #2 and #3) |
+| REVUE-??? | Migrate posting to `poster.py` | Technical | ⚠️ Technical title — user value is implicit (dedup, position resolution) |
 
-**Verdict:** All four titles are technically framed. This is an accepted exception for brownfield refactors where the value is regression repair and SOLID compliance, not a new user-visible feature. The regression context (MR !22 failures) is documented in the architecture doc and is the implicit justification. No violation raised — but the downstream tickets (REVUE-212/213/214) should reference their specific regression fixes in their user story bodies when they are written up.
+**Verdict:** All four titles are technically framed. This is an accepted exception for brownfield refactors where the value is regression repair and SOLID compliance, not a new user-visible feature. The regression context (MR !22 failures) is documented in the architecture doc and is the implicit justification. No violation raised — but the downstream tickets (REVUE-209/213/214) should reference their specific regression fixes in their user story bodies when they are written up.
 
 ### B. Epic Independence Validation
 
 | Ticket | Blocker | Direction | Valid? |
 |--------|---------|-----------|--------|
 | REVUE-208 | None | Independent | ✅ |
-| REVUE-212 | REVUE-208 | Backward dependency | ✅ |
-| REVUE-213 | REVUE-208 | Backward dependency | ✅ |
-| REVUE-214 | REVUE-208 (best after 212+213) | Backward dependency | ✅ |
+| REVUE-209 | REVUE-208 | Backward dependency | ✅ |
+| REVUE-210 | REVUE-208 | Backward dependency | ✅ |
+| REVUE-??? | REVUE-208 (best after 212+213) | Backward dependency | ✅ |
 
 No forward dependencies. No circular dependencies. Dependency graph is a DAG with REVUE-208 as the root. ✅
 
@@ -246,7 +246,7 @@ None. No issues block implementation.
 
 3. **Post-implementation — mypy gate:** Run `mypy --strict` explicitly as part of the test gate. The current test case ("Protocol signatures verified with mypy") is ambiguous about strictness level — `--strict` is the right bar for new typed contracts.
 
-4. **When writing REVUE-212/213/214:** Add explicit regression-fix context to each user story body (REVUE-212 → "fixes C3 regression #1: attribution visible on grouped comments"; REVUE-213 → "fixes C3 regressions #2 and #3").
+4. **When writing REVUE-209/213/214:** Add explicit regression-fix context to each user story body (REVUE-209 → "fixes C3 regression #1: attribution visible on grouped comments"; REVUE-210 → "fixes C3 regressions #2 and #3").
 
 5. **Confirmed resolved:** REVUE-87 (E8) is the parent Epic. REVUE-208 Epic link confirmed in Jira.
 
@@ -402,7 +402,7 @@ class FindingPostProcessor(Protocol):
 
 **Validation added:** `SynthesisGroup.__post_init__` raises `ValueError` on empty `findings`; `ConsolidatedFinding.__post_init__` raises `ValueError` on empty `attribution`. These close the "validation undefined" gap from AC1/test-case review (Step 5, Quality Finding 🟠).
 
-**Stub definition:** All stub classes use `...` (Ellipsis) body — importable, mypy-clean, no runtime behaviour implied. `consolidator.py` locks the full module map from the architecture doc (5 classes: `Consolidator`, `ProximityAndCountGroupingStrategy`, `NovaSingleShotStrategy`, `NoOpSuggestionDropper`, `UnanchoredFindingExtractor`). This is "module map locked, signatures deferred" — REVUE-212/213/214 fill in the implementations.
+**Stub definition:** All stub classes use `...` (Ellipsis) body — importable, mypy-clean, no runtime behaviour implied. `consolidator.py` locks the full module map from the architecture doc (5 classes: `Consolidator`, `ProximityAndCountGroupingStrategy`, `NovaSingleShotStrategy`, `NoOpSuggestionDropper`, `UnanchoredFindingExtractor`). This is "module map locked, signatures deferred" — REVUE-209/213/214 fill in the implementations.
 
 **No changes to `cli.py`** (AC4 satisfied). Existing tests unmodified (AC5 satisfied — 1133 pre-existing tests all pass).
 
@@ -433,7 +433,7 @@ class FindingPostProcessor(Protocol):
 - [x] [Review][Patch] `group_type` is unconstrained `str` — added `Literal["singleton","proximity","same_line"]` annotation + `__post_init__` guard [src/revue/comments/models.py]
 - [x] [Review][Patch] Import ordering violation — fixed: `enum` now precedes `typing` [src/revue/comments/models.py:4]
 - [x] [Review][Patch] `field` imported but never used — removed, import is now `from dataclasses import dataclass` [src/revue/comments/models.py:4]
-- [x] [Review][Patch] `consolidator.py` docstring swaps ticket descriptions — simplified to "Full implementation delivered in REVUE-213." [src/revue/comments/consolidator.py:3]
+- [x] [Review][Patch] `consolidator.py` docstring swaps ticket descriptions — simplified to "Full implementation delivered in REVUE-210." [src/revue/comments/consolidator.py:3]
 - [x] [Review][Patch] `body_builder.py` and `poster.py` missing `from __future__ import annotations` — already present (false finding, dismissed)
-- [x] [Review][Defer] Singleton `AIReview → ConsolidatedFinding` migration may crash — `synthesised_from=None` singleton path needs `Attribution` construction in REVUE-212 [src/revue/core/dedup_consolidator.py] — deferred, REVUE-212 scope
+- [x] [Review][Defer] Singleton `AIReview → ConsolidatedFinding` migration may crash — `synthesised_from=None` singleton path needs `Attribution` construction in REVUE-209 [src/revue/core/dedup_consolidator.py] — deferred, REVUE-209 scope
 - [x] [Review][Defer] Stub classes do not inherit Protocol interfaces — mypy won't catch signature typos until call site [src/revue/comments/consolidator.py] — deferred, downstream tickets

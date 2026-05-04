@@ -789,7 +789,6 @@ def _cascade_orch(agents: list, run_side_effect=None):
     Returns (OrchestrationModules, mock_run) so callers can inspect/modify mock_run.
     """
     from revue.core.agent_runner import ParallelRunResult
-    from revue.core.dedup_consolidator import ConsolidationResult
     from revue.core.shared_analysis import SharedAnalysisResult
     from revue.core.pipeline import OrchestrationModules
 
@@ -803,10 +802,6 @@ def _cascade_orch(agents: list, run_side_effect=None):
     orch = OrchestrationModules(
         load_all_agents=MagicMock(return_value=agents),
         run_agents_parallel=mock_run,
-        consolidate=MagicMock(return_value=ConsolidationResult(
-            findings=[], duplicates_removed=0, original_count=0
-        )),
-        AIContradictionSynthesiser=MagicMock(),
         run_shared_analysis=MagicMock(return_value=shared),
         route=MagicMock(return_value=(MagicMock(), agents)),
         format_selection_message=MagicMock(return_value=""),

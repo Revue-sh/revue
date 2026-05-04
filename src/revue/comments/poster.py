@@ -1,6 +1,6 @@
 """Stub module for the Poster pipeline stage (REVUE-208).
 
-Full implementation delivered in REVUE-214.
+Full implementation delivered in REVUE-??? (poster ticket not yet created).
 Architecture spec: docs/architecture/comment-posting.md
 """
 from __future__ import annotations

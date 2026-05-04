@@ -144,15 +144,12 @@ class BodyBuilder:
         # Per-item block
         for item in items:
             emoji = _SEVERITY_EMOJI.get(item.severity, "⚪")
-            attr = item.attribution[0] if item.attribution else None
-            agent_display = (
-                _AGENT_DISPLAY_NAMES.get(attr.agent_name, attr.agent_name.title())
-                if attr else "Unknown"
-            )
-            category_display = attr.category.replace("-", " ").title() if attr else ""
-
             parts.append(f"\n---\n{emoji} **[{item.severity.upper()}] {item.issue}**")
-            parts.append(f"*{agent_display} · {category_display}*")
+            # Render all attribution entries for this finding
+            for attr in item.attribution:
+                agent_display = _AGENT_DISPLAY_NAMES.get(attr.agent_name, attr.agent_name.title())
+                category_display = attr.category.replace("-", " ").title()
+                parts.append(f"*{agent_display} · {category_display}*")
 
             if item.suggestion:
                 vocab_label = self._compute_vocabulary_label(item.severity, item.code_replacement is not None)

@@ -193,6 +193,23 @@ def load_config(
             rw["floor"] = float(rating["floor"])  # type: ignore[arg-type]
         config.rating_weights = rw
 
+    # --- consolidation section (REVUE-210 Decision 2) ---
+    consolidation: dict[str, object] = raw.get("consolidation", {}) or {}  # type: ignore[assignment]
+    if "proximity_lines" in consolidation:
+        n = int(consolidation["proximity_lines"])  # type: ignore[arg-type]
+        if n < 0:
+            raise ValueError(
+                f"{config_path}: consolidation.proximity_lines must be ≥ 0, got {n}"
+            )
+        config.consolidation_proximity_lines = n
+    if "max_group_size" in consolidation:
+        k = int(consolidation["max_group_size"])  # type: ignore[arg-type]
+        if k < 1:
+            raise ValueError(
+                f"{config_path}: consolidation.max_group_size must be ≥ 1, got {k}"
+            )
+        config.consolidation_max_group_size = k
+
     # --- agents section ---
     agents: dict[str, object] = raw.get("agents", {}) or {}  # type: ignore[assignment]
     _set_if(config, "agents_team", agents, "team")

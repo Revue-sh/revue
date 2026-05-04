@@ -318,6 +318,44 @@ class TestBuildGrouped:
         assert "```suggestion" in gh_result
         assert "```suggestion" not in bb_result
 
+    def test_all_attribution_entries_rendered_for_grouped_item(self) -> None:
+        """build_grouped() renders all attribution entries, not just the first one.
+
+        This test catches the regression where build_grouped() only rendered
+        attribution[0] instead of iterating all agents. Regression surfaced by
+        REVUE-210 code review where grouped findings with multiple agents lost
+        attribution visibility.
+        """
+        builder = BodyBuilder()
+        # Create a single grouped item with multiple attributions
+        # (simulating a proximity group with findings from two agents)
+        multi_agent_finding = ConsolidatedFinding(
+            file_path="app.py",
+            line_number=42,
+            severity="high",
+            issue="Multiple agents detected the same issue",
+            suggestion="Fix it",
+            confidence=0.9,
+            category="security",
+            attribution=[
+                Attribution(agent_name="zara", category="security"),
+                Attribution(agent_name="kai", category="performance"),
+            ],
+            code_replacement=None,
+            replacement_line_count=0,
+            snippet="some code",
+            group_type="proximity",
+        )
+
+        result = builder.build_grouped([multi_agent_finding], fp="fp_multi_attr")
+
+        # Both agents must be visible in the output
+        assert "Zara" in result or "zara" in result.lower(), "First agent (zara) must be rendered"
+        assert "Kai" in result or "kai" in result.lower(), "Second agent (kai) must be rendered"
+        # Also verify both categories are shown
+        assert "Security" in result or "security" in result.lower()
+        assert "Performance" in result or "performance" in result.lower()
+
 
 class TestVocabularyLabels:
     """Test vocabulary label derivation (Action/Suggest/Note)."""

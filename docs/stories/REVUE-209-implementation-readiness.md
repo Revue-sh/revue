@@ -37,7 +37,7 @@ All documents are singular and non-conflicting.
 
 ### Context Note
 
-REVUE-209 is PR 2 of the 5-PR Track 1 migration. It fills in the `BodyBuilder` implementation stub created in REVUE-208. REVUE-212/213/214 referred to in earlier planning docs were never created in Jira; REVUE-209 is the actual ticket for this work.
+REVUE-209 is PR 2 of the 5-PR Track 1 migration. It fills in the `BodyBuilder` implementation stub created in REVUE-208. REVUE-212/213/214 were planning-phase placeholders never created in Jira; REVUE-209 is the actual ticket for this work, and REVUE-210 is the consolidator ticket.
 
 ---
 
@@ -84,7 +84,7 @@ REVUE-209 is PR 2 of the 5-PR Track 1 migration. It fills in the `BodyBuilder` i
 - `attribution` is a **required** non-nullable field in `ConsolidatedFinding` (architecture Decision 1) — makes the MR !22 attribution regressions structurally impossible
 - Platform suggestion fences must use a registry pattern — no if/elif chains (project coding standard: OCP)
 - `BodyBuilder` is a pure function module — no AI calls, no VCS I/O (architecture Decision 2 / REVUE-209 ticket Notes)
-- `.revue.yml` `consolidation:` stanza to be documented (architecture Decision 2) — out of scope for REVUE-209 (REVUE-213 scope)
+- `.revue.yml` `consolidation:` stanza to be documented (architecture Decision 2) — out of scope for REVUE-209 (REVUE-210 scope)
 
 ### PRD Completeness Assessment
 
@@ -102,10 +102,10 @@ The PRD is well-specified for comment-posting requirements. Sections §10.1 and 
 |----|--------------------------|----------------|--------|
 | FR1 | Inline comments with severity levels | REVUE-209 AC1/AC2 — `build()` renders severity badge | ✅ Covered |
 | FR2 | 1-click fix suggestions (platform-native) | REVUE-209 AC1/AC3 — singleton with `code_replacement` + platform fences | ✅ Covered |
-| FR3 | Nova merge/dedup/prioritise findings | REVUE-213 (consolidator ticket — separate story) | ✅ Covered (out of REVUE-209 scope) |
+| FR3 | Nova merge/dedup/prioritise findings | REVUE-210 (consolidator ticket — separate story) | ✅ Covered (out of REVUE-209 scope) |
 | FR4 | Agent attribution preserved into posted comments | REVUE-209 AC2 — grouped renderer includes attribution header per item | ✅ Covered |
 | FR5 | Platform-native suggestion fence (GitHub vs GitLab vs Bitbucket) | REVUE-209 AC3 — registry-based platform dispatch | ✅ Covered |
-| FR6 | Per-platform position model (diff offset vs line_code hash) | REVUE-214 (poster ticket — separate story) | ✅ Covered (out of REVUE-209 scope) |
+| FR6 | Per-platform position model (diff offset vs line_code hash) | REVUE-??? (poster ticket — separate story) | ✅ Covered (out of REVUE-209 scope) |
 | FR7 | Summary comment posted to PR/MR | REVUE-209 AC2 — `build_summary()` method | ✅ Covered |
 | FR8 | Inline comments on specific lines | REVUE-209 AC1 — `build()` produces inline comment body | ✅ Covered |
 | FR9 | Inline comment format: severity badge + issue + remediation + attribution | REVUE-209 AC1/AC2 — all four comment shapes | ✅ Covered |
@@ -271,7 +271,7 @@ The current `build(finding: ConsolidatedFinding) -> str` signature does not incl
 
 6. **At cleanup — delete `_extract_finding_fields`:** Line 659 of `cli.py` becomes dead code after this PR. Add it to AC5.
 
-7. **When writing the consolidator ticket (REVUE-213):** The `details` field clarification (Step 5D) informs how `NovaSingleShotStrategy` builds `ConsolidatedFinding.issue` from agent output — confirm the contract is consistent.
+7. **When writing the consolidator ticket (REVUE-210):** The `details` field clarification (Step 5D) informs how `NovaSingleShotStrategy` builds `ConsolidatedFinding.issue` from agent output — confirm the contract is consistent.
 
 ---
 

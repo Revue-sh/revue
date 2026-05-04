@@ -86,6 +86,10 @@ class AIConfig:
     # File type routing (AC4 — REVUE-166)
     file_type_routing: list[FileTypeRule] = field(default_factory=list)
 
+    # Consolidation settings (configurable via .revue.yml `consolidation:` section — REVUE-210)
+    consolidation_proximity_lines: int = 3   # N — max line distance for grouping (Decision 2)
+    consolidation_max_group_size: int = 3    # K — max findings per group (Decision 2)
+
     # Rating formula weights (configurable via .revue.yml `rating:` section)
     rating_weights: dict = field(default_factory=lambda: {
         "high": 1.5, "medium": 0.3, "low": 0.05, "info": 0.0, "floor": 1.0,

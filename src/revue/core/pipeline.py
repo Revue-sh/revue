@@ -239,8 +239,6 @@ class OrchestrationModules(NamedTuple):
     """
     load_all_agents: object
     run_agents_parallel: object
-    consolidate: object
-    AIContradictionSynthesiser: object
     run_shared_analysis: object
     route: object
     format_selection_message: object
@@ -257,15 +255,12 @@ def _import_orchestration() -> "OrchestrationModules":
     try:
         from revue.core.agent_loader import load_all_agents
         from revue.core.agent_runner import run_agents_parallel, ParallelRunResult
-        from revue.core.dedup_consolidator import AIContradictionSynthesiser, consolidate
         from revue.core.shared_analysis import run_shared_analysis
         from revue.core.formatting import format_selection_message
         from revue.core.cleo_router import route, assign_files_to_agents
         return OrchestrationModules(
             load_all_agents=load_all_agents,
             run_agents_parallel=run_agents_parallel,
-            consolidate=consolidate,
-            AIContradictionSynthesiser=AIContradictionSynthesiser,
             run_shared_analysis=run_shared_analysis,
             route=route,
             format_selection_message=format_selection_message,
@@ -291,6 +286,70 @@ def _count_findings(response: str) -> list:
         return data.get("findings", [])
     except Exception:
         return []
+
+
+# ---------------------------------------------------------------------------
+# Consolidation helpers (REVUE-210)
+# ---------------------------------------------------------------------------
+
+_SEVERITY_NORMALISE: dict[str, str] = {
+    "critical": "high",  # AgentFinding Literal has no "critical"
+}
+
+
+def _air_to_agent_finding(air: object) -> object:
+    """Convert an AIReview to an AgentFinding for the new Consolidator pipeline.
+
+    Handles severity normalisation (AIReview may carry "critical" which is
+    absent from AgentFinding's Literal union).
+    """
+    from revue.comments.models import AgentFinding
+    sev = getattr(air, "severity", "medium")
+    sev = _SEVERITY_NORMALISE.get(sev, sev)
+    if sev not in ("high", "medium", "low", "info"):
+        sev = "medium"
+    return AgentFinding(
+        file_path=getattr(air, "file_path", ""),
+        line_number=max(1, getattr(air, "line_number", 1)),
+        severity=sev,
+        issue=getattr(air, "issue", ""),
+        suggestion=getattr(air, "suggestion", ""),
+        confidence=float(getattr(air, "confidence", 0.5)),
+        category=getattr(air, "category", "general"),
+        agent_name=getattr(air, "agent_name", ""),
+        code_replacement=getattr(air, "code_replacement", None),
+        replacement_line_count=getattr(air, "replacement_line_count", 1),
+        snippet=getattr(air, "snippet", ""),
+    )
+
+
+def _consolidated_to_dict(finding: object) -> dict:
+    """Serialise a ConsolidatedFinding to a JSON-compatible dict for ReviewResult.
+
+    Produces fields compatible with cli.py _extract_finding_fields() and the
+    existing posting pipeline.
+    """
+    attribution = getattr(finding, "attribution", [])
+    attribution_list = [
+        {"agent_name": a.agent_name, "category": a.category}
+        for a in attribution
+    ]
+    first_agent = attribution[0].agent_name if attribution else ""
+    return {
+        "file_path": getattr(finding, "file_path", ""),
+        "line_number": getattr(finding, "line_number", 1),
+        "severity": getattr(finding, "severity", "medium"),
+        "issue": getattr(finding, "issue", ""),
+        "suggestion": getattr(finding, "suggestion", ""),
+        "confidence": getattr(finding, "confidence", 0.5),
+        "category": getattr(finding, "category", "general"),
+        "agent_name": first_agent,
+        "code_replacement": getattr(finding, "code_replacement", None),
+        "replacement_line_count": getattr(finding, "replacement_line_count", 1),
+        "snippet": getattr(finding, "snippet", ""),
+        "attribution": attribution_list,
+        "group_type": getattr(finding, "group_type", "singleton"),
+    }
 
 
 def _count_severity(results: list, severities: tuple) -> int:
@@ -663,8 +722,6 @@ class ReviewPipeline:
         mods = _import_orchestration()
         load_all_agents = mods.load_all_agents
         run_agents_parallel = mods.run_agents_parallel
-        consolidate = mods.consolidate
-        AIContradictionSynthesiser = mods.AIContradictionSynthesiser
         run_shared_analysis = mods.run_shared_analysis
         route = mods.route
         format_selection_message = mods.format_selection_message
@@ -896,40 +953,55 @@ class ReviewPipeline:
             first_error = failed[0].error if failed else "unknown"
             raise AllAgentsFailedError(first_error)
 
-        # 5. Nova consolidation — deduplicate across agents
+        # 5. Consolidation — group, synthesise, and post-process findings (REVUE-210)
         print("[revue]   Consolidating findings (Nova)...", flush=True)
-        all_findings = [
+        raw_findings = [
             finding
             for r in parallel_result.agent_results
             if r.success
             for finding in r.findings
         ]
+        original_count = len(raw_findings)
 
-        consolidation = consolidate(all_findings, synthesiser=AIContradictionSynthesiser(self._client))
+        from revue.comments.consolidator import (
+            Consolidator,
+            NoOpSuggestionDropper,
+            NovaSingleShotStrategy,
+            ProximityAndCountGroupingStrategy,
+            UnanchoredFindingExtractor,
+        )
+        # summary_sink accumulates unanchored findings for the PR-level summary comment.
+        # BodyBuilder reads it when building the summary block (wired in REVUE-poster, next story).
+        summary_sink: list = []
+        consolidator = Consolidator(
+            grouping=ProximityAndCountGroupingStrategy(
+                n=self.config.consolidation_proximity_lines,
+                k=self.config.consolidation_max_group_size,
+            ),
+            synthesis=NovaSingleShotStrategy(ai_client=self._client),
+            post_processors=[NoOpSuggestionDropper(), UnanchoredFindingExtractor(summary_sink)],
+        )
+        agent_findings = [_air_to_agent_finding(f) for f in raw_findings]
+        consolidated = consolidator.consolidate(agent_findings)
+
         print(
-            f"[revue]   {consolidation.original_count} findings → "
-            f"{len(consolidation.findings)} after deduplication "
-            f"({consolidation.duplicates_removed} removed)",
+            f"[revue]   {original_count} findings → "
+            f"{len(consolidated)} after consolidation",
             flush=True,
         )
 
         # Record synthesis metrics (REVUE-179 AC4)
-        synthesised_count = sum(
-            1 for f in consolidation.findings
-            if hasattr(f, "synthesised_from") and f.synthesised_from is not None
-        )
+        synthesised_count = sum(1 for f in consolidated if f.group_type != "singleton")
         self._metrics.record_synthesis(SynthesisMetricsData(
-            total_findings=len(consolidation.findings),
+            total_findings=len(consolidated),
             synthesised_count=synthesised_count,
-            synthesis_events=consolidation.synthesis_events,
+            synthesis_events=[],
         ))
 
-        # 6. Convert AIReview findings → ReviewResult for the shared result format
+        # 6. Convert ConsolidatedFinding → ReviewResult for the shared result format
         results: list[ReviewResult] = []
-        for finding in consolidation.findings:
-            payload = json.dumps({"findings": [finding.__dict__
-                                               if hasattr(finding, "__dict__")
-                                               else vars(finding)]})
+        for finding in consolidated:
+            payload = json.dumps({"findings": [_consolidated_to_dict(finding)]})
             results.append(ReviewResult(file_path=finding.file_path, response=payload))
 
         # Ensure orchestrator tracked

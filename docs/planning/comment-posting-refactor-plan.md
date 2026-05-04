@@ -14,12 +14,12 @@ This document is a one-time migration roadmap. It captures the PR sequence, Jira
 | Ticket | Title | PR |
 |--------|-------|----|
 | REVUE-208 | Comment posting contracts (models + stub modules) | PR 1 |
-| REVUE-212 | Migrate body building to `comments/body_builder.py` | PR 2 |
-| REVUE-213 | Migrate consolidation to `comments/consolidator.py` | PR 3 |
-| REVUE-214 | Migrate posting to `comments/poster.py` | PR 4 |
+| REVUE-209 | Migrate body building to `comments/body_builder.py` | PR 2 |
+| REVUE-210 | Migrate consolidation to `comments/consolidator.py` | PR 3 |
+| REVUE-??? | Migrate posting to `comments/poster.py` | PR 4 |
 | *(optional)* | `cli.py` dead code cleanup | PR 5 |
 
-Dependencies: REVUE-212, REVUE-213, REVUE-214 are all blocked by REVUE-208. REVUE-212, REVUE-213, REVUE-214 can proceed in parallel once REVUE-208 merges (they each touch different modules and `cli.py` call sites).
+Dependencies: REVUE-209, REVUE-210, and PR 4 (poster, ticket TBD) are all blocked by REVUE-208. REVUE-209, REVUE-210, and PR 4 can proceed in parallel once REVUE-208 merges (they each touch different modules and `cli.py` call sites).
 
 ---
 
@@ -47,13 +47,13 @@ Dependencies: REVUE-212, REVUE-213, REVUE-214 are all blocked by REVUE-208. REVU
 
 ### Why this PR exists
 
-This PR is the trellis. It is small enough to review carefully in one sitting. Reviewers pin the type shapes, the Protocol signatures, and the field names *before* any migration work happens — so migration PRs argue only about behaviour, not about what the types should have been. It also unblocks REVUE-212, REVUE-213, and REVUE-214 to proceed in parallel if capacity allows.
+This PR is the trellis. It is small enough to review carefully in one sitting. Reviewers pin the type shapes, the Protocol signatures, and the field names *before* any migration work happens — so migration PRs argue only about behaviour, not about what the types should have been. It also unblocks REVUE-209, REVUE-210, and PR 4 (poster, ticket TBD) to proceed in parallel if capacity allows.
 
 ---
 
 ## PR 2 — Migrate body building
 
-**Jira:** REVUE-212
+**Jira:** REVUE-209
 **Blocked by:** REVUE-208 (PR 1)
 
 ### What ships
@@ -74,7 +74,7 @@ This PR is the trellis. It is small enough to review carefully in one sitting. R
 
 ## PR 3 — Migrate consolidation
 
-**Jira:** REVUE-213
+**Jira:** REVUE-210
 **Blocked by:** REVUE-208 (PR 1); can run in parallel with PR 2
 
 ### What ships
@@ -95,9 +95,37 @@ This PR is the trellis. It is small enough to review carefully in one sitting. R
 
 ---
 
+## REVUE-199 — Nova synthesis quality (companion to PR 3)
+
+**Jira:** REVUE-199
+**Depends on:** REVUE-210 (PR 3)
+**Must complete before:** Track 1 is considered done
+
+### What ships
+
+- Nova's synthesis prompt loads the full `nova.yaml` system prompt instead of the hardcoded 2-line inline string
+- `AIReview` gains a `language` field populated from `FileChange.language`; `_build_synthesis_prompt` uses it directly
+- **Deferred from REVUE-210:** `NovaSingleShotStrategy` prompt extended so Nova produces:
+  - A deterministic per-agent attribution block (`[Leo] ...`, `[Titan] ...`) — always visible to the developer
+  - A single unified `code_replacement` block addressing all findings in the group at once
+  - A brief explanation narrative connecting the findings and describing how the fix addresses them
+
+### Why it belongs here
+
+REVUE-210 code review (2026-05-04) surfaced that the current Nova synthesis replaces individual findings with prose, stripping agent attribution from the developer's view. The correct UX is attribution first (deterministic, always visible), Nova second (adds explanation + unified code block). The prompt changes to implement this belong in REVUE-199 alongside the existing prompt quality work.
+
+### Additional agent prompt constraints (from REVUE-210 dogfood, 2026-05-04)
+
+Two comment quality regressions observed in live dogfood review:
+
+1. **`suggestion` field must be prose only** — agents are embedding inline code examples in the suggestion text (e.g. `issues = [...]; issue_str = '\n'.join(issues)`). Code belongs exclusively in `code_replacement`. The agent system prompt must explicitly prohibit code examples in `suggestion`.
+2. **`code_replacement` must be complete and consistent with `suggestion`** — observed a case where the Action prose proposed `issue_str = '\n'.join(issues)` but the replacement block stopped at building the list and omitted the join, making the replacement non-functional. The agent prompt must require that `code_replacement` is a complete, working replacement or omitted entirely.
+
+---
+
 ## PR 4 — Migrate posting
 
-**Jira:** REVUE-214
+**Jira:** REVUE-??? (create when PR 3 is in review)
 **Blocked by:** REVUE-208 (PR 1); best sequenced after PR 2 and PR 3 are merged
 
 ### What ships

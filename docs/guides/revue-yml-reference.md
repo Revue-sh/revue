@@ -13,6 +13,7 @@ Place `.revue.yml` in the root of your repository. If the file is absent, Revue 
 | `version` | string | **Yes** | Config schema version. Must be `"1"`. |
 | `ai` | object | No | AI provider settings. |
 | `review` | object | No | Review behaviour settings. |
+| `consolidation` | object | No | Finding consolidation settings (grouping and synthesis bounds). |
 | `rating` | object | No | Star-rating formula weights. |
 | `noise_filters` | object | No | Noise filter settings. |
 | `agents` | object | No | Agent team and custom agent settings. |
@@ -120,6 +121,47 @@ review:
     - "**/__snapshots__/**"
     - "test_*"
     - "*_test.*"
+```
+
+---
+
+## `consolidation`
+
+Controls how Revue groups and synthesises multiple findings into single comments (REVUE-210, Decision 2–3).
+
+Pass A (deterministic) clusters findings by proximity. Pass B (single-shot Nova) synthesises clusters into coherent comments.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `proximity_lines` | int | `3` | Maximum line distance (N) for grouping findings in the same file. Findings farther apart become separate comments. |
+| `max_group_size` | int | `3` | Maximum findings per group (K). Groups exceeding this limit are split into smaller groups or singletons. |
+
+### Behaviour
+
+For each file's findings (sorted by line number):
+
+1. **Grouping**: Cluster findings where `line_distance ≤ N` AND `group_size ≤ K`.
+2. **Synthesis**: Pass each group to Nova (LLM) to produce a single unified comment.
+3. **Fallback**: If Nova fails, deterministically concatenate findings with attribution headers.
+
+### Examples
+
+```yaml
+# Conservative bounds (default)
+consolidation:
+  proximity_lines: 3
+  max_group_size: 3
+
+# Aggressive grouping (merge distant findings into fewer comments)
+consolidation:
+  proximity_lines: 10
+  max_group_size: 5
+
+# Minimal grouping (post each finding as its own comment)
+# max_group_size: 1 means groups cap at 1 finding — every finding becomes a singleton
+consolidation:
+  proximity_lines: 0
+  max_group_size: 1
 ```
 
 ---
