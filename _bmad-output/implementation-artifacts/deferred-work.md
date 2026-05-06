@@ -4,6 +4,13 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+## Deferred from: code review of REVUE-211-migrate-posting Round 2 (2026-05-04)
+
+- **D1** — `get_platform_adapter` uses if/elif chain for platform dispatch (`platform_adapter.py`) — pre-existing OCP violation; adding a new platform requires a code change. Replace with a `{Platform: factory_fn}` registry dict. Track in a future adapter-hardening story.
+- **D2** — Nova `.format()` with user-controlled content — already logged in Round 1 (D2); `_call_nova` catches all exceptions as NOVA_ERROR so impact is bounded. Part of a broader prompt-security hardening effort.
+
+---
+
 ## Deferred from: code review of REVUE-211-migrate-posting (2026-05-04)
 
 - **D1** — `get_issue_comments` not declared on VCSAdapter Protocol — works correctly via duck-typing/getattr; only GitHub needs it; Bitbucket/GitLab gracefully fall back to `get_existing_comments`. Add to Protocol for structural completeness in a future adapter-hardening pass.

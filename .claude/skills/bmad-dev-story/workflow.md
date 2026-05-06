@@ -271,6 +271,7 @@ Ask the main agent: "What skills are currently available in this session?" Store
     <action>Plan implementation following red-green-refactor cycle</action>
 
     <!-- RED PHASE -->
+    <action>Load `.claude/skills/unit-test-principles/SKILL.md` — apply its 5 principles to every test you write in this task</action>
     <action>Write FAILING tests first for the task/subtask functionality</action>
     <action>Confirm tests fail before implementation - this validates test correctness</action>
 
@@ -296,6 +297,7 @@ Ask the main agent: "What skills are currently available in this session?" Store
   </step>
 
   <step n="6" goal="Author comprehensive tests">
+    <action>Run through the pre-completion checklist in `.claude/skills/unit-test-principles/SKILL.md` before marking any test done</action>
     <action>Create unit tests for business logic and core functionality introduced/changed by the task</action>
     <action>Add integration tests for component interactions specified in story requirements</action>
     <action>Include end-to-end tests for critical user flows when story requirements demand them</action>
