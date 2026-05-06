@@ -603,6 +603,52 @@ class BitbucketAdapter(PlatformAdapter):
             _log.warning("get_existing_comments failed for PR %s: %s", pr_id, exc)
             return []
 
+    def get_thread_replies(self, pr_id: int, comment_id: str) -> list[dict]:
+        """Fetch replies to a Bitbucket comment thread.
+
+        Bitbucket stores replies as comments with ``parent.id`` set.  This method
+        fetches all PR comments and filters for those whose parent is ``comment_id``.
+
+        Returns a list of dicts with keys: id, body, created_at.
+        Returns [] on any error (never raises).
+        """
+        try:
+            all_comments = self.get_existing_comments(pr_id)
+            parent_id = str(comment_id)
+            return [
+                {
+                    "id": str(c.get("id", "")),
+                    "body": c.get("content", {}).get("raw", "") or "",
+                    "created_at": c.get("created_on", ""),
+                }
+                for c in all_comments
+                if str(c.get("parent", {}).get("id", "")) == parent_id
+            ]
+        except Exception as exc:
+            _log.warning(
+                "get_thread_replies failed for PR %s comment %s: %s",
+                pr_id, comment_id, exc,
+            )
+            return []
+
+    def reply_to_comment(self, pr_id: int, comment_id: str, body: str) -> str | None:
+        """Post a reply to a comment thread.
+
+        Returns the reply ID on success, None on failure.
+        """
+        try:
+            payload: dict[str, Any] = {
+                "content": {"raw": body},
+                "parent": {"id": int(comment_id)},
+            }
+            url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments"
+            response = httpx.post(url, json=payload, **self._auth_kwargs())
+            response.raise_for_status()
+            return str(response.json().get("id", ""))
+        except Exception as exc:
+            _log.warning("reply_to_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
+            return None
+
     def resolve_position(
         self, file_path: str, line_number: int, diff: str
     ) -> DiffPosition:

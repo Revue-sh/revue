@@ -1315,3 +1315,93 @@ def test_two_groups_different_lines_posts_twice(tmp_path) -> None:
     )
     assert posted == 2
     assert skipped == 0
+
+
+# =====================================================================
+# HunkTracker wiring — _post_to_* must pass hunk_tracker to Poster
+# =====================================================================
+
+def test_post_to_bitbucket_wires_hunk_tracker_to_poster(tmp_path) -> None:
+    """_post_to_bitbucket passes a HunkTracker instance to Poster when config is provided."""
+    from revue.cli import _post_to_bitbucket
+
+    # Arrange
+    args = _make_args()
+    mock_config = MagicMock()
+    mock_nova = MagicMock()
+
+    with (
+        patch("revue.cli.create_ai_client", return_value=mock_nova),
+        patch("revue.comments.poster.Poster") as MockPoster,
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch("revue.cli._parse_diff_by_file", return_value={}),
+    ):
+        MockPoster.return_value.post.return_value = (0, 0)
+
+        # Act
+        _post_to_bitbucket(args, [], config=mock_config)
+
+    # Assert — Poster was constructed with a non-None hunk_tracker
+    assert MockPoster.called, "Poster was never instantiated"
+    call_kwargs = MockPoster.call_args.kwargs
+    assert call_kwargs.get("hunk_tracker") is not None, (
+        "hunk_tracker was not passed to Poster — HunkTracker resolution is disabled"
+    )
+
+
+def test_post_to_github_wires_hunk_tracker_to_poster(tmp_path) -> None:
+    """_post_to_github passes a HunkTracker instance to Poster when config is provided."""
+    from revue.cli import _post_to_github
+
+    # Arrange
+    args = argparse.Namespace(pr_id="42", comment_style="per-issue", diff="/tmp/fake.diff")
+    mock_config = MagicMock()
+    mock_nova = MagicMock()
+
+    with (
+        patch("revue.cli.create_ai_client", return_value=mock_nova),
+        patch("revue.comments.poster.Poster") as MockPoster,
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch("revue.cli._parse_diff_by_file", return_value={}),
+        patch.dict(os.environ, {"GITHUB_TOKEN": "tok", "GITHUB_REPOSITORY": "ws/repo"}),
+    ):
+        MockPoster.return_value.post.return_value = (0, 0)
+
+        # Act
+        _post_to_github(args, [], config=mock_config)
+
+    # Assert
+    assert MockPoster.called, "Poster was never instantiated"
+    call_kwargs = MockPoster.call_args.kwargs
+    assert call_kwargs.get("hunk_tracker") is not None, (
+        "hunk_tracker was not passed to Poster — HunkTracker resolution is disabled"
+    )
+
+
+def test_post_to_gitlab_wires_hunk_tracker_to_poster(tmp_path) -> None:
+    """_post_to_gitlab passes a HunkTracker instance to Poster when config is provided."""
+    from revue.cli import _post_to_gitlab
+
+    # Arrange
+    args = argparse.Namespace(pr_id="42", comment_style="per-issue", diff="/tmp/fake.diff")
+    mock_config = MagicMock()
+    mock_nova = MagicMock()
+
+    with (
+        patch("revue.cli.create_ai_client", return_value=mock_nova),
+        patch("revue.comments.poster.Poster") as MockPoster,
+        patch("os.getcwd", return_value=str(tmp_path)),
+        patch("revue.cli._parse_diff_by_file", return_value={}),
+        patch.dict(os.environ, {"GITLAB_TOKEN": "tok", "CI_PROJECT_PATH": "ws/repo"}),
+    ):
+        MockPoster.return_value.post.return_value = (0, 0)
+
+        # Act
+        _post_to_gitlab(args, [], config=mock_config)
+
+    # Assert
+    assert MockPoster.called, "Poster was never instantiated"
+    call_kwargs = MockPoster.call_args.kwargs
+    assert call_kwargs.get("hunk_tracker") is not None, (
+        "hunk_tracker was not passed to Poster — HunkTracker resolution is disabled"
+    )

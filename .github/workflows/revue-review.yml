@@ -42,7 +42,7 @@ jobs:
             | python3 -c "import json,sys; print(json.load(sys.stdin).get('body',''))" \
             > /tmp/revue_pr_description.txt \
           && echo "[revue] PR description fetched ($(wc -c < /tmp/revue_pr_description.txt) bytes)" \
-          || echo "[revue] PR description fetch failed — continuing without context"
+          || { echo ""; echo "========================================================================"; echo "‼️  WARNING: PR DESCRIPTION COULD NOT BE FETCHED"; echo "⚠️  THE REVIEW WILL PROCEED WITHOUT AUTHOR CONTEXT."; echo "⚠️  REVIEW QUALITY MAY BE REDUCED."; echo "⚠️  CHECK: GITHUB_TOKEN IS SET CORRECTLY."; echo "========================================================================"; echo ""; }
 
       - name: Validate config
         run: PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml

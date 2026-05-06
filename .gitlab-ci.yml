@@ -59,7 +59,7 @@ revue-review:
         | python3 -c "import json,sys; print(json.load(sys.stdin).get('description',''))" \
         > /tmp/revue_mr_description.txt \
       && echo "[revue] MR description fetched ($(wc -c < /tmp/revue_mr_description.txt) bytes)" \
-      || echo "[revue] MR description fetch failed — continuing without context"
+      || { echo ""; echo "========================================================================"; echo "‼️  WARNING: MR DESCRIPTION COULD NOT BE FETCHED"; echo "⚠️  THE REVIEW WILL PROCEED WITHOUT AUTHOR CONTEXT."; echo "⚠️  REVIEW QUALITY MAY BE REDUCED."; echo "⚠️  CHECK: GITLAB_TOKEN IS SET CORRECTLY."; echo "========================================================================"; echo ""; }
 
     # Validate config
     - PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml

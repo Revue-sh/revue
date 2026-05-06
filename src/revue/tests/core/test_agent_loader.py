@@ -147,14 +147,14 @@ def test_missing_name_raises(tmp_path):
 def test_loaded_agent_name():
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
-    agent = LoadedAgent(defn, _mock_client())
+    agent = LoadedAgent(defn, _mock_client(), 4096)
     assert agent.name == "zara"
 
 
 def test_loaded_agent_analyse_returns_reviews():
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
-    agent = LoadedAgent(defn, _mock_client())
+    agent = LoadedAgent(defn, _mock_client(), 4096)
     results = agent.analyse([_fc()])
     assert len(results) == 1
     assert isinstance(results[0], AIReview)
@@ -165,7 +165,7 @@ def test_loaded_agent_analyse_sets_agent_name_on_findings():
     """REVUE-149: agent_name is threaded through to each AIReview finding."""
     defn = AgentDefinition(name="maya", display_name="Maya", role="code-quality",
                            system_prompt="Review code quality.")
-    agent = LoadedAgent(defn, _mock_client())
+    agent = LoadedAgent(defn, _mock_client(), 4096)
     results = agent.analyse([_fc()])
     assert len(results) == 1
     assert results[0].agent_name == "maya"
@@ -181,7 +181,7 @@ def test_loaded_agent_passes_own_name_to_complete():
                            system_prompt="Review architecture.")
     mock_client = MagicMock()
     mock_client.complete.return_value = MagicMock(text='[{"file_path":"a.py","line_number":1,"severity":"low","issue":"x","suggestion":"y","confidence":0.8,"category":"architecture"}]')
-    agent = LoadedAgent(defn, mock_client)
+    agent = LoadedAgent(defn, mock_client, 4096)
     agent.analyse([_fc()])
 
     mock_client.complete.assert_called_once()
@@ -195,7 +195,7 @@ def test_loaded_agent_analyse_propagates_client_error():
                            system_prompt="Find security issues.")
     c = MagicMock()
     c.complete.side_effect = RuntimeError("API down")
-    agent = LoadedAgent(defn, c)
+    agent = LoadedAgent(defn, c, 4096)
     with pytest.raises(RuntimeError, match="API down"):
         agent.analyse([_fc()])
 
@@ -203,7 +203,7 @@ def test_loaded_agent_analyse_propagates_client_error():
 def test_loaded_agent_analyse_graceful_on_bad_json():
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
-    agent = LoadedAgent(defn, _mock_client("not json"))
+    agent = LoadedAgent(defn, _mock_client("not json"), 4096)
     results = agent.analyse([_fc()])
     assert results == []
 
@@ -213,7 +213,7 @@ def test_loaded_agent_analyse_strips_markdown_fences():
     fenced = '```json\n[{"file_path": "a.py", "line_number": 1, "severity": "high", "issue": "XSS", "suggestion": "escape", "confidence": 0.9}]\n```'
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
-    agent = LoadedAgent(defn, _mock_client(fenced))
+    agent = LoadedAgent(defn, _mock_client(fenced), 4096)
     results = agent.analyse([_fc()])
     assert len(results) == 1
     assert results[0].issue == "XSS"
@@ -224,7 +224,7 @@ def test_loaded_agent_analyse_strips_plain_fences():
     fenced = '```\n[{"file_path": "a.py", "line_number": 1, "severity": "medium", "issue": "issue", "suggestion": "fix", "confidence": 0.8}]\n```'
     defn = AgentDefinition(name="maya", display_name="Maya", role="code-quality",
                            system_prompt="Review code quality.")
-    agent = LoadedAgent(defn, _mock_client(fenced))
+    agent = LoadedAgent(defn, _mock_client(fenced), 4096)
     results = agent.analyse([_fc()])
     assert len(results) == 1
 
@@ -235,7 +235,7 @@ def test_loaded_agent_analyse_maps_severity_minor_to_low():
                            "issue": "style issue", "suggestion": "fix", "confidence": 0.5}])
     defn = AgentDefinition(name="maya", display_name="Maya", role="code-quality",
                            system_prompt="Review.")
-    agent = LoadedAgent(defn, _mock_client(payload))
+    agent = LoadedAgent(defn, _mock_client(payload), 4096)
     results = agent.analyse([_fc()])
     assert results[0].severity == "low"
 
@@ -246,7 +246,7 @@ def test_loaded_agent_analyse_maps_severity_critical_to_high():
                            "issue": "SQL injection", "suggestion": "use params", "confidence": 0.95}])
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
-    agent = LoadedAgent(defn, _mock_client(payload))
+    agent = LoadedAgent(defn, _mock_client(payload), 4096)
     results = agent.analyse([_fc()])
     assert results[0].severity == "high"
 
@@ -257,7 +257,7 @@ def test_loaded_agent_analyse_maps_severity_major_to_medium():
                            "issue": "perf issue", "suggestion": "cache", "confidence": 0.8}])
     defn = AgentDefinition(name="kai", display_name="Kai", role="performance",
                            system_prompt="Find performance issues.")
-    agent = LoadedAgent(defn, _mock_client(payload))
+    agent = LoadedAgent(defn, _mock_client(payload), 4096)
     results = agent.analyse([_fc()])
     assert results[0].severity == "medium"
 
@@ -269,7 +269,7 @@ def test_loaded_agent_analyse_preserves_category_from_finding():
                            "category": "security"}])
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
-    agent = LoadedAgent(defn, _mock_client(payload))
+    agent = LoadedAgent(defn, _mock_client(payload), 4096)
     results = agent.analyse([_fc()])
     assert results[0].category == "security"
 
@@ -289,7 +289,7 @@ def test_loaded_agent_falls_back_to_canonical_category_not_agent_name():
     }])
     defn = AgentDefinition(name="maya", display_name="Maya", role="code quality",
                            system_prompt="Find quality issues.")
-    agent = LoadedAgent(defn, _mock_client(payload))
+    agent = LoadedAgent(defn, _mock_client(payload), 4096)
     results = agent.analyse([_fc()])
     assert results[0].category == "code-quality"  # NOT "maya"
 
@@ -304,7 +304,7 @@ def test_loaded_agent_normalises_unknown_category_to_agent_canonical():
     }])
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
-    agent = LoadedAgent(defn, _mock_client(payload))
+    agent = LoadedAgent(defn, _mock_client(payload), 4096)
     results = agent.analyse([_fc()])
     assert results[0].category == "security"  # agent canonical, not the AI garbage
 
@@ -316,14 +316,14 @@ def test_loaded_agent_normalises_unknown_category_to_agent_canonical():
 def test_load_agents_from_dir(tmp_path):
     (tmp_path / "zara.yaml").write_text(YAML_CONTENT)
     (tmp_path / "md.md").write_text(MD_CONTENT)
-    agents = load_agents_from_dir(tmp_path, _mock_client())
+    agents = load_agents_from_dir(tmp_path, _mock_client(), 4096)
     assert len(agents) == 2
 
 
 def test_load_agents_skips_disabled(tmp_path):
     (tmp_path / "enabled.yaml").write_text(YAML_CONTENT)
     (tmp_path / "disabled.yaml").write_text(DISABLED_YAML)
-    agents = load_agents_from_dir(tmp_path, _mock_client())
+    agents = load_agents_from_dir(tmp_path, _mock_client(), 4096)
     names = [a.name for a in agents]
     assert "disabled-agent" not in names
     assert "test-agent" in names
@@ -332,7 +332,7 @@ def test_load_agents_skips_disabled(tmp_path):
 def test_load_agents_skips_unparseable(tmp_path):
     (tmp_path / "valid.yaml").write_text(YAML_CONTENT)
     (tmp_path / "bad.yaml").write_text("role: missing name field\n")
-    agents = load_agents_from_dir(tmp_path, _mock_client())
+    agents = load_agents_from_dir(tmp_path, _mock_client(), 4096)
     assert len(agents) == 1
 
 
@@ -521,7 +521,7 @@ def test_analyse_propagates_http_error():
                            system_prompt="Find issues.")
     client = MagicMock()
     client.complete.side_effect = _FakeHTTPError(400, "credit balance too low")
-    agent = LoadedAgent(defn, client)
+    agent = LoadedAgent(defn, client, 4096)
 
     with pytest.raises(_FakeHTTPError):
         agent.analyse([_fc()])
@@ -533,7 +533,7 @@ def test_analyse_propagates_runtime_error():
                            system_prompt="Find issues.")
     client = MagicMock()
     client.complete.side_effect = RuntimeError("Connection refused")
-    agent = LoadedAgent(defn, client)
+    agent = LoadedAgent(defn, client, 4096)
 
     with pytest.raises(RuntimeError):
         agent.analyse([_fc()])
@@ -543,7 +543,7 @@ def test_analyse_graceful_on_json_parse_error():
     """TC2 (AC2): JSONDecodeError returns [] — graceful degradation preserved."""
     defn = AgentDefinition(name="maya", display_name="Maya", role="quality",
                            system_prompt="Find issues.")
-    agent = LoadedAgent(defn, _mock_client("not valid json at all"))
+    agent = LoadedAgent(defn, _mock_client("not valid json at all"), 4096)
     results = agent.analyse([_fc()])
     assert results == []
 
@@ -554,7 +554,7 @@ def test_analyse_graceful_on_empty_response():
                            system_prompt="Find issues.")
     c = MagicMock()
     c.complete.return_value = _cr("")  # empty text — _mock_client("") is falsy and would use the default non-empty response
-    agent = LoadedAgent(defn, c)
+    agent = LoadedAgent(defn, c, 4096)
     results = agent.analyse([_fc()])
     assert results == []
 
@@ -617,7 +617,7 @@ def test_allowed_patterns_injected_into_system_prompt():
     ]
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
-    agent = LoadedAgent(defn, _mock_client())
+    agent = LoadedAgent(defn, _mock_client(), 4096)
     inject_patterns([agent], allowed_patterns=patterns, disallowed_patterns=[])
     prompt = agent._def.system_prompt
     assert "## Allowed Patterns \u2014 Do Not Flag" in prompt
@@ -633,7 +633,7 @@ def test_disallowed_patterns_injected_into_system_prompt():
     ]
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
-    agent = LoadedAgent(defn, _mock_client())
+    agent = LoadedAgent(defn, _mock_client(), 4096)
     inject_patterns([agent], allowed_patterns=[], disallowed_patterns=patterns)
     prompt = agent._def.system_prompt
     assert "## Disallowed Patterns \u2014 Always Flag" in prompt
@@ -656,7 +656,7 @@ def test_loaded_agent_analyse_passes_system_separately():
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     client = _mock_client()
-    agent = LoadedAgent(defn, client)
+    agent = LoadedAgent(defn, client, 4096)
     agent.analyse([_fc()])
 
     call_args = client.complete.call_args
@@ -687,7 +687,7 @@ def test_loaded_agent_analyse_passes_diff_hash_as_cache_key():
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     client = _mock_client()
-    agent = LoadedAgent(defn, client)
+    agent = LoadedAgent(defn, client, 4096)
     agent.analyse([_fc()])
 
     call_kwargs = client.complete.call_args[1]
@@ -701,7 +701,7 @@ def test_empty_patterns_no_injection():
     """AC2: When both lists are empty, no pattern section headers appear."""
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
-    agent = LoadedAgent(defn, _mock_client())
+    agent = LoadedAgent(defn, _mock_client(), 4096)
     original_prompt = agent._def.system_prompt
     inject_patterns([agent], allowed_patterns=[], disallowed_patterns=[])
     assert agent._def.system_prompt == original_prompt
@@ -714,9 +714,9 @@ def test_applies_to_scopes_pattern_to_matching_agent():
     scoped = {"pattern": "SRP violation in models", "rationale": "intentional",
               "applies_to": ["leo"]}
     leo = LoadedAgent(AgentDefinition(name="leo", display_name="Leo", role="architecture",
-                                     system_prompt="Review architecture."), _mock_client())
+                                     system_prompt="Review architecture."), _mock_client(), 4096)
     zara = LoadedAgent(AgentDefinition(name="zara", display_name="Zara", role="security",
-                                      system_prompt="Find security issues."), _mock_client())
+                                      system_prompt="Find security issues."), _mock_client(), 4096)
 
     inject_patterns([leo, zara], allowed_patterns=[scoped], disallowed_patterns=[])
 
@@ -728,9 +728,9 @@ def test_pattern_without_applies_to_injects_into_all_agents():
     """Pattern without applies_to (backward compat) appears in every agent's prompt."""
     global_pattern = {"pattern": "TODO in production code", "rationale": "track as Jira ticket"}
     leo = LoadedAgent(AgentDefinition(name="leo", display_name="Leo", role="architecture",
-                                     system_prompt="Review architecture."), _mock_client())
+                                     system_prompt="Review architecture."), _mock_client(), 4096)
     zara = LoadedAgent(AgentDefinition(name="zara", display_name="Zara", role="security",
-                                      system_prompt="Find security issues."), _mock_client())
+                                      system_prompt="Find security issues."), _mock_client(), 4096)
 
     inject_patterns([leo, zara], allowed_patterns=[], disallowed_patterns=[global_pattern])
 
@@ -743,7 +743,7 @@ def test_agent_with_no_matching_scoped_patterns_gets_no_injection():
     leo_only = {"pattern": "Architecture concern", "rationale": "intentional",
                 "applies_to": ["leo"]}
     zara = LoadedAgent(AgentDefinition(name="zara", display_name="Zara", role="security",
-                                      system_prompt="Find security issues."), _mock_client())
+                                      system_prompt="Find security issues."), _mock_client(), 4096)
     original = zara._def.system_prompt
 
     inject_patterns([zara], allowed_patterns=[leo_only], disallowed_patterns=[])
@@ -755,7 +755,7 @@ def test_applies_to_case_insensitive():
     """Agent name matching is case-insensitive — 'LEO' matches agent named 'leo'."""
     scoped = {"pattern": "Architecture note", "rationale": "ok", "applies_to": ["LEO"]}
     leo = LoadedAgent(AgentDefinition(name="leo", display_name="Leo", role="architecture",
-                                     system_prompt="Review architecture."), _mock_client())
+                                     system_prompt="Review architecture."), _mock_client(), 4096)
 
     inject_patterns([leo], allowed_patterns=[scoped], disallowed_patterns=[])
 
@@ -780,7 +780,7 @@ def test_analyse_places_diff_in_system_block_first() -> None:
     )
     mock_client = MagicMock()
     mock_client.complete.return_value = _cr('[]')
-    agent = LoadedAgent(agent_def, mock_client)
+    agent = LoadedAgent(agent_def, mock_client, 4096)
 
     changes = [FileChange(
         file_path="test.py",
@@ -810,7 +810,7 @@ def test_analyse_agent_instructions_uncached_in_system_block() -> None:
     )
     mock_client = MagicMock()
     mock_client.complete.return_value = _cr('[]')
-    agent = LoadedAgent(agent_def, mock_client)
+    agent = LoadedAgent(agent_def, mock_client, 4096)
 
     changes = [FileChange(
         file_path="test.py",
@@ -843,7 +843,7 @@ def test_analyse_shared_context_in_user_message_not_system() -> None:
     )
     mock_client = MagicMock()
     mock_client.complete.return_value = _cr('[]')
-    agent = LoadedAgent(agent_def, mock_client)
+    agent = LoadedAgent(agent_def, mock_client, 4096)
 
     changes = [FileChange(
         file_path="test.py",
@@ -885,7 +885,7 @@ def test_agent_loader_uses_1h_cache_for_diff() -> None:
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     client = _mock_client()
-    agent = LoadedAgent(defn, client)
+    agent = LoadedAgent(defn, client, 4096)
     agent.analyse([_fc()])
 
     call_args = client.complete.call_args
@@ -909,7 +909,7 @@ def test_agent_loader_uses_result_text() -> None:
                            system_prompt="Find issues.")
     mock_client = MagicMock()
     mock_client.complete.return_value = CompletionResult(text="[]", usage=TokenUsage())
-    agent = LoadedAgent(defn, mock_client)
+    agent = LoadedAgent(defn, mock_client, 4096)
     result = agent.analyse([_fc()])
     assert result == []
 
@@ -945,7 +945,7 @@ def _agent_with_diff(diff_name: str, agent_name: str = "zara",
                            role="security", system_prompt=system_prompt)
     mock_client = MagicMock()
     mock_client.complete.return_value = _cr("[]")
-    return LoadedAgent(defn, mock_client), [fc], diff, mock_client
+    return LoadedAgent(defn, mock_client, 4096), [fc], diff, mock_client
 
 
 @pytest.mark.parametrize("size", ["small", "medium", "large"])

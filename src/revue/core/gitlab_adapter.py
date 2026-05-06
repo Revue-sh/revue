@@ -271,6 +271,61 @@ class GitLabAdapter:
             _LOG.warning("get_existing_comments failed for MR %s: %s", pr_id, exc)
             return []
 
+    def get_thread_replies(self, pr_id: int, comment_id: str) -> list[dict]:
+        """Fetch replies within a GitLab discussion thread.
+
+        ``comment_id`` is the discussion ID (stored as ``_discussion_id`` in
+        ``get_existing_comments``).
+
+        GET /merge_requests/{pr_id}/discussions/{discussion_id}
+        Returns all notes after the first (the replies).
+
+        Returns a list of dicts with keys: id, body, created_at.
+        Returns [] on any error (never raises).
+        """
+        try:
+            discussion = self._request(
+                "GET", f"/merge_requests/{pr_id}/discussions/{comment_id}"
+            )
+            notes = discussion.get("notes", [])
+            return [
+                {
+                    "id": str(n.get("id", "")),
+                    "body": n.get("body", ""),
+                    "created_at": n.get("created_at", ""),
+                }
+                for n in notes[1:]  # first note is the original comment
+            ]
+        except Exception as exc:
+            _LOG.warning(
+                "get_thread_replies failed for MR %s discussion %s: %s",
+                pr_id, comment_id, exc,
+            )
+            return []
+
+    def reply_to_comment(self, pr_id: int, comment_id: str, body: str) -> str | None:
+        """Post a reply to a discussion thread.
+
+        comment_id is the discussion ID. Posts a new note to the discussion.
+
+        POST /merge_requests/{pr_id}/discussions/{discussion_id}/notes
+
+        Returns the reply ID on success, None on failure.
+        """
+        try:
+            result = self._request(
+                "POST",
+                f"/merge_requests/{pr_id}/discussions/{comment_id}/notes",
+                {"body": body},
+            )
+            return str(result.get("id", ""))
+        except Exception as exc:
+            _LOG.warning(
+                "reply_to_comment failed for MR %s discussion %s: %s",
+                pr_id, comment_id, exc,
+            )
+            return None
+
     def resolve_position(
         self, file_path: str, line_number: int, diff: str
     ) -> DiffPosition:
@@ -443,7 +498,7 @@ class GitLabAdapter:
                 )
             except Exception as exc:
                 _LOG.warning("resolve_inline_comment: reply failed for MR %d discussion %s: %s", pr_id, comment_id, exc)
-                # Continue to resolve even if reply fails
+                return False  # sentinel not written — caller retries on next run
 
         # Resolve the discussion
         try:

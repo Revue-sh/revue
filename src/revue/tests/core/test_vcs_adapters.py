@@ -1299,6 +1299,12 @@ class _MinimalAdapter:
     def resolve_inline_comment(self, pr_id: int, comment_id: str, reply_body: str) -> bool:
         return True
 
+    def get_thread_replies(self, pr_id: int, comment_id: str) -> list[dict]:
+        return []
+
+    def reply_to_comment(self, pr_id: int, comment_id: str, body: str) -> str | None:
+        return "1"
+
 
 class _MissingWebhookAdapter:
     """Adapter that omits verify_webhook_signature — must NOT satisfy protocol."""

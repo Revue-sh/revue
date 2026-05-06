@@ -275,3 +275,60 @@ class FindingPostProcessor(Protocol):
     """
 
     def process(self, finding: ConsolidatedFinding) -> ConsolidatedFinding | None: ...
+
+
+# ---------------------------------------------------------------------------
+# HunkTracker contracts (REVUE-211)
+# ---------------------------------------------------------------------------
+
+
+class HunkState(Enum):
+    """State machine states for prior-comment resolution tracking.
+
+    Each prior finding follows one of 14 legal paths through these states.
+    Terminal states (AUTO_RESOLVED, PLATFORM_RESOLVED) cannot transition further.
+    """
+    INITIAL = "initial"
+    UNTOUCHED = "untouched"
+    CODE_REMOVED = "code_removed"
+    CHANGED = "changed"
+    NOVA_CALLED = "nova_called"
+    FULLY_ADDRESSED = "fully_addressed"
+    NOT_FULLY_ADDRESSED = "not_fully_addressed"
+    NOVA_ERROR = "nova_error"
+    REPLY_FAILED = "reply_failed"
+    FOLLOW_UP_POSTED = "follow_up_posted"
+    RESOLVE_REPLY_POSTED = "resolve_reply_posted"
+    AUTO_RESOLVED = "auto_resolved"       # terminal — Revue confirmed fix
+    PLATFORM_RESOLVED = "platform_resolved"  # terminal — human closed thread
+
+
+class ResolutionVerdict(Enum):
+    """Verdict returned by ResolutionStrategy: how well the finding was addressed."""
+    FULLY = "fully"
+    PARTIAL = "partial"
+    UNRESOLVED = "not"
+
+
+@dataclass(frozen=True)
+class ResolutionResult:
+    """Return type for ResolutionStrategy.resolve(): verdict + actionable guidance.
+
+    ``guidance`` is a human-readable sentence extracted from Nova's analysis,
+    used verbatim in the follow-up reply posted to the developer's thread.
+    """
+    verdict: ResolutionVerdict
+    guidance: str
+
+
+class ResolutionStrategy(Protocol):
+    """Semantic analysis: determine whether a finding is addressed in new code."""
+
+    def resolve(
+        self,
+        original_finding: dict,
+        new_hunk: str,
+        prior_follow_up: str | None = None,
+    ) -> ResolutionResult:
+        """Return a ResolutionResult with verdict and actionable guidance."""
+        ...

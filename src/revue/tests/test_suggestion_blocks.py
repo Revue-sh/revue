@@ -397,7 +397,7 @@ def test_agent_loader_propagates_code_replacement_to_ai_review() -> None:
         severity_default="low",
     )
     changes = [FileChange(file_path="app.py", change_type="modified", additions=1, deletions=1, diff="- old\n+ new")]
-    agent = LoadedAgent(agent_def, mock_client)
+    agent = LoadedAgent(agent_def, mock_client, 4096)
     reviews = agent.analyse(changes)
 
     assert len(reviews) == 1
@@ -434,7 +434,7 @@ def test_agent_loader_rejects_non_string_items_in_code_replacement() -> None:
 
     agent_def = AgentDefinition(name="kai", display_name="Kai (Code Quality)", role="Code quality reviewer", system_prompt="reviewer", severity_default="low")
     changes = [FileChange(file_path="app.py", change_type="modified", additions=1, deletions=1, diff="- old\n+ new")]
-    agent = LoadedAgent(agent_def, mock_client)
+    agent = LoadedAgent(agent_def, mock_client, 4096)
     reviews = agent.analyse(changes)
 
     assert reviews[0].code_replacement == ["valid line", "another valid line"]

@@ -94,7 +94,7 @@ The PRD is well-specified for comment-posting requirements. Sections §10.1 and 
 
 ## Step 3 — Epic Coverage Validation
 
-*Epic source: REVUE-87 (E8) in Jira — Track 1 ticket structure: REVUE-208 (Done), REVUE-209 (this story), consolidator ticket (next), poster ticket (last). FR coverage derived from REVUE-208 readiness report + REVUE-209 ACs + comment-posting-refactor-plan.md.*
+*Epic source: REVUE-87 (E8) in Jira — Track 1 ticket structure: REVUE-208 (Done), REVUE-209 (this story), REVUE-210 (consolidator), REVUE-211 (poster — last). FR coverage derived from REVUE-208 readiness report + REVUE-209 ACs + comment-posting-refactor-plan.md.*
 
 ### FR Coverage Matrix
 
@@ -105,7 +105,7 @@ The PRD is well-specified for comment-posting requirements. Sections §10.1 and 
 | FR3 | Nova merge/dedup/prioritise findings | REVUE-210 (consolidator ticket — separate story) | ✅ Covered (out of REVUE-209 scope) |
 | FR4 | Agent attribution preserved into posted comments | REVUE-209 AC2 — grouped renderer includes attribution header per item | ✅ Covered |
 | FR5 | Platform-native suggestion fence (GitHub vs GitLab vs Bitbucket) | REVUE-209 AC3 — registry-based platform dispatch | ✅ Covered |
-| FR6 | Per-platform position model (diff offset vs line_code hash) | REVUE-??? (poster ticket — separate story) | ✅ Covered (out of REVUE-209 scope) |
+| FR6 | Per-platform position model (diff offset vs line_code hash) | REVUE-211 (poster ticket — separate story) | ✅ Covered (out of REVUE-209 scope) |
 | FR7 | Summary comment posted to PR/MR | REVUE-209 AC2 — `build_summary()` method | ✅ Covered |
 | FR8 | Inline comments on specific lines | REVUE-209 AC1 — `build()` produces inline comment body | ✅ Covered |
 | FR9 | Inline comment format: severity badge + issue + remediation + attribution | REVUE-209 AC1/AC2 — all four comment shapes | ✅ Covered |

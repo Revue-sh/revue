@@ -90,6 +90,25 @@ class VCSAdapter(Protocol):
         """
         ...
 
+    def get_thread_replies(self, pr_id: int, comment_id: str) -> list[dict]:
+        """Fetch all replies to an inline comment thread.
+
+        Returns a list of reply dicts, each containing:
+        - id: str (platform comment ID)
+        - body: str (reply text, including any sentinel HTML comments)
+        - created_at: str (ISO 8601 timestamp)
+
+        Returns [] on any error (never raises).
+        """
+        ...
+
+    def reply_to_comment(self, pr_id: int, comment_id: str, body: str) -> str | None:
+        """Post a reply to an inline comment thread (without resolving).
+
+        Returns the reply ID on success, None on failure (never raises).
+        """
+        ...
+
     def resolve_inline_comment(
         self, pr_id: int, comment_id: str, reply_body: str
     ) -> bool:

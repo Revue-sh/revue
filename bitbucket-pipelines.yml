@@ -43,7 +43,7 @@ definitions:
               | python3 -c "import json,sys; print(json.load(sys.stdin).get('description',''))" \
               > /tmp/revue_pr_description.txt \
             && echo "[revue] PR description fetched ($(wc -c < /tmp/revue_pr_description.txt) bytes)" \
-            || echo "[revue] PR description fetch failed — continuing without context"
+            || { echo ""; echo "========================================================================"; echo "‼️  WARNING: PR DESCRIPTION COULD NOT BE FETCHED"; echo "⚠️  THE REVIEW WILL PROCEED WITHOUT AUTHOR CONTEXT."; echo "⚠️  REVIEW QUALITY MAY BE REDUCED."; echo "⚠️  CHECK: BITBUCKET_USERNAME AND BITBUCKET_API_TOKEN ARE SET CORRECTLY."; echo "========================================================================"; echo ""; }
           - echo "[revue] Validating config..."
           - PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
           - echo "[revue] Starting AI code review..."

@@ -205,9 +205,10 @@ class LoadedAgent:
     Depends on AIClient Protocol (DIP).
     """
 
-    def __init__(self, definition: AgentDefinition, client: "AIClient") -> None:
+    def __init__(self, definition: AgentDefinition, client: "AIClient", max_tokens: int) -> None:
         self._def = definition
         self._client = client
+        self._max_tokens = max_tokens
 
     @property
     def name(self) -> str:
@@ -256,6 +257,7 @@ class LoadedAgent:
                 system=system_blocks,
                 cache_key=diff_hash,
                 agent_name=self._def.name,
+                max_tokens=self._max_tokens,
             ).text
             print(
                 f"[revue]     [{self._def.name}] raw response "
@@ -373,6 +375,7 @@ def load_agent_definition(path: str | Path) -> AgentDefinition:
 def load_agents_from_dir(
     directory: str | Path,
     client: "AIClient",
+    max_tokens: int,
     parsers: list[AgentDefinitionParser] | None = None,
 ) -> list[LoadedAgent]:
     """
@@ -392,7 +395,7 @@ def load_agents_from_dir(
                 try:
                     definition = parser.parse(file_path)
                     if definition.enabled:
-                        agents.append(LoadedAgent(definition, client))
+                        agents.append(LoadedAgent(definition, client, max_tokens))
                 except Exception:
                     pass  # skip unparseable files silently
                 break
@@ -472,7 +475,8 @@ def load_all_agents(
     if builtin_agents_dir is None:
         builtin_agents_dir = str(Path(__file__).resolve().parent.parent / "agents")
 
-    builtin = load_agents_from_dir(builtin_agents_dir, client)
+    max_tokens = config.ai_max_tokens
+    builtin = load_agents_from_dir(builtin_agents_dir, client, max_tokens)
     agents_by_name: dict[str, LoadedAgent] = {a.name: a for a in builtin}
 
     custom_defs = load_custom_agents(config.custom_agents_dir)
@@ -481,7 +485,7 @@ def load_all_agents(
             continue
         if defn.name in agents_by_name:
             logger.info("Custom agent '%s' overrides built-in agent", defn.name)
-        agents_by_name[defn.name] = LoadedAgent(defn, client)
+        agents_by_name[defn.name] = LoadedAgent(defn, client, max_tokens)
 
     return list(agents_by_name.values())
 

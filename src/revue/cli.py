@@ -21,9 +21,11 @@ logging.basicConfig(
     level=os.environ.get("REVUE_LOG_LEVEL", "WARNING").upper(),
     format="%(levelname)s %(name)s %(message)s",
 )
-# Always suppress anthropic._base_client RequestOptions/Response spam (includes full diff in payloads).
-# This keeps logs focused on [revue:body] tracing for comment-posting validation (REVUE-209).
+# Suppress third-party HTTP library noise — these loggers flood output at DEBUG level
+# with per-request wire detail that is never needed for Revue diagnostics.
 logging.getLogger("anthropic._base_client").setLevel("WARNING")
+logging.getLogger("httpcore").setLevel("WARNING")
+logging.getLogger("httpx").setLevel("WARNING")
 
 from revue.core.config_loader import (
     DEFAULT_REVUE_YML,
@@ -37,6 +39,16 @@ from revue.core.models import PRContext
 from revue.core.agent_loader import filter_code_replacement
 from revue.comments.body_builder import BodyBuilder
 from revue.comments.models import Attribution, ConsolidatedFinding
+from revue.comments.summary_builder import (
+    SEVERITY_EMOJI,
+    SEVERITY_ORDER,
+    _CATEGORY_MAP,
+    _CATEGORY_CLEAN_LABELS,
+    _AGENT_DISPLAY_NAMES,
+    _AGENT_EMOJIS,
+    _star_rating,
+    build_enhanced_summary as _build_enhanced_summary,
+)
 from revue.core.logging_utils import _Lazy
 
 
@@ -417,69 +429,6 @@ def cmd_review(
     return 0
 
 
-SEVERITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🔵", "info": "ℹ️"}
-SEVERITY_ORDER = ["high", "medium", "low", "info"]
-
-# AC2: category JSON field → display label (always show all 4)
-_CATEGORY_MAP = {
-    "architecture": "Architecture",
-    "security": "Security",
-    "performance": "Performance",
-    "code-quality": "Code Quality",
-}
-_AGENT_DISPLAY_NAMES: dict[str, str] = {
-    "leo": "Leo",
-    "zara": "Zara",
-    "kai": "Kai",
-    "maya": "Maya",
-    "nova": "Nova",
-}
-_AGENT_EMOJIS: dict[str, str] = {
-    "leo": "🏗️",
-    "zara": "🔒",
-    "kai": "⚡",
-    "maya": "✨",
-    "nova": "🌟",
-}
-_CATEGORY_CLEAN_LABELS = {
-    "Architecture": "SOLID compliant, no structural issues",
-    "Security": "No vulnerabilities detected",
-    "Performance": "No blocking issues",
-    "Code Quality": "All patterns followed",
-}
-
-
-def _star_rating(
-    total: int,
-    high: int,
-    medium: int,
-    low: int = 0,
-    info: int = 0,
-    rating_cfg: dict | None = None,
-) -> str:
-    """Return a star rating string (1–5) based on finding severity counts.
-
-    Weights and floor are read from *rating_cfg* (the ``rating:`` section of
-    .revue.yml).  When *rating_cfg* is None the built-in defaults apply so
-    behaviour is unchanged for callers that don't pass the config.
-    """
-    if total == 0:
-        return "⭐⭐⭐⭐⭐ 5.0/5.0"
-    cfg = rating_cfg or {}
-    w_high   = float(cfg.get("high",   1.5))
-    w_medium = float(cfg.get("medium", 0.3))
-    w_low    = float(cfg.get("low",    0.05))
-    w_info   = float(cfg.get("info",   0.0))
-    floor    = float(cfg.get("floor",  1.0))
-    score = 5.0 - (high * w_high + medium * w_medium + low * w_low + info * w_info)
-    score = max(floor, min(5.0, score))
-    full = int(score)
-    half = 1 if (score - full) >= 0.5 else 0
-    empty = 5 - full - half
-    stars = "⭐" * full + ("✨" if half else "") + "☆" * empty
-    return f"{stars} {score:.1f}/5.0"
-
-
 def _format_synthesis_attribution(contributors: list) -> str:
     """Format synthesis attribution as 'Agents: Kai ⚡ **Performance** | Zara 🔒 **Security** → Nova 🌟 (synthesised)'.
 
@@ -497,154 +446,6 @@ def _format_synthesis_attribution(contributors: list) -> str:
     nova_emoji = _AGENT_EMOJIS.get("nova", "")
     nova_label = f"{nova_display} {nova_emoji}" if nova_emoji else nova_display
     return f"Agents: {agents_str} → {nova_label} (synthesised)"
-
-
-def _build_enhanced_summary(
-    review_results: list,
-    total_findings: dict[str, int],
-    revision: int,
-    last_updated_at: str,
-    fallback_mode: str = "normal",
-    show_reviewed_files: bool = True,
-    rating_cfg: dict | None = None,
-    previously_tracked: int = 0,
-    summary_sink: list | None = None,
-) -> str:
-    """Build the rich REVUE-97 summary comment body (AC1–AC7).
-
-    Args:
-        review_results:     List of ReviewResult objects from the pipeline.
-        total_findings:     Dict of {severity: count} for findings requiring
-                            attention (new postings + open-prior skips).
-                            Does NOT include resolved-prior (won't-fix) findings.
-        revision:           Current review revision number (1 = first post).
-        last_updated_at:    Human-readable relative timestamp string.
-        fallback_mode:      Active fallback mode from pipeline (REVUE-117).
-                            Non-normal values add a degradation notice.
-        previously_tracked: Number of findings skipped because they matched a
-                            resolved (won't-fix) prior thread.  When non-zero
-                            the Findings section notes how many were already decided.
-    """
-    total = sum(total_findings.values())
-    high = total_findings.get("high", 0)
-    medium = total_findings.get("medium", 0)
-    low = total_findings.get("low", 0)
-    info = total_findings.get("info", 0)
-
-    # AC1: verdict + star rating
-    if total == 0:
-        verdict_icon = "✅"
-        verdict_text = "Approved"
-    elif high > 0:
-        verdict_icon = "❌"
-        verdict_text = f"{total} issue{'s' if total != 1 else ''} found"
-    else:
-        verdict_icon = "⚠️"
-        verdict_text = f"{total} issue{'s' if total != 1 else ''} found"
-
-    stars = _star_rating(total, high, medium, low, info, rating_cfg)
-
-    lines = [
-        f"## 🤖 Revue.io — Code Review (Review #{revision})",
-        "",
-        f"**Overall:** {stars} · {verdict_icon} {verdict_text}  ",
-        f"**Last updated:** {last_updated_at}",
-        "",
-    ]
-
-    # REVUE-117: degradation notice when rate-limit fallback was active
-    if fallback_mode and fallback_mode != "normal":
-        mode_display = fallback_mode.replace("_", "-")
-        lines += [
-            f"> ⚠️ **Reduced context mode active ({mode_display}):** This review used a "
-            f"smaller diff context to avoid API rate limits. Some findings may be missing. "
-            f"To restore full-context reviews, upgrade your API tier, keep PRs smaller, "
-            f"or set `retry_on_rate_limit: true` in `.revue.yml`.",
-            "",
-        ]
-
-    # AC2: category breakdown — always show all 4
-    category_counts: dict[str, list] = {label: [] for label in _CATEGORY_MAP.values()}
-    for rr in review_results:
-        if rr.error or not rr.response:
-            continue
-        try:
-            findings, _ = _parse_findings(rr.response)
-        except Exception:
-            continue
-        for f in findings:
-            raw_cat = f.get("category", "").lower().strip()
-            display = _CATEGORY_MAP.get(raw_cat, "Code Quality")
-            category_counts[display].append(f)
-
-    lines.append("### Quality Breakdown")
-    for display_label in _CATEGORY_MAP.values():
-        cat_findings = category_counts[display_label]
-        if not cat_findings:
-            lines.append(f"- ✅ **{display_label}:** {_CATEGORY_CLEAN_LABELS[display_label]}")
-        else:
-            by_sev: dict[str, int] = {}
-            for f in cat_findings:
-                s = f.get("severity", "low").lower()
-                by_sev[s] = by_sev.get(s, 0) + 1
-            sev_parts = " ".join(
-                f"{SEVERITY_EMOJI.get(s, '⚪')} {by_sev[s]} {s}"
-                for s in SEVERITY_ORDER
-                if by_sev.get(s, 0) > 0
-            )
-            lines.append(f"- ⚠️ **{display_label}:** {sev_parts}")
-    lines.append("")
-
-    # AC3: files reviewed (REVUE-134: dedup by path; honour show_reviewed_files flag)
-    if show_reviewed_files:
-        reviewed_files = [rr for rr in review_results if not rr.error and rr.response]
-        unique_paths = list(dict.fromkeys(rr.file_path for rr in reviewed_files))
-        lines.append(f"### Files Reviewed ({len(unique_paths)})")
-        for path in unique_paths:
-            lines.append(f"- `{path}`")
-        lines.append("")
-
-    # AC1 / AC4: findings summary
-    if total == 0 and previously_tracked == 0:
-        lines.append("### Findings: 0 issues")
-        lines.append("")
-        lines.append(
-            "**Verdict:** Clean implementation following project standards. "
-            "No issues detected across all reviewed files."
-        )
-    elif total == 0 and previously_tracked > 0:
-        lines.append("### Findings: 0 issues")
-        lines.append(f"*({previously_tracked} finding{'s' if previously_tracked != 1 else ''} previously tracked — already decided)*")
-        lines.append("")
-        lines.append(
-            "**Verdict:** ✅ All findings have been addressed."
-        )
-    else:
-        counts_str = " · ".join(
-            f"{SEVERITY_EMOJI.get(s, '⚪')} {total_findings[s]} {s}"
-            for s in SEVERITY_ORDER
-            if total_findings.get(s, 0) > 0
-        )
-        issue_word = f"issue{'s' if total != 1 else ''}"
-        lines.append(f"### Findings: {total} {issue_word}")
-        lines.append(f"{counts_str}")
-        if previously_tracked > 0:
-            lines.append(
-                f"*({previously_tracked} previously tracked — won't-fix decisions already recorded)*"
-            )
-        lines.append("")
-        lines.append(
-            f"**Verdict:** {verdict_icon} {total} {issue_word} require "
-            f"attention. See inline comments for details."
-        )
-
-    body = "\n".join(lines)
-
-    if summary_sink:
-        unanchored_section = BodyBuilder.build_summary(findings=[], summary_sink=summary_sink)
-        body += "\n\n" + unanchored_section
-
-    return body
 
 
 def _parse_findings(response: str) -> tuple[list, str]:
@@ -1496,9 +1297,25 @@ def _post_to_platform(
     return posted, failed
 
 
+def _build_hunk_tracker(adapter, dedup_store, config):
+    """Return a HunkTracker (or NullHunkTracker when Nova is unavailable)."""
+    from revue.comments.hunk_tracker import HunkTracker, NullHunkTracker, NovaSingleShotResolutionStrategy
+    nova_client = create_ai_client(config) if config else None
+    if not nova_client:
+        return NullHunkTracker(adapter, dedup_store)
+    return HunkTracker(
+        adapter=adapter,
+        dedup_store=dedup_store,
+        resolution_strategy=NovaSingleShotResolutionStrategy(nova_client),
+    )
+
+
 def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> tuple[int, int] | None:
-    """Resolve Bitbucket credentials and delegate to _post_to_platform."""
+    """Resolve Bitbucket credentials and delegate to Poster."""
     from revue.comments.platform_adapter import BitbucketAdapter
+    from revue.comments.poster import Poster
+    from revue.comments.json_store import PerPRCommentStore
+    from revue.comments.file_store import CommentFileStore
     from revue.core.diff_parser import parse_diff_file
     from revue.comments.models import Platform
 
@@ -1527,12 +1344,24 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=No
         repo_slug=repo_slug,
     )
     diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
-    return _post_to_platform(
-        adapter=adapter, pr_id=pr_id,
-        platform_str="bitbucket", platform_enum=Platform.BITBUCKET,
-        repo_owner=workspace, repo_name=repo_slug,
-        review_results=review_results, diff_by_file=diff_by_file,
-        comment_style=comment_style, pr_label="PR",
+    _repo_path = Path(os.getcwd())
+    dedup_store = PerPRCommentStore(_repo_path)
+    poster = Poster(
+        adapter=adapter,
+        platform_str="bitbucket",
+        platform_enum=Platform.BITBUCKET,
+        dedup_store=dedup_store,
+        summary_store=CommentFileStore(_repo_path),
+        diff_by_file=diff_by_file,
+        hunk_tracker=_build_hunk_tracker(adapter, dedup_store, config),
+    )
+    return poster.post(
+        pr_id=pr_id,
+        review_results=review_results,
+        comment_style=comment_style,
+        repo_owner=workspace,
+        repo_name=repo_slug,
+        pr_label="PR",
         fallback_mode=fallback_mode,
         show_reviewed_files=show_reviewed_files,
         rating_cfg=rating_cfg,
@@ -1540,8 +1369,11 @@ def _post_to_bitbucket(args: argparse.Namespace, review_results: list, config=No
 
 
 def _post_to_github(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> tuple[int, int] | None:
-    """Resolve GitHub credentials and delegate to _post_to_platform."""
+    """Resolve GitHub credentials and delegate to Poster."""
     from revue.core.github_adapter import GitHubAdapter
+    from revue.comments.poster import Poster
+    from revue.comments.json_store import PerPRCommentStore
+    from revue.comments.file_store import CommentFileStore
     from revue.core.diff_parser import parse_diff_file
     from revue.comments.models import Platform
 
@@ -1572,12 +1404,24 @@ def _post_to_github(args: argparse.Namespace, review_results: list, config=None,
     rating_cfg = getattr(config, "rating_weights", None) if config else None
     adapter = GitHubAdapter(token=token, repo=repo)
     diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
-    return _post_to_platform(
-        adapter=adapter, pr_id=pr_id,
-        platform_str="github", platform_enum=Platform.GITHUB,
-        repo_owner=repo_owner, repo_name=repo_name,
-        review_results=review_results, diff_by_file=diff_by_file,
-        comment_style=comment_style, pr_label="GitHub PR",
+    _repo_path = Path(os.getcwd())
+    dedup_store = PerPRCommentStore(_repo_path)
+    poster = Poster(
+        adapter=adapter,
+        platform_str="github",
+        platform_enum=Platform.GITHUB,
+        dedup_store=dedup_store,
+        summary_store=CommentFileStore(_repo_path),
+        diff_by_file=diff_by_file,
+        hunk_tracker=_build_hunk_tracker(adapter, dedup_store, config),
+    )
+    return poster.post(
+        pr_id=pr_id,
+        review_results=review_results,
+        comment_style=comment_style,
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        pr_label="GitHub PR",
         fallback_mode=fallback_mode,
         show_reviewed_files=show_reviewed_files,
         rating_cfg=rating_cfg,
@@ -1585,8 +1429,11 @@ def _post_to_github(args: argparse.Namespace, review_results: list, config=None,
 
 
 def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None, fallback_mode: str = "normal") -> tuple[int, int] | None:
-    """Resolve GitLab credentials and delegate to _post_to_platform."""
+    """Resolve GitLab credentials and delegate to Poster."""
     from revue.core.gitlab_adapter import GitLabAdapter
+    from revue.comments.poster import Poster
+    from revue.comments.json_store import PerPRCommentStore
+    from revue.comments.file_store import CommentFileStore
     from revue.core.diff_parser import parse_diff_file
     from revue.comments.models import Platform
 
@@ -1617,12 +1464,24 @@ def _post_to_gitlab(args: argparse.Namespace, review_results: list, config=None,
     rating_cfg = getattr(config, "rating_weights", None) if config else None
     adapter = GitLabAdapter(token=token, project_id=project_id)
     diff_by_file = _parse_diff_by_file(getattr(args, "diff", None), parse_diff_file)
-    return _post_to_platform(
-        adapter=adapter, pr_id=pr_id,
-        platform_str="gitlab", platform_enum=Platform.GITLAB,
-        repo_owner=repo_owner, repo_name=repo_name,
-        review_results=review_results, diff_by_file=diff_by_file,
-        comment_style=comment_style, pr_label="GitLab MR",
+    _repo_path = Path(os.getcwd())
+    dedup_store = PerPRCommentStore(_repo_path)
+    poster = Poster(
+        adapter=adapter,
+        platform_str="gitlab",
+        platform_enum=Platform.GITLAB,
+        dedup_store=dedup_store,
+        summary_store=CommentFileStore(_repo_path),
+        diff_by_file=diff_by_file,
+        hunk_tracker=_build_hunk_tracker(adapter, dedup_store, config),
+    )
+    return poster.post(
+        pr_id=pr_id,
+        review_results=review_results,
+        comment_style=comment_style,
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        pr_label="GitLab MR",
         fallback_mode=fallback_mode,
         show_reviewed_files=show_reviewed_files,
         rating_cfg=rating_cfg,

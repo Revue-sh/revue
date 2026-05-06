@@ -51,7 +51,7 @@ def test_agent_valid_severity_default(agent_name):
 def test_all_six_agents_load_from_dir():
     from unittest.mock import MagicMock
     from revue.core.agent_loader import load_agents_from_dir
-    agents = load_agents_from_dir(AGENTS_DIR, MagicMock())
+    agents = load_agents_from_dir(AGENTS_DIR, MagicMock(), 4096)
     names = {a.name for a in agents}
     for expected in EXPECTED_AGENTS:
         assert expected in names, f"Agent '{expected}' not loaded from agents dir"

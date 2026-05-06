@@ -95,7 +95,7 @@ REVUE-208 is a **Task** (PR 1 of 5), not a standalone Epic. It introduces typed 
 | FR3 | Nova merge/dedup/prioritise | REVUE-210 (`consolidator.py`: `NovaSingleShotStrategy`) | ✅ Covered |
 | FR4 | Attribution preserved | REVUE-208 (`attribution` required field) — Decision 1 | ✅ Covered |
 | FR5 | Finding fields: severity, location, description, remediation | REVUE-208 (`AgentFinding`, `ConsolidatedFinding` dataclasses) | ✅ Covered |
-| FR6 | Per-platform position model | REVUE-??? (`poster.py`: VCSAdapter call + position resolution) | ✅ Covered |
+| FR6 | Per-platform position model | REVUE-211 (`poster.py`: VCSAdapter call + position resolution) | ✅ Covered |
 | FR7 | Comment format: severity badge + attribution + remediation | REVUE-209 (`body_builder`: per-platform kind-switching) | ✅ Covered |
 | FR8 | Platform-native suggestion block | REVUE-208 (`code_replacement` field) + REVUE-209 (`body_builder`) | ✅ Covered |
 | FR9 | PR-level summary comment | REVUE-209 (`body_builder`: summary renderer + `summary_sink`) | ✅ Covered |
@@ -166,7 +166,7 @@ None identified. The architecture decisions (particularly Decision 1 requiring `
 | REVUE-208 | Comment posting contracts — models and stub modules | Technical | ⚠️ Technical title, but user story body correctly states internal developer value |
 | REVUE-209 | Migrate body building to `body_builder.py` | Technical | ⚠️ Technical title — user value is implicit (regression fixes C3 #1) |
 | REVUE-210 | Migrate consolidation to `consolidator.py` | Technical | ⚠️ Technical title — user value is implicit (regression fixes C3 #2 and #3) |
-| REVUE-??? | Migrate posting to `poster.py` | Technical | ⚠️ Technical title — user value is implicit (dedup, position resolution) |
+| REVUE-211 | Migrate posting to `poster.py` | Technical | ⚠️ Technical title — user value is implicit (dedup, position resolution) |
 
 **Verdict:** All four titles are technically framed. This is an accepted exception for brownfield refactors where the value is regression repair and SOLID compliance, not a new user-visible feature. The regression context (MR !22 failures) is documented in the architecture doc and is the implicit justification. No violation raised — but the downstream tickets (REVUE-209/213/214) should reference their specific regression fixes in their user story bodies when they are written up.
 
@@ -177,7 +177,7 @@ None identified. The architecture decisions (particularly Decision 1 requiring `
 | REVUE-208 | None | Independent | ✅ |
 | REVUE-209 | REVUE-208 | Backward dependency | ✅ |
 | REVUE-210 | REVUE-208 | Backward dependency | ✅ |
-| REVUE-??? | REVUE-208 (best after 212+213) | Backward dependency | ✅ |
+| REVUE-211 | REVUE-208 (best after 212+213) | Backward dependency | ✅ |
 
 No forward dependencies. No circular dependencies. Dependency graph is a DAG with REVUE-208 as the root. ✅
 

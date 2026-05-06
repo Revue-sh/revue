@@ -16,10 +16,10 @@ This document is a one-time migration roadmap. It captures the PR sequence, Jira
 | REVUE-208 | Comment posting contracts (models + stub modules) | PR 1 |
 | REVUE-209 | Migrate body building to `comments/body_builder.py` | PR 2 |
 | REVUE-210 | Migrate consolidation to `comments/consolidator.py` | PR 3 |
-| REVUE-??? | Migrate posting to `comments/poster.py` | PR 4 |
+| REVUE-211 | Migrate posting to `comments/poster.py` | PR 4 |
 | *(optional)* | `cli.py` dead code cleanup | PR 5 |
 
-Dependencies: REVUE-209, REVUE-210, and PR 4 (poster, ticket TBD) are all blocked by REVUE-208. REVUE-209, REVUE-210, and PR 4 can proceed in parallel once REVUE-208 merges (they each touch different modules and `cli.py` call sites).
+Dependencies: REVUE-209, REVUE-210, and REVUE-211 (PR 4) are all blocked by REVUE-208. REVUE-209, REVUE-210, and REVUE-211 can proceed in parallel once REVUE-208 merges (they each touch different modules and `cli.py` call sites).
 
 ---
 
@@ -47,7 +47,7 @@ Dependencies: REVUE-209, REVUE-210, and PR 4 (poster, ticket TBD) are all blocke
 
 ### Why this PR exists
 
-This PR is the trellis. It is small enough to review carefully in one sitting. Reviewers pin the type shapes, the Protocol signatures, and the field names *before* any migration work happens — so migration PRs argue only about behaviour, not about what the types should have been. It also unblocks REVUE-209, REVUE-210, and PR 4 (poster, ticket TBD) to proceed in parallel if capacity allows.
+This PR is the trellis. It is small enough to review carefully in one sitting. Reviewers pin the type shapes, the Protocol signatures, and the field names *before* any migration work happens — so migration PRs argue only about behaviour, not about what the types should have been. It also unblocks REVUE-209, REVUE-210, and REVUE-211 to proceed in parallel if capacity allows.
 
 ---
 
@@ -125,7 +125,7 @@ Two comment quality regressions observed in live dogfood review:
 
 ## PR 4 — Migrate posting
 
-**Jira:** REVUE-??? (create when PR 3 is in review)
+**Jira:** REVUE-211
 **Blocked by:** REVUE-208 (PR 1); best sequenced after PR 2 and PR 3 are merged
 
 ### What ships

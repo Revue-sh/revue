@@ -234,6 +234,55 @@ class GitHubAdapter:
             logger.error("get_existing_comments failed for PR %d: %s", pr_id, exc)
             return []
 
+    def get_thread_replies(self, pr_id: int, comment_id: str) -> list[dict]:
+        """Fetch replies to a review comment thread.
+
+        GET /repos/{owner}/{repo}/pulls/{pr_id}/comments/{comment_id}/replies
+
+        Returns a list of dicts with keys: id, body, created_at.
+        Returns [] on any error (never raises).
+        """
+        try:
+            replies = self._request(
+                "GET",
+                f"/repos/{self._repo}/pulls/{pr_id}/comments/{comment_id}/replies",
+            )
+            return [
+                {
+                    "id": str(c["id"]),
+                    "body": c.get("body", ""),
+                    "created_at": c.get("created_at", ""),
+                }
+                for c in replies
+            ]
+        except Exception as exc:
+            logger.error(
+                "get_thread_replies failed for PR %d comment %s: %s",
+                pr_id, comment_id, exc,
+            )
+            return []
+
+    def reply_to_comment(self, pr_id: int, comment_id: str, body: str) -> str | None:
+        """Post a reply to a review comment thread.
+
+        POST /repos/{owner}/{repo}/pulls/{pr_id}/comments/{comment_id}/replies
+
+        Returns the reply ID on success, None on failure.
+        """
+        try:
+            result = self._request(
+                "POST",
+                f"/repos/{self._repo}/pulls/{pr_id}/comments/{comment_id}/replies",
+                {"body": body},
+            )
+            return str(result.get("id", ""))
+        except Exception as exc:
+            logger.error(
+                "reply_to_comment failed for PR %d comment %s: %s",
+                pr_id, comment_id, exc,
+            )
+            return None
+
     def get_issue_comments(self, pr_id: int) -> list[dict]:
         """Return issue-level PR comments (e.g. the Revue summary comment).
 
@@ -384,7 +433,7 @@ class GitHubAdapter:
                     "resolve_inline_comment: reply failed for PR %d comment %s: %s",
                     pr_id, comment_id, exc,
                 )
-                # Continue to resolve even if reply fails
+                return False  # sentinel not written — caller retries on next run
 
         # Resolve the thread via GraphQL (REST PATCH /resolved is not a GitHub API)
         try:

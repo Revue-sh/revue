@@ -4,6 +4,15 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+## Deferred from: code review of REVUE-211-migrate-posting (2026-05-04)
+
+- **D1** — `get_issue_comments` not declared on VCSAdapter Protocol — works correctly via duck-typing/getattr; only GitHub needs it; Bitbucket/GitLab gracefully fall back to `get_existing_comments`. Add to Protocol for structural completeness in a future adapter-hardening pass.
+- **D2** — Nova prompt uses `.format()` with user-controlled text — LLM input sanitisation is a broader concern across all AI-facing prompts. `_call_nova` catches all exceptions as NOVA_ERROR so the blast radius is bounded. Address in a dedicated prompt-security hardening ticket.
+- **D3** — Sentinel `ts` regex group can be truncated by platform-inserted newlines — extremely rare; HTML comments are not normally line-wrapped; `_most_recent_sentinel` would select a different sentinel rather than corrupt state. Monitor if sentinel issues surface in dogfood.
+- **D4** — `_SENTINEL_RE` fp group accepts uppercase hex and hyphens that never appear in real fingerprints — permissive but harmless; non-canonical fps never match store keys and are silently ignored. Tighten regex when hardening sentinel format spec.
+
+---
+
 ## Deferred from: code review of revue-209-body-builder (2026-05-03)
 
 - **D1** — `cli.py` dead code: `_format_recommendation`, `_SUGGESTION_BLOCK_FORMATTERS`, `_get_highest_severity` are no longer called from any production path after BodyBuilder integration. Four unit tests in `test_suggestion_blocks.py:259–311` keep `_format_recommendation` alive. Clean up in PR 5 (explicitly out of scope for REVUE-209).
