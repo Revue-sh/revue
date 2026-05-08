@@ -49,8 +49,8 @@ def test_delete_comment_403_is_silent_skip(adapter: BitbucketAdapter) -> None:
     error = _httpx.HTTPStatusError("403", request=MagicMock(), response=resp)
 
     with patch("httpx.delete", side_effect=error), \
-         patch("revue.comments.platform_adapter._log.warning") as mock_warn, \
-         patch("revue.comments.platform_adapter._log.debug") as mock_debug:
+         patch("revue.core.log.Log.cli.warning") as mock_warn, \
+         patch("revue.core.log.Log.cli.debug") as mock_debug:
         assert adapter.delete_comment(42, "100") is False
 
     mock_warn.assert_not_called()
@@ -65,7 +65,7 @@ def test_delete_comment_non_403_http_error_warns(adapter: BitbucketAdapter) -> N
     error = _httpx.HTTPStatusError("500", request=MagicMock(), response=resp)
 
     with patch("httpx.delete", side_effect=error), \
-         patch("revue.comments.platform_adapter._log.warning") as mock_warn:
+         patch("revue.core.log.Log.cli.warning") as mock_warn:
         assert adapter.delete_comment(42, "100") is False
 
     mock_warn.assert_called_once()
@@ -74,7 +74,7 @@ def test_delete_comment_non_403_http_error_warns(adapter: BitbucketAdapter) -> N
 def test_delete_comment_network_error_warns(adapter: BitbucketAdapter) -> None:
     """delete_comment returns False and logs a warning on network/HTTP error."""
     with patch("httpx.delete", side_effect=Exception("timeout")), \
-         patch("revue.comments.platform_adapter._log.warning") as mock_warn:
+         patch("revue.core.log.Log.cli.warning") as mock_warn:
         assert adapter.delete_comment(42, "100") is False
 
     mock_warn.assert_called_once()

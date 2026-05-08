@@ -16,8 +16,9 @@ from revue.core.diff_parser import parse_diff
 from revue.core.models import FileChange
 from revue.core.vcs_adapter import DiffPosition
 from .models import Platform
+from revue.core.logging_channels import Log
 
-_log = logging.getLogger(__name__)
+# logging_channels imported for Log.cli
 
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
@@ -325,10 +326,10 @@ class BitbucketAdapter(PlatformAdapter):
         try:
             response = httpx.post(url, timeout=10.0, **self._auth_kwargs())
         except httpx.HTTPError as exc:
-            _log.warning("Failed to resolve comment %s: %s", comment_id, exc)
+            Log.cli.warning("Failed to resolve comment %s: %s", comment_id, exc)
             return False
         if response.status_code == 400:
-            _log.warning(
+            Log.cli.warning(
                 "Cannot resolve comment %s — Bitbucket only resolves inline comments",
                 comment_id,
             )
@@ -369,7 +370,7 @@ class BitbucketAdapter(PlatformAdapter):
             response.raise_for_status()
             return parse_diff(response.text)
         except Exception as exc:
-            _log.warning("get_diff failed for PR %s: %s", pr_id, exc)
+            Log.cli.warning("get_diff failed for PR %s: %s", pr_id, exc)
             return []
 
     def set_pr_status(self, commit_sha: str, state: str, description: str = "") -> bool:
@@ -399,7 +400,7 @@ class BitbucketAdapter(PlatformAdapter):
             response.raise_for_status()
             return True
         except Exception as exc:
-            _log.warning("set_pr_status failed for commit %s: %s", commit_sha, exc)
+            Log.cli.warning("set_pr_status failed for commit %s: %s", commit_sha, exc)
             return False
 
     def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
@@ -479,7 +480,7 @@ class BitbucketAdapter(PlatformAdapter):
         try:
             response = httpx.post(url, timeout=10.0, **self._auth_kwargs())
             if response.status_code not in (200, 409):
-                _log.error(
+                Log.cli.error(
                     "Failed to resolve conversation %s on PR %s/%s/%s: HTTP %s",
                     comment_id,
                     repo_owner,
@@ -488,7 +489,7 @@ class BitbucketAdapter(PlatformAdapter):
                     response.status_code,
                 )
         except Exception as exc:
-            _log.error(
+            Log.cli.error(
                 "Failed to resolve conversation %s on PR %s/%s/%s: %s",
                 comment_id,
                 repo_owner,
@@ -526,12 +527,12 @@ class BitbucketAdapter(PlatformAdapter):
             body = exc.response.text[:300] if exc.response.text else "(empty)"
             if exc.response.status_code == 403 and "200 comments" in exc.response.text:
                 self.comment_limit_reached = True
-                _log.warning("❌ post_review_comment: PR %s has reached Bitbucket's 200-comment limit", pr_id)
+                Log.cli.warning("❌ post_review_comment: PR %s has reached Bitbucket's 200-comment limit", pr_id)
             else:
-                _log.warning("❌ post_review_comment failed for PR %s: %s — response: %s", pr_id, exc, body)
+                Log.cli.warning("❌ post_review_comment failed for PR %s: %s — response: %s", pr_id, exc, body)
             return None
         except Exception as exc:
-            _log.warning("❌ post_review_comment failed for PR %s: %s", pr_id, exc)
+            Log.cli.warning("❌ post_review_comment failed for PR %s: %s", pr_id, exc)
             return None
 
     post_inline_comment = post_review_comment
@@ -553,7 +554,7 @@ class BitbucketAdapter(PlatformAdapter):
             comment_id = response.json().get("id")
             return str(comment_id) if comment_id is not None else None
         except Exception as exc:
-            _log.warning("post_summary_comment failed for PR %s: %s", pr_id, exc)
+            Log.cli.warning("post_summary_comment failed for PR %s: %s", pr_id, exc)
             return None
 
     def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool:
@@ -576,7 +577,7 @@ class BitbucketAdapter(PlatformAdapter):
             response.raise_for_status()
             return True
         except Exception as exc:
-            _log.error(
+            Log.cli.error(
                 "update_comment failed for PR %s comment %s — will post new comment instead. "
                 "Error: %s (type: %s)",
                 pr_id, comment_id, exc, type(exc).__name__
@@ -600,7 +601,7 @@ class BitbucketAdapter(PlatformAdapter):
                 url = data.get("next")
             return all_comments
         except Exception as exc:
-            _log.warning("get_existing_comments failed for PR %s: %s", pr_id, exc)
+            Log.cli.warning("get_existing_comments failed for PR %s: %s", pr_id, exc)
             return []
 
     def get_thread_replies(self, pr_id: int, comment_id: str) -> list[dict]:
@@ -625,7 +626,7 @@ class BitbucketAdapter(PlatformAdapter):
                 if str(c.get("parent", {}).get("id", "")) == parent_id
             ]
         except Exception as exc:
-            _log.warning(
+            Log.cli.warning(
                 "get_thread_replies failed for PR %s comment %s: %s",
                 pr_id, comment_id, exc,
             )
@@ -646,7 +647,7 @@ class BitbucketAdapter(PlatformAdapter):
             response.raise_for_status()
             return str(response.json().get("id", ""))
         except Exception as exc:
-            _log.warning("reply_to_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
+            Log.cli.warning("reply_to_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
             return None
 
     def resolve_position(
@@ -692,13 +693,13 @@ class BitbucketAdapter(PlatformAdapter):
                 url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments"
                 response = httpx.post(url, json=payload, **self._auth_kwargs())
                 response.raise_for_status()
-                _log.info("Posted resolution reply to comment %s on PR %s", comment_id, pr_id)
+                Log.cli.info("Posted resolution reply to comment %s on PR %s", comment_id, pr_id)
             except httpx.HTTPStatusError as exc:
                 body = exc.response.text[:300] if exc.response.text else "(empty)"
-                _log.warning("❌ resolve_inline_comment: reply failed for PR %s comment %s: %s — response: %s", pr_id, comment_id, exc, body)
+                Log.cli.warning("❌ resolve_inline_comment: reply failed for PR %s comment %s: %s — response: %s", pr_id, comment_id, exc, body)
                 return False
             except Exception as exc:
-                _log.warning("❌ resolve_inline_comment: reply failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
+                Log.cli.warning("❌ resolve_inline_comment: reply failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
                 return False
 
         try:
@@ -709,10 +710,10 @@ class BitbucketAdapter(PlatformAdapter):
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 409:  # Already resolved — goal achieved
                 return True
-            _log.warning("❌ resolve_inline_comment: resolve failed for PR %s comment %s: HTTP %s", pr_id, comment_id, exc.response.status_code, exc_info=True)
+            Log.cli.warning("❌ resolve_inline_comment: resolve failed for PR %s comment %s: HTTP %s", pr_id, comment_id, exc.response.status_code, exc_info=True)
             return False
         except Exception as exc:
-            _log.warning("❌ resolve_inline_comment: resolve failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
+            Log.cli.warning("❌ resolve_inline_comment: resolve failed for PR %s comment %s: %s", pr_id, comment_id, exc, exc_info=True)
             return False
 
     _REVUE_FP_SENTINEL = "revue:fp:"
@@ -737,12 +738,12 @@ class BitbucketAdapter(PlatformAdapter):
             return True
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 403:
-                _log.debug("delete_comment: skipping comment %s on PR %s — not owned by current token", comment_id, pr_id)
+                Log.cli.debug("delete_comment: skipping comment %s on PR %s — not owned by current token", comment_id, pr_id)
             else:
-                _log.warning("delete_comment failed for PR %s comment %s: HTTP %s", pr_id, comment_id, exc.response.status_code)
+                Log.cli.warning("delete_comment failed for PR %s comment %s: HTTP %s", pr_id, comment_id, exc.response.status_code)
             return False
         except Exception as exc:
-            _log.warning("delete_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
+            Log.cli.warning("delete_comment failed for PR %s comment %s: %s", pr_id, comment_id, exc)
             return False
 
     def evict_resolved_revue_comments(self, pr_id: int) -> int:
@@ -799,9 +800,9 @@ class BitbucketAdapter(PlatformAdapter):
                 self.delete_comment(pr_id, str(reply["id"]))
             if self.delete_comment(pr_id, str(parent_id)):
                 deleted += 1
-                _log.info("evict: deleted resolved thread %s on PR %s", parent_id, pr_id)
+                Log.cli.info("evict: deleted resolved thread %s on PR %s", parent_id, pr_id)
 
-        _log.info("evict: removed %d resolved Revue thread(s) from PR %s", deleted, pr_id)
+        Log.cli.info("evict: removed %d resolved Revue thread(s) from PR %s", deleted, pr_id)
         return deleted
 
     def get_comment_replies(
@@ -819,7 +820,7 @@ class BitbucketAdapter(PlatformAdapter):
         try:
             parent_id = int(comment_id)
         except ValueError:
-            _log.warning("get_comment_replies: non-integer comment_id %r — returning []", comment_id)
+            Log.cli.warning("get_comment_replies: non-integer comment_id %r — returning []", comment_id)
             return []
         return [c for c in all_comments if c.get("parent", {}).get("id") == parent_id]
     
@@ -874,7 +875,7 @@ class BitbucketAdapter(PlatformAdapter):
                 return None
             resp.raise_for_status()
         except Exception:
-            _log.debug("get_pr_template: could not fetch Bitbucket PR template for %s/%s", repo_owner, repo_name)
+            Log.cli.debug("get_pr_template: could not fetch Bitbucket PR template for %s/%s", repo_owner, repo_name)
         return None
 
     def ensure_lessons_pr(
@@ -907,7 +908,7 @@ class BitbucketAdapter(PlatformAdapter):
             if values:
                 existing_url = values[0].get("links", {}).get("html", {}).get("href", "")
         except Exception:
-            _log.exception("Failed to search for existing Bitbucket lessons PR")
+            Log.cli.exception("Failed to search for existing Bitbucket lessons PR")
 
         # Always commit the updated .revue.yml to the branch
         src_url = f"{self.base_url}/repositories/{repo_owner}/{repo_name}/src"
@@ -1225,19 +1226,19 @@ class GitHubAdapter(PlatformAdapter):
                 break
             next_cursor = page_info.get("endCursor")
             if next_cursor is None:
-                _log.warning(
+                Log.cli.warning(
                     "fetch_review_thread_ids: null endCursor with hasNextPage=True — stopping pagination",
                 )
                 break
             if next_cursor == cursor:
-                _log.warning(
+                Log.cli.warning(
                     "fetch_review_thread_ids: stuck cursor '%s' — stopping pagination",
                     cursor,
                 )
                 break
             cursor = next_cursor
         else:
-            _log.warning(
+            Log.cli.warning(
                 "fetch_review_thread_ids: max_pages limit (%d) reached — stopping pagination",
                 max_pages,
             )
@@ -1263,10 +1264,10 @@ class GitHubAdapter(PlatformAdapter):
             result = self._graphql(mutation, variables)
             resolved = result.get("data", {}).get("resolveReviewThread", {}).get("thread", {}).get("isResolved", False)
             if not resolved:
-                _log.warning("resolve_thread: mutation returned isResolved=False for thread %s", thread_id)
+                Log.cli.warning("resolve_thread: mutation returned isResolved=False for thread %s", thread_id)
             return resolved
         except Exception as exc:
-            _log.warning("resolve_thread: GraphQL mutation failed for thread %s: %s", thread_id, exc)
+            Log.cli.warning("resolve_thread: GraphQL mutation failed for thread %s: %s", thread_id, exc)
             return False
 
     def get_pr_template(self, repo_owner: str, repo_name: str) -> Optional[str]:
@@ -1394,7 +1395,7 @@ class GitLabAdapter(PlatformAdapter):
     ) -> str:
         """Post a reply note to a GitLab discussion."""
         if not thread_id:
-            _log.error("post_reply: thread_id is None for comment %s — skipping", comment_id)
+            Log.cli.error("post_reply: thread_id is None for comment %s — skipping", comment_id)
             return ""
         project_id = f"{repo_owner}%2F{repo_name}"
         url = f"{self.base_url}/projects/{project_id}/merge_requests/{pr_number}/discussions/{thread_id}/notes"
@@ -1474,7 +1475,7 @@ class GitLabAdapter(PlatformAdapter):
         try:
             root_id = int(comment_id)
         except ValueError:
-            _log.warning("get_comment_replies: non-integer comment_id %r — returning []", comment_id)
+            Log.cli.warning("get_comment_replies: non-integer comment_id %r — returning []", comment_id)
             return []
         return [c for c in all_comments if (c.get("parent") or {}).get("id") == root_id]
 

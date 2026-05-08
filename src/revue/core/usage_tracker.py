@@ -6,14 +6,13 @@ tracking call after completion.
 """
 from __future__ import annotations
 
-import logging
 import os
 import threading
 from typing import Optional
 
 import httpx
 
-logger = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 # Set REVUE_APP_HOST to the production domain once purchased (e.g. revue.io or revue.dev).
 # Defaults to the Fly.io host used during the pre-MVP period.
@@ -100,9 +99,9 @@ def _post_usage(payload: dict, client: httpx.Client | None) -> None:
             with httpx.Client(timeout=10.0) as c:
                 resp = c.post(TRACK_URL, json=payload)
         if resp.status_code not in (200, 201, 202, 204):
-            logger.warning(
+            Log.cli.warning(
                 "Usage tracking returned unexpected status %s — continuing.",
                 resp.status_code,
             )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Usage tracking failed (non-blocking): %s", exc)
+        Log.cli.warning("Usage tracking failed (non-blocking): %s", exc)

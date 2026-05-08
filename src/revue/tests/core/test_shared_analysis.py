@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -447,13 +447,16 @@ def test_run_shared_analysis_empty_fenced_response_returns_fallback():
     assert set(result.suggested_agents) == {"zara", "kai", "maya", "leo"}
 
 
-def test_run_shared_analysis_logs_warning_on_fallback(caplog):
+def test_run_shared_analysis_logs_warning_on_fallback():
     """Fallback must emit a WARNING log so CI can surface the real failure reason."""
-    import logging
-    with caplog.at_level(logging.WARNING, logger="revue.core.shared_analysis"):
+    # Arrange / Act
+    with patch("revue.core.shared_analysis.Log") as mock_log:
         result = run_shared_analysis([_fc("app.py")], _mock_client("not json"))
+
+    # Assert
     assert not result.success
-    assert "Shared analysis failed" in caplog.text
+    mock_log.nova.warning.assert_called()
+    assert "Shared analysis failed" in str(mock_log.nova.warning.call_args)
 
 
 # ---------------------------------------------------------------------------
@@ -497,14 +500,17 @@ def test_wrong_schema_old_classification_format_returns_fallback(caplog):
     assert result.orchestrator_response is None
 
 
-def test_empty_fenced_response_returns_fallback_no_exception(caplog):
+def test_empty_fenced_response_returns_fallback_no_exception():
     """```json\\n``` (empty fences) — realistic Anthropic edge case."""
-    import logging
-    with caplog.at_level(logging.WARNING, logger="revue.core.shared_analysis"):
+    # Arrange / Act
+    with patch("revue.core.shared_analysis.Log") as mock_log:
         result = run_shared_analysis([_fc("app.py")], _mock_client("```json\n```"))
+
+    # Assert
     assert not result.success
     assert result.error == "fallback"
-    assert "Shared analysis failed" in caplog.text
+    mock_log.nova.warning.assert_called()
+    assert "Shared analysis failed" in str(mock_log.nova.warning.call_args)
 
 
 def test_plain_empty_string_returns_fallback_no_exception():

@@ -9,7 +9,6 @@ See docs/architecture/comment-posting.md §State Machine for the full path map.
 """
 from __future__ import annotations
 
-import logging
 import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -20,7 +19,7 @@ from revue.core.diff_position_resolver import DiffPositionResolver
 if TYPE_CHECKING:
     pass
 
-_LOG = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -115,9 +114,9 @@ class HunkTracker:
         (richer metadata), but sentinel_state from API scans is merged in.
         """
         prior_unresolved = self._dedup_store.get_unresolved_fingerprints(platform_str, pr_num)
-        _LOG.debug("[HunkTracker] build_prior: platform=%s pr_num=%s dedup_store has %d entries", platform_str, pr_num, len(prior_unresolved))
+        Log.pipeline.debug("[HunkTracker] build_prior: platform=%s pr_num=%s dedup_store has %d entries", platform_str, pr_num, len(prior_unresolved))
         api_fps = self._build_api_fingerprint_map(pr_num)
-        _LOG.debug("[HunkTracker] build_prior: api_fingerprint_map returned %d fingerprints", len(api_fps))
+        Log.pipeline.debug("[HunkTracker] build_prior: api_fingerprint_map returned %d fingerprints", len(api_fps))
 
         # Merge: local store takes precedence for base fields, but sentinel_state
         # must come from the most recent source (compare sentinel_ts timestamps).
@@ -139,7 +138,7 @@ class HunkTracker:
             else:
                 merged[fp] = local
 
-        _LOG.debug("[HunkTracker] build_prior: merged result has %d entries", len(merged))
+        Log.pipeline.debug("[HunkTracker] build_prior: merged result has %d entries", len(merged))
         return merged
 
     def resolution_status(
@@ -161,19 +160,19 @@ class HunkTracker:
         comment_id = prior_entry.get("platform_comment_id", "")
         line_number: int = prior_entry.get("line_number", 0)
         pr_num: int = prior_entry.get("pr_num", 0)
-        _LOG.debug("[HunkTracker] resolution_status: fp=%s comment_id=%s line_number=%s", fingerprint, comment_id, line_number)
+        Log.pipeline.debug("[HunkTracker] resolution_status: fp=%s comment_id=%s line_number=%s", fingerprint, comment_id, line_number)
 
         # --- Terminal-state checks (no transition possible) ---
 
         if prior_entry.get("resolved", False):
             self._transition(state, HunkState.PLATFORM_RESOLVED)
-            _LOG.debug("[HunkTracker] fp=%s → PLATFORM_RESOLVED (thread resolved on platform)", fingerprint)
+            Log.pipeline.debug("[HunkTracker] fp=%s → PLATFORM_RESOLVED (thread resolved on platform)", fingerprint)
             return HunkState.PLATFORM_RESOLVED
 
         sentinel_state = prior_entry.get("sentinel_state", "")
         if sentinel_state == "auto_resolved":
             self._transition(state, HunkState.AUTO_RESOLVED)
-            _LOG.debug("[HunkTracker] fp=%s → AUTO_RESOLVED (prior sentinel)", fingerprint)
+            Log.pipeline.debug("[HunkTracker] fp=%s → AUTO_RESOLVED (prior sentinel)", fingerprint)
             return HunkState.AUTO_RESOLVED
 
         # --- Three-way diff check ---
@@ -186,14 +185,14 @@ class HunkTracker:
 
         if not new_diff:
             self._transition(prior_state, HunkState.UNTOUCHED)
-            _LOG.debug("[HunkTracker] fp=%s file not in diff → UNTOUCHED", fingerprint)
+            Log.pipeline.debug("[HunkTracker] fp=%s file not in diff → UNTOUCHED", fingerprint)
             return HunkState.UNTOUCHED
 
         # File is in diff. Check if the specific line still exists.
         if line_number == 0:
             # Location unknown (could not be extracted from API) — cannot determine resolution.
             self._transition(prior_state, HunkState.UNTOUCHED)
-            _LOG.debug("[HunkTracker] fp=%s line=0 unknown location → UNTOUCHED", fingerprint)
+            Log.pipeline.debug("[HunkTracker] fp=%s line=0 unknown location → UNTOUCHED", fingerprint)
             return HunkState.UNTOUCHED
 
         line_present = DiffPositionResolver.line_in_diff(line_number, new_diff)
@@ -201,12 +200,12 @@ class HunkTracker:
         if not line_present:
             # Lines were removed or file was restructured.
             self._transition(prior_state, HunkState.CODE_REMOVED)
-            _LOG.debug("[HunkTracker] fp=%s line=%s not in new diff → CODE_REMOVED", fingerprint, line_number)
+            Log.pipeline.debug("[HunkTracker] fp=%s line=%s not in new diff → CODE_REMOVED", fingerprint, line_number)
             return self._auto_resolve(comment_id, pr_num, fingerprint, "The code containing this finding has been removed.")
 
         # Lines still present and modified → semantic check via Nova.
         self._transition(prior_state, HunkState.CHANGED)
-        _LOG.debug("[HunkTracker] fp=%s line=%s present in diff → CHANGED, calling Nova", fingerprint, line_number)
+        Log.pipeline.debug("[HunkTracker] fp=%s line=%s present in diff → CHANGED, calling Nova", fingerprint, line_number)
 
         return self._call_nova(comment_id, pr_num, fingerprint, prior_entry, new_diff, prior_state=HunkState.CHANGED)
 
@@ -216,7 +215,7 @@ class HunkTracker:
 
     def _transition(self, from_state: HunkState, to_state: HunkState) -> None:
         """Assert that from_state → to_state is legal; raise otherwise."""
-        _LOG.debug("[HunkTracker] transition: %s → %s", from_state.value, to_state.value)
+        Log.pipeline.debug("[HunkTracker] transition: %s → %s", from_state.value, to_state.value)
         if from_state in _TERMINAL_STATES:
             raise InvalidStateTransitionError(
                 f"{from_state.value!r} is a terminal state — no transitions allowed"
@@ -239,7 +238,7 @@ class HunkTracker:
         if not m:
             return None
         sentinel = {"state": m.group(1), "fp": m.group(2), "ts": m.group(3)}
-        _LOG.debug("[HunkTracker] parsed sentinel: state=%s fp=%s ts=%s", sentinel["state"], sentinel["fp"], sentinel["ts"])
+        Log.pipeline.debug("[HunkTracker] parsed sentinel: state=%s fp=%s ts=%s", sentinel["state"], sentinel["fp"], sentinel["ts"])
         return sentinel
 
     def _most_recent_sentinel(self, replies: list[dict]) -> dict | None:
@@ -273,10 +272,10 @@ class HunkTracker:
         try:
             comments = self._adapter.get_existing_comments(pr_id=pr_num)
         except Exception as exc:
-            _LOG.warning("_build_api_fingerprint_map: get_existing_comments failed: %s", exc)
+            Log.pipeline.warning("_build_api_fingerprint_map: get_existing_comments failed: %s", exc)
             return result
 
-        _LOG.debug("[HunkTracker] scanning %d comments for fingerprints/sentinels", len(comments))
+        Log.pipeline.debug("[HunkTracker] scanning %d comments for fingerprints/sentinels", len(comments))
         for c in comments:
             try:
                 body = c.get("content", {}).get("raw", "") or c.get("body", "") or ""
@@ -300,7 +299,7 @@ class HunkTracker:
                         result[fp]["sentinel_state"] = reply_sentinel["state"]
                         result[fp]["sentinel_ts"] = reply_sentinel["ts"]
             except Exception as exc:
-                _LOG.warning("_build_api_fingerprint_map: error processing comment %s: %s", c.get("id", "?"), exc)
+                Log.pipeline.warning("_build_api_fingerprint_map: error processing comment %s: %s", c.get("id", "?"), exc)
 
         return result
 
@@ -312,7 +311,7 @@ class HunkTracker:
         self, comment_id: str, pr_num: int, fingerprint: str, message: str
     ) -> HunkState:
         """Post resolve reply with auto_resolved sentinel and resolve thread."""
-        _LOG.debug("[HunkTracker] _auto_resolve: comment_id=%s fp=%s", comment_id, fingerprint)
+        Log.pipeline.debug("[HunkTracker] _auto_resolve: comment_id=%s fp=%s", comment_id, fingerprint)
         if not comment_id:
             self._transition(HunkState.CODE_REMOVED, HunkState.REPLY_FAILED)
             return HunkState.REPLY_FAILED
@@ -323,7 +322,7 @@ class HunkTracker:
         ok = self._adapter.resolve_inline_comment(
             pr_id=pr_num, comment_id=comment_id, reply_body=reply_body
         )
-        _LOG.debug("[HunkTracker] _auto_resolve: resolve_inline_comment ok=%s", ok)
+        Log.pipeline.debug("[HunkTracker] _auto_resolve: resolve_inline_comment ok=%s", ok)
         if ok:
             self._transition(HunkState.CODE_REMOVED, HunkState.RESOLVE_REPLY_POSTED)
             return HunkState.RESOLVE_REPLY_POSTED
@@ -340,7 +339,7 @@ class HunkTracker:
         prior_state: HunkState = HunkState.CHANGED,
     ) -> HunkState:
         """Call ResolutionStrategy then handle result."""
-        _LOG.debug("[HunkTracker] _call_nova: fp=%s", fingerprint)
+        Log.pipeline.debug("[HunkTracker] _call_nova: fp=%s", fingerprint)
         prior_follow_up = prior_entry.get("prior_follow_up_body")
         original_finding = {
             "issue": prior_entry.get("comment_body", ""),
@@ -356,11 +355,11 @@ class HunkTracker:
                 prior_follow_up=prior_follow_up,
             )
         except Exception as exc:
-            _LOG.warning("ResolutionStrategy.resolve failed (fp=%s): %s", fingerprint, exc)
+            Log.pipeline.warning("ResolutionStrategy.resolve failed (fp=%s): %s", fingerprint, exc)
             self._transition(HunkState.NOVA_CALLED, HunkState.NOVA_ERROR)
             return HunkState.NOVA_ERROR
 
-        _LOG.debug("[HunkTracker] nova verdict: %s guidance=%r", result.verdict.value, result.guidance[:60] if result.guidance else "")
+        Log.pipeline.debug("[HunkTracker] nova verdict: %s guidance=%r", result.verdict.value, result.guidance[:60] if result.guidance else "")
         if result.verdict == ResolutionVerdict.FULLY:
             self._transition(HunkState.NOVA_CALLED, HunkState.FULLY_ADDRESSED)
             return self._post_full_resolution(comment_id, pr_num, fingerprint)
@@ -372,7 +371,7 @@ class HunkTracker:
         self, comment_id: str, pr_num: int, fingerprint: str
     ) -> HunkState:
         """Post resolve reply with auto_resolved sentinel."""
-        _LOG.debug("[HunkTracker] _post_full_resolution: comment_id=%s fp=%s", comment_id, fingerprint)
+        Log.pipeline.debug("[HunkTracker] _post_full_resolution: comment_id=%s fp=%s", comment_id, fingerprint)
         if not comment_id:
             self._transition(HunkState.FULLY_ADDRESSED, HunkState.REPLY_FAILED)
             return HunkState.REPLY_FAILED
@@ -385,7 +384,7 @@ class HunkTracker:
         ok = self._adapter.resolve_inline_comment(
             pr_id=pr_num, comment_id=comment_id, reply_body=reply_body
         )
-        _LOG.debug("[HunkTracker] _post_full_resolution: resolve_inline_comment ok=%s", ok)
+        Log.pipeline.debug("[HunkTracker] _post_full_resolution: resolve_inline_comment ok=%s", ok)
         if ok:
             self._transition(HunkState.FULLY_ADDRESSED, HunkState.RESOLVE_REPLY_POSTED)
             return HunkState.RESOLVE_REPLY_POSTED
@@ -396,7 +395,7 @@ class HunkTracker:
         self, comment_id: str, pr_num: int, fingerprint: str, guidance: str
     ) -> HunkState:
         """Post a follow-up reply with follow_up_posted sentinel (no resolve)."""
-        _LOG.debug("[HunkTracker] _post_follow_up: comment_id=%s fp=%s", comment_id, fingerprint)
+        Log.pipeline.debug("[HunkTracker] _post_follow_up: comment_id=%s fp=%s", comment_id, fingerprint)
         if not comment_id:
             self._transition(HunkState.NOT_FULLY_ADDRESSED, HunkState.REPLY_FAILED)
             return HunkState.REPLY_FAILED
@@ -407,12 +406,12 @@ class HunkTracker:
         reply_fn = getattr(self._adapter, "reply_to_comment", None)
         if callable(reply_fn):
             reply_id = reply_fn(pr_num, comment_id, reply_body)
-            _LOG.debug("[HunkTracker] _post_follow_up: reply posted reply_id=%s", reply_id)
+            Log.pipeline.debug("[HunkTracker] _post_follow_up: reply posted reply_id=%s", reply_id)
             if reply_id:
                 self._transition(HunkState.NOT_FULLY_ADDRESSED, HunkState.FOLLOW_UP_POSTED)
                 return HunkState.FOLLOW_UP_POSTED
         else:
-            _LOG.warning("adapter lacks reply_to_comment — follow-up not posted for comment %s", comment_id)
+            Log.pipeline.warning("adapter lacks reply_to_comment — follow-up not posted for comment %s", comment_id)
 
         self._transition(HunkState.NOT_FULLY_ADDRESSED, HunkState.REPLY_FAILED)
         return HunkState.REPLY_FAILED

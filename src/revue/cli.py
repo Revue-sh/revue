@@ -21,12 +21,8 @@ logging.basicConfig(
     level=os.environ.get("REVUE_LOG_LEVEL", "WARNING").upper(),
     format="%(levelname)s %(name)s %(message)s",
 )
-# Suppress third-party HTTP library noise — these loggers flood output at DEBUG level
-# with per-request wire detail that is never needed for Revue diagnostics.
-logging.getLogger("anthropic._base_client").setLevel("WARNING")
-logging.getLogger("httpcore").setLevel("WARNING")
-logging.getLogger("httpx").setLevel("WARNING")
 
+from revue.core.logging_channels import Log  # noqa: F401, E402
 from revue.core.config_loader import (
     DEFAULT_REVUE_YML,
     load_config,

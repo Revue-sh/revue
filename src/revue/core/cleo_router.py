@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from .models import FileChange
 from .team_loader import load_all_teams, TeamConfig
+from revue.core.logging_channels import Log
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -93,7 +94,7 @@ def _build_team_registry() -> dict[str, list[str]]:
             registry[team_id] = config.agents
     except Exception as exc:  # pragma: no cover
         import logging
-        logging.getLogger(__name__).warning("Failed to load team YAMLs: %s", exc)
+        Log.agent.warning("Failed to load team YAMLs: %s", exc)
     return registry
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -374,11 +374,16 @@ def test_load_custom_agents_none():
     assert load_custom_agents(None) == []
 
 
-def test_load_custom_agents_nonexistent_path(caplog):
+def test_load_custom_agents_nonexistent_path():
     """Non-existent directory returns [] and logs warning."""
-    result = load_custom_agents("/nonexistent/path/to/agents")
+    # Arrange / Act
+    with patch("revue.core.agent_loader.Log") as mock_log:
+        result = load_custom_agents("/nonexistent/path/to/agents")
+
+    # Assert
     assert result == []
-    assert "does not exist" in caplog.text
+    mock_log.agent.warning.assert_called_once()
+    assert "does not exist" in str(mock_log.agent.warning.call_args)
 
 
 def test_load_custom_agents_valid_yaml(tmp_path):
@@ -398,14 +403,23 @@ def test_load_custom_agents_valid_markdown(tmp_path):
     assert defs[0].name == "md-agent"
 
 
-def test_load_custom_agents_skips_invalid(tmp_path, caplog):
+def test_load_custom_agents_skips_invalid(tmp_path):
     """Invalid files are skipped with a warning, valid files still load."""
+    # Arrange
     (tmp_path / "good.yaml").write_text(CUSTOM_YAML)
     (tmp_path / "bad.yaml").write_text("role: missing name\n")
-    defs = load_custom_agents(str(tmp_path))
+
+    # Act
+    with patch("revue.core.agent_loader.Log") as mock_log:
+        defs = load_custom_agents(str(tmp_path))
+
+    # Assert
     assert len(defs) == 1
     assert defs[0].name == "custom-lint"
-    assert "Skipping invalid custom agent" in caplog.text
+    mock_log.agent.warning.assert_called()
+    assert "Skipping invalid custom agent" in " ".join(
+        str(c) for c in mock_log.agent.warning.call_args_list
+    )
 
 
 def test_load_custom_agents_rejects_symlink_escape(tmp_path):

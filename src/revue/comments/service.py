@@ -1,7 +1,6 @@
 """Comment resolution service - orchestrates auto-resolution logic."""
 from __future__ import annotations
 
-import logging
 import os
 import re
 from enum import Enum
@@ -16,7 +15,7 @@ from .file_store import CommentFileStore
 from .fingerprint import fingerprint
 from .json_store import PerPRCommentStore
 
-_log = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 
 class CommentResolutionService:
@@ -430,7 +429,7 @@ class WontFixReplyService:
 
         threads = self._collect_threads_with_replies(pr_number)
         if not threads:
-            _log.info(
+            Log.pipeline.info(
                 "No threads with replies for PR #%d — skipping classify.",
                 pr_number,
             )
@@ -462,7 +461,7 @@ class WontFixReplyService:
             decisions = consolidator.analyse_reply_threads(threads_for_ai)
             decisions += already_handled_decisions
         except Exception:
-            _log.exception(
+            Log.pipeline.exception(
                 "analyse_reply_threads failed for PR #%d. Thread count=%d",
                 pr_number,
                 len(threads_for_ai),
@@ -594,12 +593,12 @@ class WontFixReplyService:
                                 flush=True,
                             )
                         else:
-                            _log.warning(
+                            Log.pipeline.warning(
                                 "resolve_comment returned False for terminal recovery, comment %s",
                                 t_comment_id,
                             )
                     except Exception:
-                        _log.exception(
+                        Log.pipeline.exception(
                             "resolve_comment failed for terminal recovery, comment %s",
                             t_comment_id,
                         )
@@ -609,7 +608,7 @@ class WontFixReplyService:
 
             thread_entry = thread_by_fp.get(fingerprint_val)
             if thread_entry is None:
-                _log.warning(
+                Log.pipeline.warning(
                     "No thread found for fingerprint %s — skipping respond.",
                     fingerprint_val,
                 )
@@ -651,7 +650,7 @@ class WontFixReplyService:
                         self._ensure_lessons_pr(pr_number, pattern, rationale, dec)
                     final_reply = reply_draft.replace("[LESSONS_PR_URL]", lessons_pr_url)
                 except Exception:
-                    _log.warning(
+                    Log.pipeline.warning(
                         "Lessons PR creation/update failed for PR #%d pattern '%s'. "
                         "Posting YAML block for manual apply.",
                         pr_number,
@@ -689,7 +688,7 @@ class WontFixReplyService:
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
-                    _log.exception(
+                    Log.pipeline.exception(
                         "post_reply failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
@@ -706,12 +705,12 @@ class WontFixReplyService:
                     if ok:
                         print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
                     else:
-                        _log.warning(
+                        Log.pipeline.warning(
                             "resolve_comment returned False for comment %s (decision=%s) on PR #%d",
                             comment_id, dec, pr_number,
                         )
                 except Exception:
-                    _log.exception(
+                    Log.pipeline.exception(
                         "resolve_comment failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
@@ -736,7 +735,7 @@ class WontFixReplyService:
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
-                    _log.exception(
+                    Log.pipeline.exception(
                         "post_reply failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
@@ -754,7 +753,7 @@ class WontFixReplyService:
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
-                    _log.exception(
+                    Log.pipeline.exception(
                         "post_reply failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
@@ -775,7 +774,7 @@ class WontFixReplyService:
                         )
                         print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                     except Exception:
-                        _log.exception(
+                        Log.pipeline.exception(
                             "post_reply failed for comment %s (decision=%s) on PR #%d",
                             comment_id, dec, pr_number,
                         )
@@ -790,12 +789,12 @@ class WontFixReplyService:
                     if ok:
                         print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
                     else:
-                        _log.warning(
+                        Log.pipeline.warning(
                             "resolve_comment returned False for comment %s (decision=%s) on PR #%d",
                             comment_id, dec, pr_number,
                         )
                 except Exception:
-                    _log.exception(
+                    Log.pipeline.exception(
                         "resolve_comment failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
@@ -827,7 +826,7 @@ class WontFixReplyService:
                     )
                     print(f"[revue]   💬  respond(): replied to comment {comment_id} ({dec})", flush=True)
                 except Exception:
-                    _log.exception(
+                    Log.pipeline.exception(
                         "post_reply failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
@@ -842,12 +841,12 @@ class WontFixReplyService:
                     if ok:
                         print(f"[revue]   💬  respond(): resolved thread {comment_id} ({dec})", flush=True)
                     else:
-                        _log.warning(
+                        Log.pipeline.warning(
                             "resolve_comment returned False for comment %s (decision=%s) on PR #%d",
                             comment_id, dec, pr_number,
                         )
                 except Exception:
-                    _log.exception(
+                    Log.pipeline.exception(
                         "resolve_comment failed for comment %s (decision=%s) on PR #%d",
                         comment_id, dec, pr_number,
                     )
@@ -885,7 +884,7 @@ class WontFixReplyService:
                 self._repo_owner, self._repo_name, pr_number
             )
         except Exception:
-            _log.exception(
+            Log.pipeline.exception(
                 "Failed to fetch PR comments for PR #%d", pr_number
             )
             print(f"[revue]   💬  ERROR: could not fetch PR comments — won't-fix tracking skipped.", flush=True)

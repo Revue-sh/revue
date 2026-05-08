@@ -226,7 +226,7 @@ def test_openai_complete_logs_cached_tokens(mock_openai_cls: MagicMock) -> None:
     config = _make_config(provider="openai")
     client = OpenAIClient(config)
 
-    with patch("revue.core.ai_client._log") as mock_log:
+    with patch("revue.core.log.Log.nova") as mock_log:
         result = client.complete([{"role": "user", "content": "test"}])
         assert result.text == "result"
         mock_log.debug.assert_called_once()
@@ -429,7 +429,7 @@ def test_anthropic_complete_logs_cache_usage(mock_anthropic_cls: MagicMock) -> N
     client = AnthropicClient(config)
 
     import logging
-    with patch("revue.core.ai_client._log") as mock_log:
+    with patch("revue.core.log.Log.nova") as mock_log:
         client.complete([{"role": "user", "content": "test"}])
         mock_log.debug.assert_called_once()
         log_args = mock_log.debug.call_args[0]
@@ -719,7 +719,7 @@ def test_openai_warns_when_usage_is_none(mock_openai_cls: MagicMock) -> None:
     config = _make_config(provider="openai")
     client = OpenAIClient(config)
 
-    with patch("revue.core.ai_client._log") as mock_log:
+    with patch("revue.core.log.Log.nova") as mock_log:
         result = client.complete([{"role": "user", "content": "test"}])
         assert result.text == "ok"
         assert result.usage.input_tokens == 0
@@ -800,7 +800,7 @@ def test_azure_logs_cached_tokens(mock_azure_cls: MagicMock) -> None:
     )
     client = AzureOpenAIClient(config)
 
-    with patch("revue.core.ai_client._log") as mock_log:
+    with patch("revue.core.log.Log.nova") as mock_log:
         result = client.complete([{"role": "user", "content": "test"}])
         assert result.text == "result"
         assert result.usage.cache_read_input_tokens == 512
@@ -827,7 +827,7 @@ def test_openrouter_logs_cached_tokens(mock_openai_cls: MagicMock) -> None:
     config = _make_config(provider="openrouter")
     client = OpenRouterClient(config)
 
-    with patch("revue.core.ai_client._log") as mock_log:
+    with patch("revue.core.log.Log.nova") as mock_log:
         result = client.complete([{"role": "user", "content": "test"}])
         assert result.text == "result"
         assert result.usage.cache_read_input_tokens == 768
@@ -854,7 +854,7 @@ def test_custom_logs_cached_tokens(mock_openai_cls: MagicMock) -> None:
     config = _make_config(provider="custom", base_url="https://gateway.internal/v1")
     client = CustomGatewayClient(config)
 
-    with patch("revue.core.ai_client._log") as mock_log:
+    with patch("revue.core.log.Log.nova") as mock_log:
         result = client.complete([{"role": "user", "content": "test"}])
         assert result.text == "result"
         assert result.usage.cache_read_input_tokens == 256

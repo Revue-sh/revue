@@ -18,7 +18,6 @@ Architecture ref: docs/architecture/comment-posting.md
 from __future__ import annotations
 
 import json
-import logging
 import re
 import sys
 from datetime import datetime, timezone
@@ -37,7 +36,7 @@ from revue.comments.models import (
 from revue.core.diff_position_resolver import DiffPositionResolver
 from revue.core.vcs_adapter import DiffPosition, compute_gitlab_line_code
 
-_LOG = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 # Matches the severity badge in existing Revue comment bodies.
 _FINDING_SEV_RE = re.compile(r"\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(HIGH|MEDIUM|LOW|INFO)\]")
@@ -640,7 +639,7 @@ class Poster:
                 summary_sink=summary_sink or [],
             )
         except Exception as exc:
-            _LOG.warning("build_enhanced_summary failed: %s", exc)
+            Log.cli.warning("build_enhanced_summary failed: %s", exc)
             total = sum(total_findings.values())
             return f"{_REVUE_SUMMARY_MARKER}\n\nReview #{revision} — {total} finding(s) found."
 
@@ -654,7 +653,7 @@ class Poster:
         try:
             comments = self._adapter.get_existing_comments(pr_id=pr_num)
         except Exception as exc:
-            _LOG.warning("get_existing_comments failed for PR %s: %s", pr_num, exc)
+            Log.cli.warning("get_existing_comments failed for PR %s: %s", pr_num, exc)
             return result
         for c in comments:
             try:
@@ -664,7 +663,7 @@ class Poster:
                 _apply_sentinel_strategy(body, effective_id, result, resolved=resolved)
                 _apply_location_strategy(c, body, effective_id, result, gen_fingerprint)
             except Exception as exc:
-                _LOG.warning("fingerprint scan failed for comment %s: %s", c.get("id", "?"), exc)
+                Log.cli.warning("fingerprint scan failed for comment %s: %s", c.get("id", "?"), exc)
         return result
 
     # ------------------------------------------------------------------

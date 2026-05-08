@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Final, Protocol
 
-_log = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 import anthropic
 import httpx
@@ -195,7 +195,7 @@ def _build_openai_token_usage(usage: Any, provider_tag: str) -> TokenUsage:
     token counts will default to 0, which may mask quota or billing issues.
     """
     if usage is None:
-        _log.warning("[%s] API response missing usage information — token counts defaulting to 0", provider_tag)
+        Log.nova.warning("[%s] API response missing usage information — token counts defaulting to 0", provider_tag)
     cached = _extract_cached_tokens(usage)
     return TokenUsage(
         input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
@@ -282,7 +282,7 @@ class OpenAIClient:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
             token_usage = _build_openai_token_usage(resp.usage, "openai")
-            _log.debug(
+            Log.nova.debug(
                 "[openai] cached=%s prompt=%s completion=%s",
                 token_usage.cache_read_input_tokens,
                 token_usage.input_tokens,
@@ -355,7 +355,7 @@ class AnthropicClient:
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
             )
-            _log.debug(
+            Log.nova.debug(
                 "[anthropic] cache_creation=%s cache_read=%s input=%s output=%s",
                 token_usage.cache_creation_input_tokens,
                 token_usage.cache_read_input_tokens,
@@ -415,7 +415,7 @@ class AzureOpenAIClient:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
             token_usage = _build_openai_token_usage(resp.usage, "azure")
-            _log.debug(
+            Log.nova.debug(
                 "[azure] cached=%s prompt=%s completion=%s",
                 token_usage.cache_read_input_tokens,
                 token_usage.input_tokens,
@@ -466,7 +466,7 @@ class OpenRouterClient:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
             token_usage = _build_openai_token_usage(resp.usage, "openrouter")
-            _log.debug(
+            Log.nova.debug(
                 "[openrouter] cached=%s prompt=%s completion=%s",
                 token_usage.cache_read_input_tokens,
                 token_usage.input_tokens,
@@ -513,7 +513,7 @@ class CustomGatewayClient:
                 kwargs["prompt_cache_key"] = cache_key
             resp = self._client.chat.completions.create(**kwargs)
             token_usage = _build_openai_token_usage(resp.usage, "custom")
-            _log.debug(
+            Log.nova.debug(
                 "[custom] cached=%s prompt=%s completion=%s",
                 token_usage.cache_read_input_tokens,
                 token_usage.input_tokens,

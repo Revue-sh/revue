@@ -7,7 +7,6 @@ Follows OCP: SharedAnalysisResult is immutable; agents read, never write.
 from __future__ import annotations
 
 import json
-import logging
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -19,7 +18,7 @@ from .agent_names import SHARED_ANALYSIS
 from .ai_client import _CACHE_CONTROL_1H, _JSON_FORMAT_PROVIDERS
 from .models import FileChange
 
-_log = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 _EXT_TO_LANG: dict[str, str] = {
     ".py": "python", ".js": "javascript", ".ts": "typescript",
@@ -252,7 +251,7 @@ def run_shared_analysis(
             cache_key=diff_hash,
             agent_name=SHARED_ANALYSIS,
         ).text
-        _log.debug("Shared analysis raw response (%d chars): %.300r", len(raw), raw)
+        Log.nova.debug("Shared analysis raw response (%d chars): %.300r", len(raw), raw)
         # Strip markdown code fences that LLMs often wrap responses in
         clean = raw.strip()
         clean = re.sub(r"^```(?:json)?\s*\n?", "", clean)
@@ -281,8 +280,8 @@ def run_shared_analysis(
             orchestrator_response=orch_response,
         )
     except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
-        _log.warning("Shared analysis failed: %s", exc)
+        Log.nova.warning("Shared analysis failed: %s", exc)
         return SharedAnalysisResult.fallback(languages)
     except (OSError, AttributeError) as exc:
-        _log.error("Shared analysis failed (system error): %s", exc, exc_info=True)
+        Log.nova.exception("Shared analysis failed (system error): %s", exc)
         return SharedAnalysisResult.fallback(languages)

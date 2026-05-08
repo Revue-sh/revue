@@ -10,12 +10,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import logging
 import urllib.error
 import urllib.request
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 from revue.core.models import FileChange, CodeFix
 from revue.core.vcs_adapter import (
@@ -178,7 +177,7 @@ class GitHubAdapter:
             comment_id = comments[0].get("id") if comments else resp.get("id")
             return str(comment_id) if comment_id is not None else None
         except Exception as exc:
-            logger.error("post_review_comment failed for PR %d: %s", pr_id, exc)
+            Log.cli.error("post_review_comment failed for PR %d: %s", pr_id, exc)
             return None
 
     # Backward-compat alias — remove in v2.0
@@ -200,7 +199,7 @@ class GitHubAdapter:
             comment_id = resp.get("id")
             return str(comment_id) if comment_id is not None else None
         except Exception as exc:
-            logger.error("post_summary_comment failed for PR %d: %s", pr_id, exc)
+            Log.cli.error("post_summary_comment failed for PR %d: %s", pr_id, exc)
             return None
 
     def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool:
@@ -218,7 +217,7 @@ class GitHubAdapter:
             )
             return True
         except Exception as exc:
-            logger.error("update_comment failed for PR %d comment %s: %s", pr_id, comment_id, exc)
+            Log.cli.error("update_comment failed for PR %d comment %s: %s", pr_id, comment_id, exc)
             return False
 
     def get_existing_comments(self, pr_id: int) -> list[dict]:
@@ -231,7 +230,7 @@ class GitHubAdapter:
                 "GET", f"/repos/{self._repo}/pulls/{pr_id}/comments"
             )
         except Exception as exc:
-            logger.error("get_existing_comments failed for PR %d: %s", pr_id, exc)
+            Log.cli.error("get_existing_comments failed for PR %d: %s", pr_id, exc)
             return []
 
     def get_thread_replies(self, pr_id: int, comment_id: str) -> list[dict]:
@@ -256,7 +255,7 @@ class GitHubAdapter:
                 for c in replies
             ]
         except Exception as exc:
-            logger.error(
+            Log.cli.error(
                 "get_thread_replies failed for PR %d comment %s: %s",
                 pr_id, comment_id, exc,
             )
@@ -277,7 +276,7 @@ class GitHubAdapter:
             )
             return str(result.get("id", ""))
         except Exception as exc:
-            logger.error(
+            Log.cli.error(
                 "reply_to_comment failed for PR %d comment %s: %s",
                 pr_id, comment_id, exc,
             )
@@ -295,7 +294,7 @@ class GitHubAdapter:
                 "GET", f"/repos/{self._repo}/issues/{pr_id}/comments"
             )
         except Exception as exc:
-            logger.error("get_issue_comments failed for PR %d: %s", pr_id, exc)
+            Log.cli.error("get_issue_comments failed for PR %d: %s", pr_id, exc)
             return []
 
     def _graphql(self, query: str, variables: dict) -> dict:
@@ -379,7 +378,7 @@ class GitHubAdapter:
             )
             return True
         except Exception as exc:
-            logger.error(
+            Log.cli.error(
                 "post_suggested_change failed for PR %d: %s", pr_id, exc
             )
             return False
@@ -429,7 +428,7 @@ class GitHubAdapter:
                     {"body": reply_body},
                 )
             except Exception as exc:
-                logger.warning(
+                Log.cli.warning(
                     "resolve_inline_comment: reply failed for PR %d comment %s: %s",
                     pr_id, comment_id, exc,
                 )
@@ -468,7 +467,7 @@ class GitHubAdapter:
                     break
 
             if not thread_id:
-                logger.warning(
+                Log.cli.warning(
                     "resolve_inline_comment: no thread found for comment %s on PR %d",
                     comment_id, pr_id,
                 )
@@ -487,10 +486,10 @@ class GitHubAdapter:
                 .get("thread", {}).get("isResolved", False)
             )
             if resolved:
-                logger.info("Resolved comment thread %s on PR %d", comment_id, pr_id)
+                Log.cli.info("Resolved comment thread %s on PR %d", comment_id, pr_id)
             return resolved
         except Exception as exc:
-            logger.warning(
+            Log.cli.warning(
                 "resolve_inline_comment failed for PR %d comment %s: %s",
                 pr_id, comment_id, exc,
             )

@@ -28,13 +28,12 @@ Schema (team YAML):
 """
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
-_LOG = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 # Default directory — relative to this file's location
 _TEAMS_DIR = Path(__file__).parent.parent / "teams"
@@ -143,7 +142,7 @@ def load_all_teams(teams_dir: Path | None = None) -> dict[str, TeamConfig]:
     teams: dict[str, TeamConfig] = {}
 
     if not directory.exists():
-        _LOG.warning("Teams directory does not exist: %s", directory)
+        Log.agent.warning("Teams directory does not exist: %s", directory)
         return teams
 
     for path in sorted(directory.glob("team-*.yml")):
@@ -152,7 +151,7 @@ def load_all_teams(teams_dir: Path | None = None) -> dict[str, TeamConfig]:
             config = load_team(team_id, teams_dir=directory)
             teams[team_id] = config
         except Exception as exc:
-            _LOG.warning("Skipping invalid team file %s: %s", path, exc)
+            Log.agent.warning("Skipping invalid team file %s: %s", path, exc)
 
     return teams
 
@@ -168,5 +167,5 @@ def get_team_agents(team_id: str, teams_dir: Path | None = None) -> list[str]:
         config = load_team(team_id, teams_dir=teams_dir)
         return config.agents
     except (FileNotFoundError, ValueError) as exc:
-        _LOG.warning("get_team_agents(%r) failed: %s", team_id, exc)
+        Log.agent.warning("get_team_agents(%r) failed: %s", team_id, exc)
         return []

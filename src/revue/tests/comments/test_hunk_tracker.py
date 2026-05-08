@@ -13,7 +13,7 @@ Design contract:
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from revue.comments.hunk_tracker import (
     HunkTracker,
@@ -887,13 +887,9 @@ def test_build_prior_encodes_sentinel_state_in_entry():
 # Phase 7: HunkTracker debug logging — [HunkTracker] prefix distinguishability
 # ---------------------------------------------------------------------------
 
-_LOGGER_NAME = "revue.comments.hunk_tracker"
 
-
-def test_debug_logs_platform_resolved_path(caplog):
+def test_debug_logs_platform_resolved_path():
     """resolution_status() logs a [HunkTracker] debug message when path is PLATFORM_RESOLVED."""
-    import logging
-
     # Arrange
     tracker = HunkTracker(
         adapter=MagicMock(),
@@ -902,21 +898,18 @@ def test_debug_logs_platform_resolved_path(caplog):
     )
 
     # Act
-    with caplog.at_level(logging.DEBUG, logger=_LOGGER_NAME):
+    with patch("revue.comments.hunk_tracker.Log") as mock_log:
         tracker.resolution_status(_FP_PATH_1, _prior(resolved=True), new_diff="")
 
-    # Assert — at least one debug record mentions [HunkTracker] and the fingerprint
-    ht_records = [r for r in caplog.records if r.name == _LOGGER_NAME and r.levelno == logging.DEBUG]
-    assert ht_records, "expected at least one [HunkTracker] DEBUG record for PLATFORM_RESOLVED path"
-    messages = " ".join(r.getMessage() for r in ht_records)
-    assert "[HunkTracker]" in messages, f"[HunkTracker] prefix missing in: {messages!r}"
-    assert _FP_PATH_1 in messages, f"fingerprint {_FP_PATH_1!r} missing in log output"
+    # Assert — at least one debug call with [HunkTracker] prefix and fingerprint
+    assert mock_log.pipeline.debug.call_count >= 1
+    debug_calls = " ".join(str(c) for c in mock_log.pipeline.debug.call_args_list)
+    assert "[HunkTracker]" in debug_calls, f"[HunkTracker] prefix missing in: {debug_calls!r}"
+    assert _FP_PATH_1 in debug_calls, f"fingerprint {_FP_PATH_1!r} missing in log output"
 
 
-def test_debug_logs_untouched_path(caplog):
+def test_debug_logs_untouched_path():
     """resolution_status() logs a [HunkTracker] debug message when path is UNTOUCHED."""
-    import logging
-
     # Arrange
     tracker = HunkTracker(
         adapter=MagicMock(),
@@ -925,21 +918,18 @@ def test_debug_logs_untouched_path(caplog):
     )
 
     # Act — empty diff → file not touched
-    with caplog.at_level(logging.DEBUG, logger=_LOGGER_NAME):
+    with patch("revue.comments.hunk_tracker.Log") as mock_log:
         tracker.resolution_status(_FP_PATH_3, _prior(resolved=False), new_diff="")
 
     # Assert
-    ht_records = [r for r in caplog.records if r.name == _LOGGER_NAME and r.levelno == logging.DEBUG]
-    assert ht_records, "expected at least one [HunkTracker] DEBUG record for UNTOUCHED path"
-    messages = " ".join(r.getMessage() for r in ht_records)
-    assert "[HunkTracker]" in messages
-    assert _FP_PATH_3 in messages
+    assert mock_log.pipeline.debug.call_count >= 1
+    debug_calls = " ".join(str(c) for c in mock_log.pipeline.debug.call_args_list)
+    assert "[HunkTracker]" in debug_calls
+    assert _FP_PATH_3 in debug_calls
 
 
-def test_debug_logs_code_removed_path(caplog):
+def test_debug_logs_code_removed_path():
     """resolution_status() logs a [HunkTracker] debug message when path is CODE_REMOVED."""
-    import logging
-
     # Arrange
     adapter = MagicMock()
     adapter.resolve_inline_comment.return_value = True
@@ -951,21 +941,18 @@ def test_debug_logs_code_removed_path(caplog):
     diff = "@@ -8,5 +8,0 @@ def foo():\n-    x = 1\n-    y = 2\n"
 
     # Act — file in diff but line 10 absent → CODE_REMOVED
-    with caplog.at_level(logging.DEBUG, logger=_LOGGER_NAME):
+    with patch("revue.comments.hunk_tracker.Log") as mock_log:
         tracker.resolution_status(_FP_PATH_4, _prior(line_number=10), new_diff=diff)
 
     # Assert
-    ht_records = [r for r in caplog.records if r.name == _LOGGER_NAME and r.levelno == logging.DEBUG]
-    assert ht_records, "expected at least one [HunkTracker] DEBUG record for CODE_REMOVED path"
-    messages = " ".join(r.getMessage() for r in ht_records)
-    assert "[HunkTracker]" in messages
-    assert _FP_PATH_4 in messages
+    assert mock_log.pipeline.debug.call_count >= 1
+    debug_calls = " ".join(str(c) for c in mock_log.pipeline.debug.call_args_list)
+    assert "[HunkTracker]" in debug_calls
+    assert _FP_PATH_4 in debug_calls
 
 
-def test_debug_logs_every_state_transition(caplog):
+def test_debug_logs_every_state_transition():
     """_transition() logs a [HunkTracker] debug record for every legal state change."""
-    import logging
-
     # Arrange
     tracker = HunkTracker(
         adapter=MagicMock(),
@@ -974,21 +961,18 @@ def test_debug_logs_every_state_transition(caplog):
     )
 
     # Act — INITIAL → PLATFORM_RESOLVED is one legal transition
-    with caplog.at_level(logging.DEBUG, logger=_LOGGER_NAME):
+    with patch("revue.comments.hunk_tracker.Log") as mock_log:
         tracker._transition(HunkState.INITIAL, HunkState.PLATFORM_RESOLVED)
 
     # Assert — transition record includes both state names
-    ht_records = [r for r in caplog.records if r.name == _LOGGER_NAME and r.levelno == logging.DEBUG]
-    assert ht_records, "expected a DEBUG record from _transition()"
-    messages = " ".join(r.getMessage() for r in ht_records)
-    assert "[HunkTracker]" in messages
-    assert "platform_resolved" in messages.lower()
+    assert mock_log.pipeline.debug.call_count >= 1
+    debug_calls = " ".join(str(c) for c in mock_log.pipeline.debug.call_args_list)
+    assert "[HunkTracker]" in debug_calls
+    assert "platform_resolved" in debug_calls.lower()
 
 
-def test_debug_logs_build_prior_fingerprint_counts(caplog):
+def test_debug_logs_build_prior_fingerprint_counts():
     """build_prior() logs [HunkTracker] debug entries with dedup and api fingerprint counts."""
-    import logging
-
     # Arrange
     fp = "abcd1234efab5678"
     sentinel = _sentinel("auto_resolved", fp=fp)
@@ -1000,11 +984,12 @@ def test_debug_logs_build_prior_fingerprint_counts(caplog):
     tracker = HunkTracker(adapter=adapter, dedup_store=store, resolution_strategy=MagicMock())
 
     # Act
-    with caplog.at_level(logging.DEBUG, logger=_LOGGER_NAME):
+    with patch("revue.comments.hunk_tracker.Log") as mock_log:
         tracker.build_prior(platform_str="bitbucket", pr_num=99)
 
     # Assert — at least two build_prior debug records (entry + result)
-    ht_records = [r for r in caplog.records if r.name == _LOGGER_NAME and r.levelno == logging.DEBUG]
-    assert len(ht_records) >= 2, f"expected ≥2 DEBUG records from build_prior(), got {len(ht_records)}"
-    messages = " ".join(r.getMessage() for r in ht_records)
-    assert "[HunkTracker]" in messages
+    assert mock_log.pipeline.debug.call_count >= 2, (
+        f"expected ≥2 DEBUG records from build_prior(), got {mock_log.pipeline.debug.call_count}"
+    )
+    debug_calls = " ".join(str(c) for c in mock_log.pipeline.debug.call_args_list)
+    assert "[HunkTracker]" in debug_calls

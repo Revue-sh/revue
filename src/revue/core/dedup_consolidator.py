@@ -17,7 +17,7 @@ from typing import Any
 
 from .agent_names import NOVA
 
-_log = logging.getLogger(__name__)
+from revue.core.logging_channels import Log  # logging_channels
 
 # ---------------------------------------------------------------------------
 # Won't-fix reply thread analysis (REVUE-112)
@@ -151,7 +151,7 @@ class NovaConsolidator:
             try:
                 all_decisions.extend(self._analyse_batch(batch))
             except Exception:
-                _log.exception(
+                Log.pipeline.exception(
                     "NovaConsolidator.analyse_reply_threads: batch %d/%d failed — skipping. "
                     "Thread fingerprints: %s",
                     i // _THREAD_BATCH_SIZE + 1,
@@ -176,7 +176,7 @@ class NovaConsolidator:
                 agent_name=NOVA,
             )
         except Exception:
-            _log.exception(
+            Log.pipeline.exception(
                 "NovaConsolidator._analyse_batch: AI call failed. "
                 "Thread count=%d, fingerprints=%s",
                 len(batch),

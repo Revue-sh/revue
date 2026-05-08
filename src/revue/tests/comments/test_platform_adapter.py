@@ -717,7 +717,7 @@ def test_fetch_review_thread_ids_stops_at_max_pages() -> None:
     pages = [make_page(f"cursor_{i}") for i in range(10)]
 
     with patch.object(gh, "_graphql", side_effect=pages) as mock_gql, \
-            patch("revue.comments.platform_adapter._log.warning") as mock_log:
+            patch("revue.core.log.Log.cli.warning") as mock_log:
         result = gh.fetch_review_thread_ids(1, "owner", "repo", max_pages=3)
 
     assert mock_gql.call_count == 3
@@ -748,7 +748,7 @@ def test_fetch_review_thread_ids_breaks_on_null_end_cursor() -> None:
     }
 
     with patch.object(gh, "_graphql", side_effect=[page1, page2]) as mock_gql, \
-            patch("revue.comments.platform_adapter._log.warning") as mock_log:
+            patch("revue.core.log.Log.cli.warning") as mock_log:
         result = gh.fetch_review_thread_ids(1, "owner", "repo")
 
     assert mock_gql.call_count == 2
@@ -791,7 +791,7 @@ def test_fetch_review_thread_ids_breaks_on_stuck_cursor() -> None:
     }
 
     with patch.object(gh, "_graphql", side_effect=[page1, page2]) as mock_gql, \
-            patch("revue.comments.platform_adapter._log.warning") as mock_log:
+            patch("revue.core.log.Log.cli.warning") as mock_log:
         result = gh.fetch_review_thread_ids(1, "owner", "repo")
 
     assert mock_gql.call_count == 2
@@ -1475,7 +1475,7 @@ def test_bitbucket_resolve_conversation(adapter) -> None:
     mock_response.status_code = 200
 
     with patch("httpx.post", return_value=mock_response) as mock_post, \
-         patch("revue.comments.platform_adapter._log.error") as mock_log:
+         patch("revue.core.log.Log.cli.error") as mock_log:
         adapter.resolve_conversation("workspace", "repo", 42, "100")
 
     mock_post.assert_called_once()
@@ -1490,7 +1490,7 @@ def test_bitbucket_resolve_conversation_idempotent_on_409(adapter) -> None:
     mock_response.status_code = 409
 
     with patch("httpx.post", return_value=mock_response), \
-         patch("revue.comments.platform_adapter._log.error") as mock_log:
+         patch("revue.core.log.Log.cli.error") as mock_log:
         adapter.resolve_conversation("workspace", "repo", 42, "100")
 
     mock_log.assert_not_called()
@@ -1502,7 +1502,7 @@ def test_bitbucket_resolve_conversation_no_error_on_failure(adapter) -> None:
     mock_response.status_code = 500
 
     with patch("httpx.post", return_value=mock_response), \
-         patch("revue.comments.platform_adapter._log.error") as mock_log:
+         patch("revue.core.log.Log.cli.error") as mock_log:
         adapter.resolve_conversation("workspace", "repo", 42, "100")
 
     mock_log.assert_called_once()
@@ -1512,7 +1512,7 @@ def test_bitbucket_resolve_conversation_no_error_on_failure(adapter) -> None:
 def test_bitbucket_resolve_conversation_logs_on_request_error(adapter) -> None:
     """REVUE-161 T2.1: resolve_conversation logs httpx errors."""
     with patch("httpx.post", side_effect=Exception("Network error")), \
-         patch("revue.comments.platform_adapter._log.error") as mock_log:
+         patch("revue.core.log.Log.cli.error") as mock_log:
         adapter.resolve_conversation("workspace", "repo", 42, "100")
 
     mock_log.assert_called_once()

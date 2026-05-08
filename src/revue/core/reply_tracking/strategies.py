@@ -8,7 +8,6 @@ REVUE-119 AC14.
 """
 from __future__ import annotations
 
-import logging
 import os
 from typing import TYPE_CHECKING, Any, Optional, Protocol
 
@@ -16,7 +15,7 @@ if TYPE_CHECKING:
     from revue.core.models import PRContext
     from revue.comments.service import WontFixReplyService
 
-_log = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 
 class ReplyTrackingStrategy(Protocol):

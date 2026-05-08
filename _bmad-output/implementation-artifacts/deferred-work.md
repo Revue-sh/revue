@@ -4,6 +4,13 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+## Deferred from: code review of revue-237-revuelogger-named-channels (2026-05-08)
+
+- **D1** — `Channel._log()` holds a reference to `inspect.currentframe()` without `del frame` in a `finally` block — creates reference cycles in CPython; GC handles it but PyPy/Jython runtimes may not. Add `del frame` / `del caller_frame` in finally.
+- **D2** — `cli.py` retains `logging.basicConfig()` alongside the new channel system — duplicate configuration that will conflict once the remaining 11 AC8 `logging.getLogger()` call sites are migrated. Remove once AC8 migration is complete.
+- **D3** — `Channel._log()` frame depth `f_back.f_back` is hardcoded — any helper or wrapper between the channel method and `_log` reports the wrong call-site. Expose a `stacklevel` parameter (like `logging.Logger`) for callers that wrap channel methods.
+- **D4** — `FileLogger` holds an open file handle with no `__del__`, `atexit`, or `contextlib` finalizer — on SIGKILL or non-CPython runtimes the handle is never closed. Low risk for CLI (flush() called per write), but add `atexit.register(file_logger.close)` for correctness.
+
 ## Deferred from: code review of REVUE-211-migrate-posting Round 2 (2026-05-04)
 
 - **D1** — `get_platform_adapter` uses if/elif chain for platform dispatch (`platform_adapter.py`) — pre-existing OCP violation; adding a new platform requires a code change. Replace with a `{Platform: factory_fn}` registry dict. Track in a future adapter-hardening story.

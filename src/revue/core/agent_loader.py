@@ -7,7 +7,6 @@ DIP: AgentRunner depends on AgentProtocol, not concrete loaded agent classes.
 """
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,7 +23,7 @@ from .ai_client import _CACHE_CONTROL_1H
 from .diff_parser import detect_language
 from .models import FileChange, AIReview
 
-logger = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 # Four canonical category values that cli._CATEGORY_MAP recognises.
 _KNOWN_CATEGORIES: frozenset[str] = frozenset({
@@ -436,7 +435,7 @@ def load_custom_agents(
 
     dir_path = Path(custom_agents_dir)
     if not dir_path.is_dir():
-        logger.warning("Custom agents directory does not exist: %s", custom_agents_dir)
+        Log.agent.warning("Custom agents directory does not exist: %s", custom_agents_dir)
         return []
 
     resolved_base = dir_path.resolve(strict=True)
@@ -445,7 +444,7 @@ def load_custom_agents(
 
     for file_path in sorted(dir_path.iterdir()):
         if not _is_safe_path(file_path, resolved_base):
-            logger.warning("Skipping path outside custom agents dir: %s", file_path)
+            Log.agent.warning("Skipping path outside custom agents dir: %s", file_path)
             continue
         for parser in active_parsers:
             if parser.can_parse(file_path):
@@ -453,7 +452,7 @@ def load_custom_agents(
                     definition = parser.parse(file_path)
                     definitions.append(definition)
                 except Exception as exc:
-                    logger.warning("Skipping invalid custom agent %s: %s", file_path, exc)
+                    Log.agent.warning("Skipping invalid custom agent %s: %s", file_path, exc)
                 break
 
     return definitions
@@ -484,7 +483,7 @@ def load_all_agents(
         if not defn.enabled:
             continue
         if defn.name in agents_by_name:
-            logger.info("Custom agent '%s' overrides built-in agent", defn.name)
+            Log.agent.info("Custom agent '%s' overrides built-in agent", defn.name)
         agents_by_name[defn.name] = LoadedAgent(defn, client, max_tokens)
 
     return list(agents_by_name.values())

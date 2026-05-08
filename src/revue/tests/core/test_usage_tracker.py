@@ -1,7 +1,7 @@
 """Tests for revue.core.usage_tracker — no real HTTP calls."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -87,20 +87,30 @@ class TestTrack:
         client.post.side_effect = httpx.TimeoutException("timeout")
         track("key", "repo", [], 0, _http_client=client)  # must not raise
 
-    def test_warning_logged_on_unexpected_status(self, caplog):
-        import logging
+    def test_warning_logged_on_unexpected_status(self):
+        # Arrange
         client = _make_http_client(status_code=400)
-        with caplog.at_level(logging.WARNING, logger="revue.core.usage_tracker"):
-            track("key", "repo", [], 0, _http_client=client)
-        assert any("unexpected status" in r.message for r in caplog.records)
 
-    def test_warning_logged_on_network_failure(self, caplog):
-        import logging
+        # Act
+        with patch("revue.core.usage_tracker.Log") as mock_log:
+            track("key", "repo", [], 0, _http_client=client)
+
+        # Assert
+        mock_log.cli.warning.assert_called()
+        assert "unexpected status" in str(mock_log.cli.warning.call_args)
+
+    def test_warning_logged_on_network_failure(self):
+        # Arrange
         client = MagicMock(spec=httpx.Client)
         client.post.side_effect = httpx.ConnectError("err")
-        with caplog.at_level(logging.WARNING, logger="revue.core.usage_tracker"):
+
+        # Act
+        with patch("revue.core.usage_tracker.Log") as mock_log:
             track("key", "repo", [], 0, _http_client=client)
-        assert any("non-blocking" in r.message for r in caplog.records)
+
+        # Assert
+        mock_log.cli.warning.assert_called()
+        assert "non-blocking" in str(mock_log.cli.warning.call_args)
 
 
 # ---------------------------------------------------------------------------

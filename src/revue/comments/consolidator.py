@@ -21,7 +21,7 @@ from .models import (
     SynthesisStrategy,
 )
 
-_log = logging.getLogger(__name__)
+from revue.core.logging_channels import Log  # logging_channels
 
 _NOVA = "nova"
 
@@ -75,7 +75,7 @@ class Consolidator:
                 result = self._synthesis.synthesise(group)
                 consolidated.append(result)
             except Exception:
-                _log.exception(
+                Log.nova.exception(
                     "Consolidator: synthesis failed for group at %s:%s — skipping",
                     group.file_path,
                     group.line_range,
@@ -88,7 +88,7 @@ class Consolidator:
                 try:
                     out = processor.process(finding)
                 except Exception:
-                    _log.exception(
+                    Log.nova.exception(
                         "Consolidator: post-processor %s raised on %s:%s — keeping finding",
                         type(processor).__name__,
                         finding.file_path,
@@ -219,7 +219,7 @@ class NovaSingleShotStrategy:
         try:
             return self._synthesise_via_nova(group)
         except Exception:
-            _log.exception(
+            Log.nova.exception(
                 "NovaSingleShotStrategy: Nova call failed for group at %s:%s — falling back to deterministic",
                 group.file_path,
                 group.line_range,

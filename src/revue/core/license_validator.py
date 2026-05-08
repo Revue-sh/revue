@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import sys
 import time
@@ -18,7 +17,7 @@ from typing import Optional
 
 import httpx
 
-logger = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -118,7 +117,7 @@ def validate(
     tier_override = os.environ.get("REVUE_TIER_OVERRIDE", "").lower()
     
     if not is_compiled and app_env in {"development", "staging"} and tier_override in AGENTS_BY_TIER:
-        logger.warning(
+        Log.cli.warning(
             f"REVUE_TIER_OVERRIDE={tier_override} active (APP_ENV={app_env}). "
             "For testing only — disabled in production builds."
         )
@@ -144,7 +143,7 @@ def validate(
         _write_cache(key, response_data)
         return _build_license_info(key, response_data)
     except _APIUnreachable:
-        logger.warning("Revue API unreachable — checking offline grace period cache.")
+        Log.cli.warning("Revue API unreachable — checking offline grace period cache.")
         cached = _read_cache(key)
         if cached is None:
             raise LicenseError(
@@ -159,7 +158,7 @@ def validate(
                 f"({age_hours:.1f}h since last successful validation; limit is 72h). "
                 "Please restore network access to the Revue API and try again."
             )
-        logger.info("Using cached license (%.1fh old, within 72h grace period).", age_hours)
+        Log.cli.info("Using cached license (%.1fh old, within 72h grace period).", age_hours)
         return _build_license_info(key, cached["response"])
 
 
@@ -179,7 +178,7 @@ def _call_api(
 ) -> dict:
     """POST to the license validation endpoint. Returns the parsed JSON response."""
     payload = {"key": key, "repo_id": repo_id, "ci_run_id": ci_run_id}
-    logger.debug("Calling license API: %s", VALIDATE_URL)
+    Log.cli.debug("Calling license API: %s", VALIDATE_URL)
     try:
         if client is not None:
             resp = client.post(VALIDATE_URL, json=payload, timeout=10.0)
@@ -244,7 +243,7 @@ def _write_cache(key: str, response: dict) -> None:
     try:
         CACHE_PATH.write_text(json.dumps(cache))
     except OSError as exc:
-        logger.warning("Could not write license cache: %s", exc)
+        Log.cli.warning("Could not write license cache: %s", exc)
 
 
 def _read_cache(key: str) -> dict | None:

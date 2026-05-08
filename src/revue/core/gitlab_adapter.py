@@ -10,14 +10,13 @@ from __future__ import annotations
 
 import hmac
 import json
-import logging
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
 
-_LOG = logging.getLogger(__name__)
+from revue.core.logging_channels import Log
 
 from revue.core.models import FileChange, CodeFix
 from revue.core.vcs_adapter import (
@@ -115,7 +114,7 @@ class GitLabAdapter:
         try:
             resp = self._request("GET", f"/merge_requests/{pr_id}/changes")
         except Exception as exc:
-            _LOG.warning("get_diff failed for MR %s: %s", pr_id, exc)
+            Log.cli.warning("get_diff failed for MR %s: %s", pr_id, exc)
             return []
 
         raw_changes: list[dict[str, Any]] = resp.get("changes", [])
@@ -169,7 +168,7 @@ class GitLabAdapter:
         try:
             base_sha, start_sha, head_sha = self._get_mr_version_shas(pr_id)
         except (ValueError, RuntimeError) as exc:
-            _LOG.warning("post_review_comment: failed to get MR version SHAs for MR %s: %s", pr_id, exc)
+            Log.cli.warning("post_review_comment: failed to get MR version SHAs for MR %s: %s", pr_id, exc)
             return None
 
         pos_obj: dict[str, Any] = {
@@ -195,7 +194,7 @@ class GitLabAdapter:
             discussion_id = resp.get("id")
             return str(discussion_id) if discussion_id is not None else None
         except Exception as exc:
-            _LOG.warning(
+            Log.cli.warning(
                 "post_review_comment failed for MR %s file=%s line=%s — %s\n  position=%s",
                 pr_id,
                 position.file_path,
@@ -223,7 +222,7 @@ class GitLabAdapter:
             note_id = resp.get("id")
             return str(note_id) if note_id is not None else None
         except Exception as exc:
-            _LOG.warning("post_summary_comment failed for MR %s: %s", pr_id, exc)
+            Log.cli.warning("post_summary_comment failed for MR %s: %s", pr_id, exc)
             return None
 
     def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool:
@@ -240,7 +239,7 @@ class GitLabAdapter:
             )
             return True
         except Exception as exc:
-            _LOG.warning("update_comment failed for MR %s note %s: %s", pr_id, comment_id, exc)
+            Log.cli.warning("update_comment failed for MR %s note %s: %s", pr_id, comment_id, exc)
             return False
 
     def get_existing_comments(self, pr_id: int) -> list[dict]:
@@ -268,7 +267,7 @@ class GitLabAdapter:
                     notes.append(note_copy)
             return notes
         except Exception as exc:
-            _LOG.warning("get_existing_comments failed for MR %s: %s", pr_id, exc)
+            Log.cli.warning("get_existing_comments failed for MR %s: %s", pr_id, exc)
             return []
 
     def get_thread_replies(self, pr_id: int, comment_id: str) -> list[dict]:
@@ -297,7 +296,7 @@ class GitLabAdapter:
                 for n in notes[1:]  # first note is the original comment
             ]
         except Exception as exc:
-            _LOG.warning(
+            Log.cli.warning(
                 "get_thread_replies failed for MR %s discussion %s: %s",
                 pr_id, comment_id, exc,
             )
@@ -320,7 +319,7 @@ class GitLabAdapter:
             )
             return str(result.get("id", ""))
         except Exception as exc:
-            _LOG.warning(
+            Log.cli.warning(
                 "reply_to_comment failed for MR %s discussion %s: %s",
                 pr_id, comment_id, exc,
             )
@@ -359,14 +358,14 @@ class GitLabAdapter:
             POST /projects/{id}/merge_requests/{iid}/unapprove
         """
         if status not in ("approved", "unapproved"):
-            _LOG.warning("set_review_status: unknown status %r — skipping", status)
+            Log.cli.warning("set_review_status: unknown status %r — skipping", status)
             return False
         endpoint = f"/merge_requests/{pr_id}/{status}"
         try:
             self._request("POST", endpoint)
             return True
         except Exception as exc:
-            _LOG.warning("set_review_status(%r) failed for MR %s: %s", status, pr_id, exc)
+            Log.cli.warning("set_review_status(%r) failed for MR %s: %s", status, pr_id, exc)
             return False
 
     def post_apply_suggestion(
@@ -430,7 +429,7 @@ class GitLabAdapter:
             )
             return True
         except Exception as exc:
-            _LOG.warning(
+            Log.cli.warning(
                 "post_apply_suggestion failed for MR %s: %s", pr_id, exc
             )
             return False
@@ -497,7 +496,7 @@ class GitLabAdapter:
                     {"body": reply_body},
                 )
             except Exception as exc:
-                _LOG.warning("resolve_inline_comment: reply failed for MR %d discussion %s: %s", pr_id, comment_id, exc)
+                Log.cli.warning("resolve_inline_comment: reply failed for MR %d discussion %s: %s", pr_id, comment_id, exc)
                 return False  # sentinel not written — caller retries on next run
 
         # Resolve the discussion
@@ -507,10 +506,10 @@ class GitLabAdapter:
                 f"/merge_requests/{pr_id}/discussions/{comment_id}",
                 {"resolved": True},
             )
-            _LOG.info("Resolved discussion %s on MR %d", comment_id, pr_id)
+            Log.cli.info("Resolved discussion %s on MR %d", comment_id, pr_id)
             return True
         except Exception as exc:
-            _LOG.warning("resolve_inline_comment failed for MR %d discussion %s: %s", pr_id, comment_id, exc)
+            Log.cli.warning("resolve_inline_comment failed for MR %d discussion %s: %s", pr_id, comment_id, exc)
             return False
 
     @staticmethod
