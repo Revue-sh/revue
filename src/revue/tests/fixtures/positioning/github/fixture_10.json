@@ -1,0 +1,13 @@
+{
+  "platform": "github",
+  "source_pr": 11,
+  "file_path": "src/revue/cli.py",
+  "diff_snippet": "@@ -1053,17 +1119,33 @@ def _run_per_issue_dedup(\n             if details:\n                 body_parts.append(f\"\\n{details}\")",
+  "posted_line": 1120,
+  "posted_side": "RIGHT",
+  "comment_body_excerpt": "**\ud83d\udfe1 [MEDIUM] DiffPositionResolver.snap() is called unconditionally for every finding, then the snap result is discarded if merged comment \u2014 wasted computation for multi-finding groups.**\n*Agents: Maya \u2728 **Code Quality** | Zara \ud83d\udd12 **Security** | Leo \ud83c\udfd7\ufe0f **Code Quality** | Kai \u26a1 **Performance** \u2192 Nova \ud83c\udf1f",
+  "reported_line": 1200,
+  "replacement_line_count": 1,
+  "expected_position": null,
+  "expected_api_params": null
+}

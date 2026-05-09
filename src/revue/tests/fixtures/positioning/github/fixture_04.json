@@ -1,0 +1,21 @@
+{
+  "platform": "github",
+  "source_pr": 11,
+  "file_path": "bitbucket-pipelines.yml",
+  "diff_snippet": "@@ -48,7 +48,7 @@ definitions:\n           - PYTHONPATH=\"$(pwd)/src\" python3 -m revue.cli validate --config .revue.yml\n           - echo \"[revue] Starting AI code review...\"\n           - export PYTHONPATH=\"$(pwd)/src\"\n-          - export APP_ENV=staging  # Enable REVUE_TIER_OVERRIDE for CI\n+          - export APP_ENV=production  # Use real licence validation via revue-io.fly.dev\n           - export REVUE_METRICS_ENABLED=1",
+  "posted_line": 52,
+  "posted_side": "RIGHT",
+  "comment_body_excerpt": "**\ud83d\udfe1 [MEDIUM] APP_ENV is set to 'production' in the CI pipeline, which enables real licence validation against the production Fly.io database. If the CI pipeline is compromised, an attacker can generate unlimited-review pro-tier licenses and inject them into the production database.**\n*Zara \u00b7 Securit",
+  "reported_line": 51,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "bitbucket-pipelines.yml",
+    "start_line": 51,
+    "end_line": 51
+  },
+  "expected_api_params": {
+    "path": "bitbucket-pipelines.yml",
+    "side": "RIGHT",
+    "line": 51
+  }
+}

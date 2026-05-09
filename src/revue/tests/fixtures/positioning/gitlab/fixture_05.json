@@ -1,0 +1,27 @@
+{
+  "platform": "gitlab",
+  "source_mr": 23,
+  "file_path": "src/revue/tests/test_body_builder_cli_integration.py",
+  "diff_snippet": "@@ -0,0 +1,362 @@\n+\"\"\"Integration tests for REVUE-209: BodyBuilder wiring into _run_per_issue_dedup.\n+\n+These tests verify the NEW behaviors introduced by BodyBuilder \u2014 they fail against\n+the old inline rendering and pass only after BodyBuilder is wired in.\n+\n+Specific new contracts:\n+- Brand footer (\u2014 \ud83e\udd16 Revue) appears in every inline comment\n+- Vocabulary labels use Action/Suggest/Note instead of \"Recommendation\"\n+- C3 regression #1 fixed: attribution is preserved in grouped (multi-attribution) comments\n+- Fingerprint sentinel is still embedded correctly\n+- AC6: unanchored findings (position=0) returned in summary_sink, not silently discarded\n+\"\"\"\n+import json\n+from dataclasses import dataclass\n+from unittest.mock import MagicMock\n+\n+import pytest\n+\n+\n+# ---------------------------------------------------------------------------\n+# Helpers\n+# ---------------------------------------------------------------------------\n+\n+@dataclass\n+class _FakeReviewResult:\n+    file_path: str\n+    response: str\n+    error: str = \"\"\n+\n+\n+def _make_response(findings: list[dict]) -> str:\n+    return json.dumps({\"findings\": findings, \"summary\": \"ok\"})\n+\n+\n+def _run_dedup(platform: str, findings: list[dict], tmp_path) -> MagicMock:\n+    from revue.cli import _run_per_issue_dedup\n+    from revue.comments.json_store import PerPRCommentStore\n+\n+    results = [_FakeReviewResult(\"app.py\", _make_response(findings))]\n+    adapter = MagicMock()\n+    adapter.get_existing_comments.return_value = []\n+    adapter.post_review_comment.return_value = \"cmt-1\"\n+    store = PerPRCommentStore(tmp_path)\n+    _run_per_issue_dedup(adapter, 1, platform, results, {}, store)\n+    return adapter\n+\n+\n+# ---------------------------------------------------------------------------\n+# Brand footer (new BodyBuilder contract \u2014 does NOT exist in old inline code)\n+# ---------------------------------------------------------------------------\n+\n+def test_brand_footer_present_in_single_finding_comment(tmp_path) -> None:\n+    \"\"\"BodyBuilder.build() appends '\u2014 \ud83e\udd16 Revue' to every inline comment.\n+\n+    This is a new requirement from AC2 / UX D3. The old inline code never added\n+    the brand footer \u2014 this test fails against the pre-REVUE-209 cli.py.\n+    \"\"\"\n+    finding = {\n+        \"severity\": \"high\",\n+        \"issue\": \"SQL injection vulnerability\",\n+        \"line\": 10,\n+        \"recommendation\": \"Use parameterised queries\",\n+        \"agent_name\": \"zara\",\n+        \"category\": \"security\",\n+    }\n+    adapter = _run_dedup(\"github\", [finding], tmp_path)\n+\n+    body = adapter.post_review_comment.call_args[1][\"body\"]\n+    assert \"\u2014 \ud83e\udd16 Revue\" in body, \"Brand footer must be present in every inline comment\"\n+\n+\n+def test_brand_footer_present_with_code_replacement(tmp_path) -> None:\n+    \"\"\"Brand footer appears even when a suggestion fence is rendered.\"\"\"\n+    finding = {\n+        \"severity\": \"medium\",\n+        \"issue\": \"Unsafe concat\",\n+        \"line\": 5,\n+        \"recommendation\": \"Use parameterised query\",\n+     ",
+  "posted_line": 40,
+  "posted_base_sha": "f40428ad953bc210d50c5736efb7be35da30bc42",
+  "posted_head_sha": "b72b51a2cc57f836df91316dd87d5b3e99f2a8ff",
+  "posted_start_sha": "f40428ad953bc210d50c5736efb7be35da30bc42",
+  "comment_body_excerpt": "**\ud83d\udfe1 [MEDIUM] The _run_dedup() helper calls _run_per_issue_dedup() but does not unpack or return the 6-tuple result. The function returns the mock adapter, but the summary_sink (6th element) is discarded, making it impossible for tests using this helper to verify AC6 behavior.**\n*Maya \u00b7 Code Quality*",
+  "reported_line": 40,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "src/revue/tests/test_body_builder_cli_integration.py",
+    "start_line": 40,
+    "end_line": 40
+  },
+  "expected_api_params": {
+    "position_type": "text",
+    "base_sha": "f40428ad953bc210d50c5736efb7be35da30bc42",
+    "head_sha": "b72b51a2cc57f836df91316dd87d5b3e99f2a8ff",
+    "start_sha": "f40428ad953bc210d50c5736efb7be35da30bc42",
+    "new_path": "src/revue/tests/test_body_builder_cli_integration.py",
+    "old_path": "src/revue/tests/test_body_builder_cli_integration.py",
+    "new_line": 40
+  }
+}

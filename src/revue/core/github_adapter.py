@@ -159,7 +159,8 @@ class GitHubAdapter:
         else:
             comment = {
                 "path": position.file_path,
-                "position": position.position,
+                "line": position.line_number,
+                "side": "RIGHT",
                 "body": body,
             }
         payload: dict[str, Any] = {
@@ -178,6 +179,25 @@ class GitHubAdapter:
             return str(comment_id) if comment_id is not None else None
         except Exception as exc:
             Log.cli.error("post_review_comment failed for PR %d: %s", pr_id, exc)
+            return None
+
+    def post_review_comment_with_params(
+        self, pr_id: int, api_params: dict, body: str, replacement_line_count: int = 1
+    ) -> str | None:
+        """Post an inline review comment using pre-built params from GitHubPositionAdapter.to_api_params()."""
+        comment = {**api_params, "body": body}
+        payload: dict[str, Any] = {"event": "COMMENT", "comments": [comment]}
+        try:
+            resp = self._request(
+                "POST",
+                f"/repos/{self._repo}/pulls/{pr_id}/reviews",
+                payload,
+            )
+            comments = resp.get("comments", []) if isinstance(resp, dict) else []
+            comment_id = comments[0].get("id") if comments else resp.get("id")
+            return str(comment_id) if comment_id is not None else None
+        except Exception as exc:
+            Log.cli.error("post_review_comment_with_params failed for PR %d: %s", pr_id, exc)
             return None
 
     # Backward-compat alias — remove in v2.0

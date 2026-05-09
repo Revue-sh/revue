@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from ..core.agent_loader import filter_code_replacement
+from ._span_validator import is_anchor_coherent, validate_replacement_span
 from .models import (
     AgentFinding,
     Attribution,
@@ -207,9 +208,15 @@ class NovaSingleShotStrategy:
     concatenation with attribution headers. Callers cannot observe which path ran.
     """
 
-    def __init__(self, ai_client: Any, system_prompt: str | None = None) -> None:
+    def __init__(
+        self,
+        ai_client: Any,
+        system_prompt: str | None = None,
+        diff_by_file: dict[str, str] | None = None,
+    ) -> None:
         self._client = ai_client
         self._system_prompt = system_prompt or _SYNTHESIS_SYSTEM_PROMPT
+        self._diff_by_file = diff_by_file or {}
 
     def synthesise(self, group: SynthesisGroup) -> ConsolidatedFinding:
         """Synthesise a SynthesisGroup into a ConsolidatedFinding."""
@@ -231,6 +238,21 @@ class NovaSingleShotStrategy:
     # ------------------------------------------------------------------
 
     def _passthrough(self, finding: AgentFinding, group_type: str) -> ConsolidatedFinding:
+        diff = self._diff_by_file.get(finding.file_path, "")
+        code_replacement = finding.code_replacement
+        rlc = finding.replacement_line_count
+
+        if code_replacement and not is_anchor_coherent(diff, finding.line_number, code_replacement):
+            code_replacement = None
+            rlc = 1
+        elif code_replacement and rlc > 1:
+            rlc = validate_replacement_span(
+                diff=diff,
+                line_number=finding.line_number,
+                code_replacement=code_replacement,
+                declared_rlc=rlc,
+            )
+
         return ConsolidatedFinding(
             file_path=finding.file_path,
             line_number=finding.line_number,
@@ -240,8 +262,8 @@ class NovaSingleShotStrategy:
             confidence=finding.confidence,
             category=finding.category,
             attribution=[Attribution(agent_name=finding.agent_name, category=finding.category)],
-            code_replacement=finding.code_replacement,
-            replacement_line_count=finding.replacement_line_count,
+            code_replacement=code_replacement,
+            replacement_line_count=rlc,
             snippet=finding.snippet,
             group_type=group_type,
         )
@@ -314,10 +336,29 @@ class NovaSingleShotStrategy:
         code_replacement = None
         replacement_line_count = 1
 
+        diff = self._diff_by_file.get(group.file_path, "")
+        anchor_line = group.line_range[0]
+
         if nova_code_replacement is not None:
             code_replacement = filter_code_replacement(nova_code_replacement)
-            if code_replacement:
-                replacement_line_count = len(code_replacement)
+            if code_replacement and not is_anchor_coherent(diff, anchor_line, code_replacement):
+                # Anchor mismatch — drop the suggestion block; prose still posts.
+                code_replacement = None
+                replacement_line_count = 1
+            elif code_replacement:
+                declared = syn.get("replacement_line_count")
+                if isinstance(declared, int) and declared >= 1:
+                    replacement_line_count = declared
+                elif isinstance(declared, float) and declared >= 1 and declared.is_integer():
+                    replacement_line_count = int(declared)
+                else:
+                    replacement_line_count = len(code_replacement)
+                replacement_line_count = validate_replacement_span(
+                    diff=diff,
+                    line_number=anchor_line,
+                    code_replacement=code_replacement,
+                    declared_rlc=replacement_line_count,
+                )
 
         # Fallback applies when Nova omits code_replacement OR returns an all-invalid list
         if code_replacement is None:
@@ -327,8 +368,14 @@ class NovaSingleShotStrategy:
                 default=None,
             )
             if best_source:
-                code_replacement = best_source.code_replacement
-                replacement_line_count = best_source.replacement_line_count
+                if is_anchor_coherent(diff, anchor_line, best_source.code_replacement):
+                    code_replacement = best_source.code_replacement
+                    replacement_line_count = validate_replacement_span(
+                        diff=diff,
+                        line_number=anchor_line,
+                        code_replacement=code_replacement,
+                        declared_rlc=best_source.replacement_line_count,
+                    )
 
         attribution = [
             Attribution(agent_name=f.agent_name, category=f.category)

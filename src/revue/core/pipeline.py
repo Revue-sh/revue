@@ -10,8 +10,10 @@ Tier routing:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
+import dataclasses
 import time
 from dataclasses import dataclass
 from typing import NamedTuple, Optional
@@ -20,6 +22,24 @@ from uuid import uuid4
 from .agent_names import ORCHESTRATOR
 from .ai_config import AIConfig
 from .ai_client import AIClient, create_ai_client
+
+
+def resolve_synthesis_client(
+    config: AIConfig,
+    main_client: AIClient,
+    metrics: "MetricsCollector | None" = None,
+) -> AIClient:
+    """Return the AI client Nova should use for synthesis.
+
+    When ``config.synthesis_model`` is set and differs from ``config.model``,
+    a separate client is built with the override. Otherwise the reviewer
+    client is reused (no extra API initialisation).
+    """
+    override = config.synthesis_model
+    if override and override != config.model:
+        synthesis_config = dataclasses.replace(config, model=override)
+        return create_ai_client(synthesis_config, metrics=metrics)
+    return main_client
 from .cleo_router import _INFRASTRUCTURE_AGENTS
 from .metrics import (
     MetricsCollector,
@@ -35,6 +55,8 @@ from .pr_description_adapter import PRDescription
 from .pr_context import PRContextExtractor
 from .pattern_injection import inject_patterns
 from .usage_tracker import check_reviews_left, track as track_usage
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Premium-agent sentinel — these agents trigger full orchestration path
@@ -444,12 +466,17 @@ class ReviewPipeline:
         client: AIClient | None = None,
         license_info: LicenseInfo | None = None,
         metrics: MetricsCollector | None = None,
+        synthesis_client: AIClient | None = None,
     ) -> None:
         self.config = config
         self._metrics = metrics or self._build_metrics_collector()
         self._client: AIClient = (
             client if client is not None
             else create_ai_client(config, metrics=self._metrics)
+        )
+        self.synthesis_client: AIClient = (
+            synthesis_client if synthesis_client is not None
+            else resolve_synthesis_client(config, self._client, metrics=self._metrics)
         )
         self._license_info: LicenseInfo | None = license_info
         # REVUE-117: set by _run_orchestration(); readable by CLI after run()
@@ -494,11 +521,12 @@ class ReviewPipeline:
         check_reviews_left(license_info.reviews_left)
 
         agents_allowed = license_info.agents_allowed or ["orchestrator"]
-        print(
-            f"[revue] Licence validated — {license_info.tier} plan, {license_info.reviews_left_display}",
-            flush=True,
+        _log.info(
+            "[revue] Licence validated — %s plan, %s",
+            license_info.tier,
+            license_info.reviews_left_display,
         )
-        print(f"[revue] Active agents: {', '.join(agents_allowed)}", flush=True)
+        _log.info("[revue] Active agents: %s", ', '.join(agents_allowed))
 
         # ── Won't-fix classify phase (REVUE-112 Phase 2, AC16) ───────────────
         # classify() is zero side-effects and must run BEFORE diff parsing so
@@ -512,25 +540,25 @@ class ReviewPipeline:
             if strategy is not None:
                 wont_fix_svc = strategy.build_wont_fix_svc(pr_context, self._client)
             else:
-                print(
-                    f"[revue]   💬 Won't-fix reply tracking: platform '{pr_context.platform}' "
+                _log.warning(
+                    "[revue]   💬 Won't-fix reply tracking: platform '%s' "
                     "not yet supported — skipping classify/respond.",
-                    flush=True,
+                    pr_context.platform,
                 )
 
         if wont_fix_svc is not None:
-            print(
-                f"[revue]   💬 Won't-fix classify: PR #{pr_context.pr_number} "  # type: ignore[union-attr]
-                f"({pr_context.repo_owner}/{pr_context.repo_name})",  # type: ignore[union-attr]
-                flush=True,
+            _log.info(
+                "[revue]   💬 Won't-fix classify: PR #%d (%s/%s)",
+                pr_context.pr_number,  # type: ignore[union-attr]
+                pr_context.repo_owner,  # type: ignore[union-attr]
+                pr_context.repo_name,  # type: ignore[union-attr]
             )
             classification = wont_fix_svc.classify(pr_context.pr_number)  # type: ignore[union-attr]
-            print(
-                f"[revue]   💬 Won't-fix classify result: "
-                f"{len(classification.decisions)} decision(s), "
-                f"{len(classification.state_updates)} state update(s), "
-                f"{len(classification.patterns_to_allow)} pattern(s) to allow.",
-                flush=True,
+            _log.info(
+                "[revue]   💬 Won't-fix classify result: %d decision(s), %d state update(s), %d pattern(s) to allow.",
+                len(classification.decisions),
+                len(classification.state_updates),
+                len(classification.patterns_to_allow),
             )
             # Patch config in-memory — no file write (AC17)
             if classification.patterns_to_allow:
@@ -548,23 +576,23 @@ class ReviewPipeline:
                 wont_fix_svc.apply_state_updates(classification, pr_context.pr_number)
 
         # ── Step 1: Diff parsing ──────────────────────────────────────────────
-        print("[revue] ── Step 1/4: Parsing diff", flush=True)
+        _log.info("[revue] ── Step 1/4: Parsing diff")
         changes = parse_diff_file(diff_path)
-        print(f"[revue]   {len(changes)} file(s) found in diff", flush=True)
+        _log.info("[revue]   %d file(s) found in diff", len(changes))
 
         limit_result = check_diff_limit(changes, self.config.max_diff_lines)
         if limit_result.exceeded:
-            print(f"[revue]   ⚠ Diff too large — {limit_result.suggestion}", flush=True)
+            _log.warning("[revue]   ⚠ Diff too large — %s", limit_result.suggestion)
             return [ReviewResult(file_path="[diff-limit]", response=limit_result.suggestion)], [], 0, []
 
         included, excluded = filter_changes(
             changes, self.config.ignore_patterns, self.config.max_diff_lines
         )
         if excluded:
-            print(f"[revue]   {len(excluded)} file(s) skipped (ignored patterns)", flush=True)
+            _log.info("[revue]   %d file(s) skipped (ignored patterns)", len(excluded))
 
         if not included:
-            print("[revue]   No files to review after filtering.", flush=True)
+            _log.info("[revue]   No files to review after filtering.")
             return [], excluded, 0, []
 
         # ── Step 2: AI review ────────────────────────────────────────────────
@@ -581,26 +609,25 @@ class ReviewPipeline:
         total_findings = sum(
             len(_count_findings(r.response)) for r in results if not r.error
         )
-        print(
-            f"[revue] ── Step 3/4: Consolidation — "
-            f"{total_findings} finding(s) across {len(results)} file(s)",
-            flush=True,
+        _log.info(
+            "[revue] ── Step 3/4: Consolidation — %d finding(s) across %d file(s)",
+            total_findings,
+            len(results),
         )
 
         # ── Step 4: Verdict ───────────────────────────────────────────────────
-        print("[revue] ── Step 4/4: Verdict", flush=True)
+        _log.info("[revue] ── Step 4/4: Verdict")
         high_med = _count_severity(results, ("high", "medium"))
         low = _count_severity(results, ("low", "info"))
         if high_med > 0:
-            print(
-                f"[revue]   ⚠ Escalate to human — "
-                f"{high_med} high/medium finding(s) require attention",
-                flush=True,
+            _log.warning(
+                "[revue]   ⚠ Escalate to human — %d high/medium finding(s) require attention",
+                high_med,
             )
         elif low > 0:
-            print(f"[revue]   ✓ Accept with notes — {low} low-severity finding(s) only", flush=True)
+            _log.info("[revue]   ✓ Accept with notes — %d low-severity finding(s) only", low)
         else:
-            print("[revue]   ✓ Looks good — no findings", flush=True)
+            _log.info("[revue]   ✓ Looks good — no findings")
 
         duration_ms = int(time.time() * 1000) - start_ms
 
@@ -619,18 +646,18 @@ class ReviewPipeline:
         if wont_fix_svc is not None and classification is not None:
             total_threads = len(classification.decisions)
             if total_threads == 0:
-                print("[revue]   💬 Won't-fix reply tracking: no developer replies found.", flush=True)
+                _log.info("[revue]   💬 Won't-fix reply tracking: no developer replies found.")
             else:
-                print(
-                    f"[revue]   💬 Won't-fix reply tracking: {total_threads} thread(s) with replies — responding...",
-                    flush=True,
+                _log.info(
+                    "[revue]   💬 Won't-fix reply tracking: %d thread(s) with replies — responding...",
+                    total_threads,
                 )
                 try:
                     wont_fix_svc.respond(classification, pr_context.pr_number)
                 except Exception as exc:
-                    print(
-                        f"[revue]   ⚠ Won't-fix reply tracking failed: {exc}",
-                        flush=True,
+                    _log.warning(
+                        "[revue]   ⚠ Won't-fix reply tracking failed: %s",
+                        exc,
                     )
                     _log.exception(
                         "respond() failed for PR #%d",
@@ -652,7 +679,7 @@ class ReviewPipeline:
                 if not_acked:
                     parts.append(f"{not_acked} reaffirmed")
                 summary = ", ".join(parts) if parts else "no state changes"
-                print(f"[revue]   💬 Won't-fix reply tracking complete — {summary}.", flush=True)
+                _log.info("[revue]   💬 Won't-fix reply tracking complete — %s.", summary)
 
         # Flush metrics at end of run
         run_id = str(uuid4())
@@ -673,13 +700,13 @@ class ReviewPipeline:
 
         One client.complete() call per file. No agent routing or consolidation.
         """
-        print(f"[revue] ── Step 2/4: AI review (simplified) — {len(included)} file(s)", flush=True)
+        _log.info("[revue] ── Step 2/4: AI review (simplified) — %d file(s)", len(included))
 
         agents_used: list[str] = ["orchestrator"] if "orchestrator" in agents_allowed else []
         results: list[ReviewResult] = []
 
         for i, fc in enumerate(included, 1):
-            print(f"[revue]   [{i}/{len(included)}] {fc.file_path}...", flush=True)
+            _log.info("[revue]   [%d/%d] %s...", i, len(included), fc.file_path)
             try:
                 prompt = (
                     f"Review this code diff for {fc.file_path}:\n\n"
@@ -692,12 +719,12 @@ class ReviewPipeline:
                     agent_name=ORCHESTRATOR,
                 ).text
                 results.append(ReviewResult(file_path=fc.file_path, response=response))
-                print(f"[revue]   ✓ {fc.file_path}", flush=True)
+                _log.info("[revue]   ✓ %s", fc.file_path)
 
                 if "code-quality-expert" in agents_allowed and "code-quality-expert" not in agents_used:
                     agents_used.append("code-quality-expert")
             except Exception as exc:
-                print(f"[revue]   ✗ {fc.file_path}: {exc}", flush=True)
+                _log.warning("[revue]   ✗ %s: %s", fc.file_path, exc)
                 results.append(ReviewResult(file_path=fc.file_path, response="", error=str(exc)))
 
         return results, agents_used, []
@@ -714,10 +741,10 @@ class ReviewPipeline:
         When pr_description is provided, each agent receives a context snippet
         filtered to the sections relevant to its domain (REVUE-84).
         """
-        print(
-            f"[revue] ── Step 2/4: AI review (orchestrated) — "
-            f"{len(included)} file(s), {len(agents_allowed)} agent(s) available",
-            flush=True,
+        _log.info(
+            "[revue] ── Step 2/4: AI review (orchestrated) — %d file(s), %d agent(s) available",
+            len(included),
+            len(agents_allowed),
         )
 
         mods = _import_orchestration()
@@ -730,7 +757,7 @@ class ReviewPipeline:
         ParallelRunResult = mods.ParallelRunResult
 
         # 1. Shared analysis — one AI call to classify the diff for all agents
-        print("[revue]   Running shared diff analysis...", flush=True)
+        _log.info("[revue]   Running shared diff analysis...")
         try:
             shared = run_shared_analysis(
                 included, self._client, provider=self.config.provider,
@@ -743,25 +770,24 @@ class ReviewPipeline:
                 ):
                     msg = format_selection_message(shared.orchestrator_response)
                     for line in msg.splitlines():
-                        print(f"[revue]   {line}", flush=True)
+                        _log.info("[revue]   %s", line)
                 else:
-                    print(f"[revue]   Shared analysis: {shared.summary[:80]}...", flush=True)
+                    _log.info("[revue]   Shared analysis: %s...", shared.summary[:80])
             else:
                 # Surface the actual error so it's diagnosable in CI logs
-                print(
-                    f"[revue]   Shared analysis unavailable ({shared.error}) — "
-                    "running all agents as fallback.",
-                    flush=True,
+                _log.warning(
+                    "[revue]   Shared analysis unavailable (%s) — running all agents as fallback.",
+                    shared.error,
                 )
         except Exception as exc:
-            print(f"[revue]   Shared analysis failed ({exc}) — using fallback.", flush=True)
+            _log.warning("[revue]   Shared analysis failed (%s) — using fallback.", exc)
             from revue.core.shared_analysis import SharedAnalysisResult
             shared = SharedAnalysisResult.fallback(
                 languages=[fc.file_path.rsplit(".", 1)[-1] for fc in included]
             )
 
         # 2. Load and filter agents by license (REVUE-99: resolve licence names → agent names)
-        print("[revue]   Loading agents...", flush=True)
+        _log.info("[revue]   Loading agents...")
         all_agents = load_all_agents(self.config, self._client)
         agents_by_name = {a.name: a for a in all_agents}
 
@@ -774,18 +800,17 @@ class ReviewPipeline:
             if agent_name in agents_by_name:
                 resolved_agent_names.add(agent_name)
             else:
-                print(
-                    f"[revue]   ⚠ Unknown agent '{licence_name}' in licence — skipping.",
-                    flush=True,
+                _log.warning(
+                    "[revue]   ⚠ Unknown agent '%s' in licence — skipping.",
+                    licence_name,
                 )
 
         allowed_agents = [agents_by_name[n] for n in resolved_agent_names if n in agents_by_name]
 
         if not allowed_agents:
-            print(
+            _log.warning(
                 "[revue]   ⚠ No matching agents found for allowed list — "
                 "falling back to simplified review.",
-                flush=True,
             )
             return self._run_simplified(included, agents_allowed)
 
@@ -797,10 +822,10 @@ class ReviewPipeline:
             short_role = role.split(" — ")[0].split(" — ")[0].strip()
             return f"{display} [{short_role}]" if short_role else display
 
-        print(
-            f"[revue]   Agents loaded ({len(allowed_agents)}): "
-            + ", ".join(_agent_label(a) for a in allowed_agents),
-            flush=True,
+        _log.info(
+            "[revue]   Agents loaded (%d): %s",
+            len(allowed_agents),
+            ", ".join(_agent_label(a) for a in allowed_agents),
         )
 
         # 2b. PR context injection (REVUE-84) — prepend filtered PR description
@@ -808,7 +833,7 @@ class ReviewPipeline:
         if pr_description is not None:
             extractor = PRContextExtractor(pr_description)
             _inject_pr_context(allowed_agents, extractor)
-            print("[revue]   PR context injected — smart filtering active.", flush=True)
+            _log.info("[revue]   PR context injected — smart filtering active.")
 
         # 2c. Pattern injection (REVUE-94) — inject allowed/disallowed patterns
         #     from .revue.yml into each agent's system prompt.
@@ -818,23 +843,22 @@ class ReviewPipeline:
                 self.config.allowed_patterns,
                 self.config.disallowed_patterns,
             )
-            print(
-                f"[revue]   Pattern guidance injected — "
-                f"{len(self.config.allowed_patterns)} allowed, "
-                f"{len(self.config.disallowed_patterns)} disallowed.",
-                flush=True,
+            _log.info(
+                "[revue]   Pattern guidance injected — %d allowed, %d disallowed.",
+                len(self.config.allowed_patterns),
+                len(self.config.disallowed_patterns),
             )
 
         # 3. Cleo routing — select agents relevant to this diff
-        print("[revue]   Routing files to agents (Cleo)...", flush=True)
+        _log.info("[revue]   Routing files to agents (Cleo)...")
         try:
             _team_selection, routed_agents = route(included, allowed_agents, shared, self.config)
             if not routed_agents:
                 routed_agents = allowed_agents  # fallback: run all allowed agents
             # AC5: role-aware routing log
-            print(
-                f"[revue]   Routed to: {', '.join(_agent_label(a) for a in routed_agents)}",
-                flush=True,
+            _log.info(
+                "[revue]   Routed to: %s",
+                ', '.join(_agent_label(a) for a in routed_agents),
             )
             # REVUE-170 AC5: record routing observability metrics
             ai_suggested = (
@@ -850,7 +874,7 @@ class ReviewPipeline:
                 model_used=self.config.model,
             ))
         except Exception as exc:
-            print(f"[revue]   Cleo routing failed ({exc}) — running all allowed agents.", flush=True)
+            _log.warning("[revue]   Cleo routing failed (%s) — running all allowed agents.", exc)
             routed_agents = allowed_agents
 
         # 4. Parallel agent execution — strip infrastructure agents (cleo/nova)
@@ -858,14 +882,13 @@ class ReviewPipeline:
         reviewer_agents = [a for a in routed_agents if a.name not in _INFRASTRUCTURE_AGENTS]
         if len(reviewer_agents) < len(routed_agents):
             stripped = [a.name for a in routed_agents if a.name in _INFRASTRUCTURE_AGENTS]
-            print(
-                f"[revue]   (Infrastructure agents excluded from review pool: "
-                f"{', '.join(stripped)})",
-                flush=True,
+            _log.info(
+                "[revue]   (Infrastructure agents excluded from review pool: %s)",
+                ', '.join(stripped),
             )
         max_parallel = self.config.max_parallel_agents
         mode_label = "sequentially" if max_parallel == 1 else f"in parallel (max {max_parallel})"
-        print(f"[revue]   Running {len(reviewer_agents)} reviewer(s) {mode_label}...", flush=True)
+        _log.info("[revue]   Running %d reviewer(s) %s...", len(reviewer_agents), mode_label)
 
         if max_parallel > 1:
             # Parallel mode: no fallback cascade (AC10 — cascade undefined for parallel)
@@ -900,11 +923,10 @@ class ReviewPipeline:
                     next_mode = _next_fallback(fallback_mode)
                     if next_mode is not None:
                         fallback_mode = next_mode
-                        print(
-                            f"[revue]   \u26a0 Rate limit hit on {agent.name} — "
-                            f"switching to {fallback_mode.replace('_', '-')} mode "
-                            f"(reduced context)",
-                            flush=True,
+                        _log.warning(
+                            "[revue]   \u26a0 Rate limit hit on %s — switching to %s mode (reduced context)",
+                            agent.name,
+                            fallback_mode.replace('_', '-'),
                         )
                         agent_changes = _build_agent_changes(
                             agent.name, fallback_mode, included, file_assignments
@@ -931,21 +953,14 @@ class ReviewPipeline:
         if failed:
             for f in failed:
                 reason = "timed out" if f.timed_out else _short_error(f.error)
-                print(f"[revue]   ⚠ Agent {f.agent_name} failed: {reason}", flush=True)
+                _log.warning("[revue]   ⚠ Agent %s failed: %s", f.agent_name, reason)
 
         # Per-agent finding count — makes 0-finding runs diagnosable
         for r in parallel_result.agent_results:
             if r.success:
-                print(
-                    f"[revue]   [{r.agent_name}] → {len(r.findings)} finding(s)",
-                    flush=True,
-                )
+                _log.info("[revue]   [%s] → %d finding(s)", r.agent_name, len(r.findings))
 
-        print(
-            f"[revue]   {len(agents_used)} agent(s) succeeded, "
-            f"{len(failed)} failed.",
-            flush=True,
-        )
+        _log.info("[revue]   %d agent(s) succeeded, %d failed.", len(agents_used), len(failed))
 
         # AC3: if ALL reviewer agents failed, raise AllAgentsFailedError.
         # The caller (CLI) decides whether to sys.exit or handle differently.
@@ -955,7 +970,7 @@ class ReviewPipeline:
             raise AllAgentsFailedError(first_error)
 
         # 5. Consolidation — group, synthesise, and post-process findings (REVUE-210)
-        print("[revue]   Consolidating findings (Nova)...", flush=True)
+        _log.info("[revue]   Consolidating findings (Nova)...")
         raw_findings = [
             finding
             for r in parallel_result.agent_results
@@ -986,16 +1001,20 @@ class ReviewPipeline:
                 n=self.config.consolidation_proximity_lines,
                 k=self.config.consolidation_max_group_size,
             ),
-            synthesis=NovaSingleShotStrategy(ai_client=self._client, system_prompt=nova_system_prompt),
+            synthesis=NovaSingleShotStrategy(
+                ai_client=self.synthesis_client,
+                system_prompt=nova_system_prompt,
+                diff_by_file={fc.file_path: fc.diff for fc in included},
+            ),
             post_processors=[NoOpSuggestionDropper(), UnanchoredFindingExtractor(summary_sink)],
         )
         agent_findings = [_air_to_agent_finding(f) for f in raw_findings]
         consolidated = consolidator.consolidate(agent_findings)
 
-        print(
-            f"[revue]   {original_count} findings → "
-            f"{len(consolidated)} after consolidation",
-            flush=True,
+        _log.info(
+            "[revue]   %d findings → %d after consolidation",
+            original_count,
+            len(consolidated),
         )
 
         # Record synthesis metrics (REVUE-179 AC4)

@@ -1,0 +1,13 @@
+{
+  "platform": "github",
+  "source_pr": 11,
+  "file_path": "src/revue/cli.py",
+  "diff_snippet": "@@ -1053,17 +1119,33 @@ def _run_per_issue_dedup(\n             if details:\n                 body_parts.append(f\"\\n{details}\")\n             if rec:\n-                body_parts.append(f\"\\n> \ud83d\udca1 **Recommendation:** {rec}\")\n+                code_replacement = filter_code_replacement(f.get(\"code_replacement\"))\n+                replacement_line_count = f.get(\"replacement_line_count\", 1)\n+                body_parts.append(\n+                    _format_recommendation(rec, code_replacement, platform_str, replacement_line_count)\n+                )\n             body = \"\\n\".join(body_parts) + f\"\\n\\n[//]: # (revue:fp:{fp})\"\n         else:\n             # Multiple findings \u2014 use merged format (REVUE-172 AC3).\n             group_tuple_list = [(sev, issue, rec) for sev, issue, rec, details, cat, f in group_items]\n             body = _build_merged_comment_body(group_tuple_list, fp)\n+            replacement_line_count = 1  # merged body has no suggestion fence\n+\n+        # Snap agent-reported line to a valid diff position before resolving (REVUE-201).\n+        snapped_line = DiffPositionResolver.snap(line, diff_content)\n+        # F2: snap relocation invalidates the span \u2014 reset to single-line anchor.",
+  "posted_line": 1136,
+  "posted_side": "RIGHT",
+  "comment_body_excerpt": "**\ud83d\udfe1 [MEDIUM] DiffPositionResolver.line_in_diff() is called after snap() even when replacement_line_count=1, adding a redundant diff parse for the common case.**\n*Agents: Zara \ud83d\udd12 **Security** | Kai \u26a1 **Performance** \u2192 Nova \ud83c\udf1f (synthesised)*\n\n> \ud83d\udca1 **Recommendation:** Only call line_in_diff() when replace",
+  "reported_line": 1056,
+  "replacement_line_count": 1,
+  "expected_position": null,
+  "expected_api_params": null
+}

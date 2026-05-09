@@ -1,0 +1,21 @@
+{
+  "platform": "github",
+  "source_pr": 11,
+  "file_path": "scripts/generate_test_license.py",
+  "diff_snippet": "@@ -0,0 +1,210 @@\n+#!/usr/bin/env python3\n+\"\"\"Generate a test REVUE_LICENSE_KEY and insert it into the Fly.io production database.",
+  "posted_line": 2,
+  "posted_side": "RIGHT",
+  "comment_body_excerpt": "**\ud83d\udd34 [HIGH] Script writes directly to production Fly.io database without encryption or audit logging. Any compromise of the machine running this script exposes the ability to generate unlimited-review pro-tier licenses.**\n*Zara \u00b7 Security*\n\n> \ud83d\udca1 **Recommendation:** Implement audit logging of all key g",
+  "reported_line": 126,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "scripts/generate_test_license.py",
+    "start_line": 126,
+    "end_line": 126
+  },
+  "expected_api_params": {
+    "path": "scripts/generate_test_license.py",
+    "side": "RIGHT",
+    "line": 126
+  }
+}

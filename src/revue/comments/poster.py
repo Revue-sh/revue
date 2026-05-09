@@ -33,7 +33,9 @@ from revue.comments.models import (
     Platform,
     SummaryComment,
 )
+from revue.comments.position_adapter import get_position_adapter
 from revue.core.diff_position_resolver import DiffPositionResolver
+from revue.core.models import PRContext
 from revue.core.vcs_adapter import DiffPosition, compute_gitlab_line_code
 
 from revue.core.logging_channels import Log
@@ -52,9 +54,12 @@ _REVISION_RE = re.compile(r"Review #(\d+)")
 # ---------------------------------------------------------------------------
 
 # Platforms where position==0 means "outside diff" (unanchored → summary_sink).
-_UNANCHORED_PLATFORMS: frozenset[str] = frozenset({"github", "bitbucket"})
+# Only used by the Bitbucket legacy path; GitHub/GitLab use PositionAdapter (AC7).
+_UNANCHORED_PLATFORMS: frozenset[str] = frozenset({"bitbucket"})
 # Platforms where summary is posted AFTER inline comments (newest-first display).
 _NEWEST_FIRST_PLATFORMS: frozenset[str] = frozenset({"gitlab", "bitbucket"})
+# Platforms using the new PositionAdapter (AC7); Bitbucket deferred to REVUE-238.
+_POSITION_ADAPTER_PLATFORMS: frozenset[str] = frozenset({"github", "gitlab"})
 
 
 def _gitlab_position_resolver(adapter, file_path: str, line_number: int, diff_content: str) -> DiffPosition:
@@ -247,6 +252,27 @@ class Poster:
                 pr_number=pr_num,
             )
 
+        # Create position adapter once per PR for migrated platforms (AC7 — REVUE-236).
+        # GitLab: get_position_adapter fetches MR version SHAs once here, not per comment.
+        _position_adapter = None
+        if self._platform_str in _POSITION_ADAPTER_PLATFORMS:
+            _pr_ctx = PRContext(
+                platform=self._platform_str,
+                pr_number=pr_num,
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                repo_path="",
+            )
+            try:
+                _position_adapter = get_position_adapter(
+                    self._platform_str, _pr_ctx, self._adapter
+                )
+            except Exception as exc:
+                Log.pipeline.warning(
+                    "[revue] position adapter init failed for %s PR %s: %s — falling back to snap()",
+                    self._platform_str, pr_num, exc,
+                )
+
         # --- Dedup loop ---
         total_findings = {"high": 0, "medium": 0, "low": 0, "info": 0}
 
@@ -279,10 +305,36 @@ class Poster:
             diff_content = self._diff_by_file.get(file_path, "")
             fp = gen_fingerprint(file_path, line, diff_content)
 
+            Log.position.info(
+                "[pos] ─── GROUP %s:%d ───  findings=%d  fp=%s  diff_available=%s  diff_chars=%d",
+                file_path, line, len(group_items), fp,
+                bool(diff_content), len(diff_content),
+            )
+            for _gi, (_gsev, _giss, _grec, _gdet, _gcat, _gf) in enumerate(group_items):
+                _gcr = _gf.get("code_replacement")
+                _grlc = _gf.get("replacement_line_count", 1)
+                Log.position.info(
+                    "[pos]   finding[%d]  sev=%s  issue=%r  rlc=%d  has_code_replacement=%s",
+                    _gi, _gsev, _giss, _grlc, _gcr is not None,
+                )
+                if _gcr:
+                    _cr_lines = _gcr if isinstance(_gcr, list) else []
+                    Log.position.info(
+                        "[pos]   finding[%d]  code_replacement (%d line(s)):",
+                        _gi, len(_cr_lines),
+                    )
+                    for _cri, _crl in enumerate(_cr_lines):
+                        Log.position.info("[pos]     replacement[%d]: %r", _cri, _crl)
+
             matched_entry = merged_prior.get(fp) or merged_prior.get(
                 gen_fingerprint(file_path, line, "")
             )
             if matched_entry is not None:
+                Log.position.info(
+                    "[pos]   DEDUP HIT  fp=%s  resolved=%s  comment_id=%s — skipping post",
+                    fp, matched_entry.get("resolved", False),
+                    matched_entry.get("platform_comment_id", "?"),
+                )
                 if matched_entry.get("resolved", False):
                     previously_tracked += len(group_items)
                 else:
@@ -307,20 +359,78 @@ class Poster:
                 file_path, line, group_items, fp, replacement_line_count
             )
 
-            # Snap line to diff before resolving position
-            snapped_line = DiffPositionResolver.snap(line, diff_content)
-            if snapped_line != line:
-                replacement_line_count = 1
-            elif replacement_line_count > 1:
-                end_line = snapped_line + replacement_line_count - 1
-                if not DiffPositionResolver.line_in_diff(end_line, diff_content):
+            Log.position.info(
+                "[pos]   body built  rlc=%d  body_chars=%d",
+                replacement_line_count, len(body),
+            )
+
+            # --- Position resolution (AC7) ---
+            # GitHub/GitLab: strict changed-line rule via PositionAdapter — no snapping.
+            # Bitbucket: legacy snap() path (REVUE-238 will migrate it).
+            position = DiffPosition(file_path=file_path, line_number=line)
+            _api_params: dict | None = None
+            _unanchored = False
+
+            if _position_adapter is not None:
+                Log.position.info(
+                    "[pos]   calling PositionAdapter.resolve  platform=%s  line=%d  rlc=%d",
+                    self._platform_str, line, replacement_line_count,
+                )
+                _pp = _position_adapter.resolve(
+                    line, diff_content, file_path, None, replacement_line_count
+                )
+                if _pp is None:
+                    _unanchored = True
+                    Log.position.info(
+                        "[pos]   resolve → None  UNANCHORED  %s:%d → summary_sink",
+                        file_path, line,
+                    )
+                else:
+                    replacement_line_count = _pp["end_line"] - _pp["start_line"] + 1
+                    _api_params = _position_adapter.to_api_params(_pp)
+                    Log.position.info(
+                        "[pos]   resolve → ANCHORED  start=%d  end=%d  rlc=%d  api_params=%s",
+                        _pp["start_line"], _pp["end_line"], replacement_line_count, _api_params,
+                    )
+            else:
+                snapped_line = DiffPositionResolver.snap(line, diff_content)
+                Log.position.info(
+                    "[pos]   snap()  reported_line=%d → snapped_line=%d  "
+                    "changed=%s  platform=%s",
+                    line, snapped_line, snapped_line != line, self._platform_str,
+                )
+                if snapped_line != line:
                     replacement_line_count = 1
+                elif replacement_line_count > 1:
+                    end_line = snapped_line + replacement_line_count - 1
+                    if not DiffPositionResolver.line_in_diff(end_line, diff_content):
+                        Log.position.info(
+                            "[pos]   snap() rlc trimmed: end_line=%d not in diff → rlc=1",
+                            end_line,
+                        )
+                        replacement_line_count = 1
+                position = self._resolve_position(file_path, snapped_line, diff_content)
+                Log.position.info(
+                    "[pos]   _resolve_position → DiffPosition(file=%s  line_number=%d  "
+                    "position=%s  line_code=%s  new_line=%s)",
+                    position.file_path, position.line_number,
+                    getattr(position, "position", "n/a"),
+                    getattr(position, "line_code", "n/a"),
+                    getattr(position, "new_line", "n/a"),
+                )
+                if self._platform_str in _UNANCHORED_PLATFORMS and position.position == 0:
+                    _unanchored = True
+                    Log.position.info(
+                        "[pos]   position.position==0 on %s platform → UNANCHORED → summary_sink",
+                        self._platform_str,
+                    )
 
-            position = self._resolve_position(file_path, snapped_line, diff_content)
-
-            # Unanchored: position=0 on platforms where 0 means outside diff → summary_sink (AC2)
-            if self._platform_str in _UNANCHORED_PLATFORMS and position.position == 0:
+            if _unanchored:
                 from revue.core.agent_loader import filter_code_replacement
+                Log.position.info(
+                    "[pos]   routing %d finding(s) at %s:%d to summary_sink",
+                    len(group_items), file_path, line,
+                )
                 for _sev, _iss, _rec, _det, _cat, _f in group_items:
                     summary_sink.append(ConsolidatedFinding(
                         file_path=file_path, line_number=line,
@@ -339,10 +449,38 @@ class Poster:
                 skipped += len(group_items)
                 continue
 
-            comment_id = self._post_or_evict_and_retry(
-                pr_num=pr_num, position=position, body=body,
-                eviction_state=eviction_state,
-                replacement_line_count=replacement_line_count,
+            if _api_params is not None:
+                Log.position.info(
+                    "[pos]   PRE-POST  %s:%d  platform=%s  pr=%d  api_params=%s  rlc=%d",
+                    file_path, line, self._platform_str, pr_num, _api_params, replacement_line_count,
+                )
+            else:
+                Log.position.info(
+                    "[pos]   PRE-POST  %s:%d  platform=%s  pr=%d  "
+                    "position.line_number=%d  position.new_line=%s  rlc=%d",
+                    file_path, line, self._platform_str, pr_num,
+                    position.line_number,
+                    getattr(position, "new_line", "n/a"),
+                    replacement_line_count,
+                )
+            Log.position.info("[pos]   comment body (first 400 chars):\n%s", body[:400])
+
+            if _api_params is not None:
+                comment_id = self._post_with_params_or_evict_and_retry(
+                    pr_num=pr_num, api_params=_api_params, body=body,
+                    eviction_state=eviction_state,
+                    replacement_line_count=replacement_line_count,
+                )
+            else:
+                comment_id = self._post_or_evict_and_retry(
+                    pr_num=pr_num, position=position, body=body,
+                    eviction_state=eviction_state,
+                    replacement_line_count=replacement_line_count,
+                )
+
+            Log.position.info(
+                "[pos]   POST RESULT  %s:%d  comment_id=%s  success=%s",
+                file_path, line, comment_id, comment_id is not None,
             )
 
             if comment_id is not None:
@@ -526,6 +664,37 @@ class Poster:
         self._adapter.comment_limit_reached = False
         return self._adapter.post_review_comment(
             pr_id=pr_num, position=position, body=body,
+            replacement_line_count=replacement_line_count,
+        )
+
+    def _post_with_params_or_evict_and_retry(
+        self,
+        pr_num: int,
+        api_params: dict,
+        body: str,
+        eviction_state: list[bool],
+        replacement_line_count: int = 1,
+    ) -> str | None:
+        """Post using PositionAdapter.to_api_params() output, evicting on 200-limit hit."""
+        comment_id = self._adapter.post_review_comment_with_params(
+            pr_id=pr_num, api_params=api_params, body=body,
+            replacement_line_count=replacement_line_count,
+        )
+        if comment_id is not None:
+            return comment_id
+
+        if not getattr(self._adapter, "comment_limit_reached", False) or eviction_state[0]:
+            return None
+
+        eviction_state[0] = True
+        evicted = self._adapter.evict_resolved_revue_comments(pr_num)
+        if evicted == 0:
+            return None
+
+        print(f"[revue] 🗑️ Evicted {evicted} resolved Revue comment(s) to free up space")
+        self._adapter.comment_limit_reached = False
+        return self._adapter.post_review_comment_with_params(
+            pr_id=pr_num, api_params=api_params, body=body,
             replacement_line_count=replacement_line_count,
         )
 

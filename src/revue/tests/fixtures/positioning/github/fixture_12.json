@@ -1,0 +1,21 @@
+{
+  "platform": "github",
+  "source_pr": 11,
+  "file_path": "src/revue/core/dedup_consolidator.py",
+  "diff_snippet": "@@ -435,6 +437,12 @@ def _synthesise_contradictions(\n             key=lambda s: _SEVERITY_ORDER.get(s, 99),\n         )\n \n+        # Preserve code_replacement from the highest-confidence source finding that has one\n+        source = max(\n+            (f for f in group if f.code_replacement),\n+            key=lambda f: f.confidence,\n+            default=None,",
+  "posted_line": 444,
+  "posted_side": "RIGHT",
+  "comment_body_excerpt": "**\ud83d\udfe1 [MEDIUM] code_replacement is preserved from the highest-confidence source finding, but if multiple findings have the same confidence, the choice is arbitrary (max() returns the first match), leading to non-deterministic suggestion blocks. Additionally, max() is called twice on the same group \u2014 o",
+  "reported_line": 444,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "src/revue/core/dedup_consolidator.py",
+    "start_line": 444,
+    "end_line": 444
+  },
+  "expected_api_params": {
+    "path": "src/revue/core/dedup_consolidator.py",
+    "side": "RIGHT",
+    "line": 444
+  }
+}

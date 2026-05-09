@@ -65,6 +65,19 @@ class VCSAdapter(Protocol):
         """
         ...
 
+    def post_review_comment_with_params(
+        self, pr_id: int, api_params: dict, body: str, replacement_line_count: int = 1
+    ) -> str | None:
+        """Post an inline review comment using pre-built platform API params.
+
+        api_params is produced by PositionAdapter.to_api_params() and contains
+        the platform-native positioning fields ready for the API call.
+
+        Returns:
+            The platform comment ID as a string on success, None on failure.
+        """
+        ...
+
     def post_summary_comment(self, pr_id: int, body: str) -> str | None: ...
 
     def update_comment(self, pr_id: int, comment_id: str, body: str) -> bool: ...

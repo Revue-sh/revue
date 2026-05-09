@@ -58,6 +58,12 @@ _FINDING_A = {"severity": "high", "issue": "SQL injection", "line": 10,
 _FINDING_B = {"severity": "medium", "issue": "Unused import", "line": 20,
               "details": "Remove it", "recommendation": "Delete line"}
 
+# Pure-addition diff (25 lines) so that lines 10 and 20 are both '+' lines.
+# Required by the new PositionAdapter (AC7, REVUE-236): without a diff containing
+# the reported line as '+', resolve() returns None → finding routes to summary_sink.
+_SRC_APP_PY_DIFF = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
+_APP_PY_DIFF = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
+
 
 def _run(args, review_results, *, tmp_path, adapter=None, pre_seed=None, existing_comments=None):
     """Call _post_to_bitbucket with real PerPRCommentStore (rooted at tmp_path).
@@ -91,8 +97,15 @@ def _run(args, review_results, *, tmp_path, adapter=None, pre_seed=None, existin
     return mock_adapter
 
 
-def _run_github(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id="42"):
-    """Call _post_to_github with real PerPRCommentStore (rooted at tmp_path)."""
+def _run_github(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id="42",
+                diff_by_file: "dict[str, str] | None" = None):
+    """Call _post_to_github with real PerPRCommentStore (rooted at tmp_path).
+
+    diff_by_file: optional dict mapping file_path → diff snippet.  When provided,
+    _parse_diff_by_file is patched to return this dict so PositionAdapter can
+    anchor lines in those files.  Defaults to {} (empty diff → summary_sink for
+    all findings via the new strict changed-line rule).
+    """
     from revue.cli import _post_to_github
 
     args = argparse.Namespace(
@@ -102,6 +115,7 @@ def _run_github(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id=
     )
     mock_adapter = adapter or MagicMock()
     mock_adapter.post_review_comment.return_value = "gh-id-1"
+    mock_adapter.post_review_comment_with_params.return_value = "gh-id-1"
     mock_adapter.post_summary_comment.return_value = "gh-summary-id"
     mock_adapter.update_comment.return_value = False
     mock_adapter.resolve_inline_comment.return_value = True
@@ -113,12 +127,14 @@ def _run_github(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id=
     if pre_seed:
         pre_seed(PerPRCommentStore(tmp_path))
 
+    _dby_f = diff_by_file or {}
     with (
         patch("os.getcwd", return_value=str(tmp_path)),
         patch.dict(os.environ, {"GITHUB_TOKEN": "tok", "GITHUB_REPOSITORY": "ws/repo"}, clear=False),
         patch("revue.core.github_adapter.GitHubAdapter", return_value=mock_adapter),
         patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
         patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+        patch("revue.cli._parse_diff_by_file", return_value=_dby_f),
     ):
         _post_to_github(args, review_results)
 
@@ -136,6 +152,7 @@ def _run_gitlab(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id=
     )
     mock_adapter = adapter or MagicMock()
     mock_adapter.post_review_comment.return_value = "gl-id-1"
+    mock_adapter.post_review_comment_with_params.return_value = "gl-id-1"
     mock_adapter.post_summary_comment.return_value = "gl-summary-id"
     mock_adapter.update_comment.return_value = False
     mock_adapter.resolve_inline_comment.return_value = True
@@ -373,20 +390,25 @@ def test_separate_pr_numbers_are_isolated(tmp_path) -> None:
 # =====================================================================
 
 def test_github_new_finding_posted(tmp_path) -> None:
-    """GitHub: first review → finding posted, stored under platform='github'."""
+    """GitHub: first review → finding posted inline (line 10 is a '+' line in diff)."""
     review_results = [
         _FakeReviewResult(
             file_path="src/app.py",
             response=_make_review_response([_FINDING_A]),
         )
     ]
-    adapter = _run_github(review_results, tmp_path=tmp_path)
+    # Provide a diff that anchors line 10 so PositionAdapter returns a PlatformPosition.
+    adapter = _run_github(
+        review_results, tmp_path=tmp_path,
+        diff_by_file={"src/app.py": _SRC_APP_PY_DIFF},
+    )
 
-    assert adapter.post_review_comment.call_count == 1
+    # AC7: when PositionAdapter is available, uses post_review_comment_with_params
+    assert adapter.post_review_comment_with_params.call_count == 1
 
     store = PerPRCommentStore(tmp_path)
     from revue.comments.fingerprint import fingerprint as fp_func
-    fp = fp_func("src/app.py", 10, "")
+    fp = fp_func("src/app.py", 10, _SRC_APP_PY_DIFF)
     assert store.has_fingerprint("github", 42, "src/app.py", fp)
 
 
@@ -446,6 +468,39 @@ def test_github_fixed_finding_triggers_auto_resolve(tmp_path) -> None:
     store = PerPRCommentStore(tmp_path)
     unresolved = store.get_unresolved_fingerprints("github", 42)
     assert old_fp not in unresolved
+
+
+# =====================================================================
+# TC16: GitHub unanchored finding routes to summary_sink (REVUE-236)
+# =====================================================================
+
+def test_github_unanchored_finding_routes_to_summary_sink(tmp_path) -> None:
+    """GitHub: finding on line outside diff → resolve() returns None → NOT posted inline."""
+    # _SRC_APP_PY_DIFF only covers lines 1-25; line 999 is not a '+' line
+    finding_oob = {
+        "severity": "high", "issue": "Out-of-diff issue", "line": 999,
+        "details": "On an unmodified line", "recommendation": "Move to diff",
+    }
+    review_results = [
+        _FakeReviewResult(
+            file_path="src/app.py",
+            response=_make_review_response([finding_oob]),
+        )
+    ]
+    adapter = _run_github(
+        review_results, tmp_path=tmp_path,
+        diff_by_file={"src/app.py": _SRC_APP_PY_DIFF},
+    )
+
+    adapter.post_review_comment.assert_not_called()
+    # Summary sink receives at least the unanchored-findings call
+    assert adapter.post_summary_comment.call_count >= 1
+    # The unanchored sink call body must mention the finding
+    sink_calls = [
+        str(c) for c in adapter.post_summary_comment.call_args_list
+        if "Out-of-diff issue" in str(c)
+    ]
+    assert sink_calls, "Unanchored finding must appear in a summary_sink post_summary_comment call"
 
 
 # =====================================================================
@@ -684,6 +739,7 @@ def test_github_summary_posted_before_inline_comments(tmp_path) -> None:
     )
     mock_adapter = MagicMock()
     mock_adapter.post_review_comment.return_value = "inline-id"
+    mock_adapter.post_review_comment_with_params.return_value = "inline-id"
     mock_adapter.post_summary_comment.return_value = "summary-id"
     mock_adapter.get_existing_comments.return_value = []
     mock_adapter.update_comment.return_value = False
@@ -692,6 +748,7 @@ def test_github_summary_posted_before_inline_comments(tmp_path) -> None:
 
     call_order = []
     mock_adapter.post_review_comment.side_effect = lambda **kw: (call_order.append("inline"), "inline-id")[1]
+    mock_adapter.post_review_comment_with_params.side_effect = lambda **kw: (call_order.append("inline"), "inline-id")[1]
     mock_adapter.post_summary_comment.side_effect = lambda **kw: (call_order.append("summary"), "summary-id")[1]
 
     with (
@@ -700,6 +757,7 @@ def test_github_summary_posted_before_inline_comments(tmp_path) -> None:
         patch("revue.core.github_adapter.GitHubAdapter", return_value=mock_adapter),
         patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
         patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+        patch("revue.cli._parse_diff_by_file", return_value={"app.py": _APP_PY_DIFF}),
     ):
         from revue.cli import _post_to_github
         _post_to_github(_make_args(bb_username=None, bb_token=None, workspace=None, repo_slug=None), [rr])

@@ -1,0 +1,22 @@
+{
+  "platform": "bitbucket",
+  "source_pr": 133,
+  "file_path": "src/revue/comments/platform_adapter.py",
+  "diff_snippet": "diff --git a/src/revue/comments/platform_adapter.py b/src/revue/comments/platform_adapter.py\nindex 61ef9f2..1b617df 100644\n--- a/src/revue/comments/platform_adapter.py\n+++ b/src/revue/comments/platform_adapter.py\n@@ -603,6 +603,52 @@ class BitbucketAdapter(PlatformAdapter):\n             _log.warning(\"get_existing_comments failed for PR %s: %s\", pr_id, exc)\n             return []\n \n+    def get_thread_replies(self, pr_id: int, comment_id: str) -> list[dict]:\n+        \"\"\"Fetch replies to a Bitbucket comment thread.\n+\n+        Bitbucket stores replies as comments with ``parent.id`` set.  This method\n+        fetches all PR comments and filters for those whose parent is ``comment_id``.\n+\n+        Returns a list of dicts with keys: id, body, created_at.\n+        Returns [] on any error (never raises).\n+        \"\"\"\n+        try:\n+            all_comments = self.get_existing_comments(pr_id)\n+            parent_id = str(comment_id)\n+            return [\n+                {\n+                    \"id\": str(c.get(\"id\", \"\")),\n+                    \"body\": c.get(\"content\", {}).get(\"raw\", \"\") or \"\",\n+                    \"created_at\": c.get(\"created_on\", \"\"),\n+                }\n+                for c in all_comments\n+                if str(c.get(\"parent\", {}).get(\"id\", \"\")) == parent_id\n+            ]\n+        except Exception as exc:\n+            _log.warning(\n+                \"get_thread_replies failed for PR %s comment %s: %s\",\n+                pr_id, comment_id, exc,\n+            )\n+            return []\n+\n+    def reply_to_comment(self, pr_id: int, comment_id: str, body: str) -> str | None:\n+        \"\"\"Post a reply to a comment thread.\n+\n+        Returns the reply ID on success, None on failure.\n+        \"\"\"\n+        try:\n+            payload: dict[str, Any] = {\n+                \"content\": {\"raw\": body},\n+                \"parent\": {\"id\": int(comment_id)},\n+            }\n+            url = f\"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments\"\n+            response = httpx.post(url, json=payload, **self._auth_kwargs())\n+            response.raise_for_status()\n+            return str(response.json().get(\"id\", \"\"))\n+        except Exception as exc:\n+            _log.warning(\"reply_to_comment failed for PR %s comment %s: %s\", pr_id, comment_id, exc)\n+            return None\n+\n     def resolve_position(\n         self, file_path: str, line_number: int, diff: str\n     ) -> DiffPosition:\n",
+  "posted_line_to": 623,
+  "posted_line_from": null,
+  "comment_body_excerpt": "**\ud83d\udd35 [LOW] get_thread_replies implementation for Bitbucket filters by string comparison of parent.id, but parent.id may be an integer while comment_id is a string, causing silent mismatches.**\n*Zara \u00b7 Code Quality*\n> \ud83d\udca1 **Action:** Normalise both IDs to strings before comparison to ensure consistent t",
+  "reported_line": 625,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "src/revue/comments/platform_adapter.py",
+    "start_line": 625,
+    "end_line": 625
+  },
+  "expected_api_params": {
+    "inline": {
+      "path": "src/revue/comments/platform_adapter.py",
+      "to": 625
+    }
+  }
+}

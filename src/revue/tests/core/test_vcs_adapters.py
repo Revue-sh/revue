@@ -1279,6 +1279,11 @@ class _MinimalAdapter:
     ) -> str | None:
         return "1"
 
+    def post_review_comment_with_params(
+        self, pr_id: int, api_params: dict, body: str, replacement_line_count: int = 1
+    ) -> str | None:
+        return "1"
+
     def post_summary_comment(self, pr_id: int, body: str) -> str | None:
         return "1"
 

@@ -15,12 +15,23 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
-# Configure Python logging from REVUE_LOG_LEVEL env var (default: WARNING).
-# Set REVUE_LOG_LEVEL=DEBUG in CI to see: [revue:body] logs tracing BodyBuilder routing and platform selection.
+# Configure Python logging.
+# Root handler: WARNING level for third-party noise suppression.
+# revue.* hierarchy: INFO so pipeline progress reaches the terminal.
+# Format: plain %(message)s — all [revue] messages embed their own prefix.
+# Override the revue.* level via REVUE_LOG_LEVEL env var if needed.
 logging.basicConfig(
-    level=os.environ.get("REVUE_LOG_LEVEL", "WARNING").upper(),
-    format="%(levelname)s %(name)s %(message)s",
+    level=logging.NOTSET,
+    format="%(message)s",
+    stream=sys.stdout,
 )
+logging.getLogger("revue").setLevel(
+    os.environ.get("REVUE_LOG_LEVEL", "INFO").upper()
+)
+# Suppress third-party HTTP library noise.
+logging.getLogger("anthropic._base_client").setLevel("WARNING")
+logging.getLogger("httpcore").setLevel("WARNING")
+logging.getLogger("httpx").setLevel("WARNING")
 
 from revue.core.logging_channels import Log  # noqa: F401, E402
 from revue.core.config_loader import (

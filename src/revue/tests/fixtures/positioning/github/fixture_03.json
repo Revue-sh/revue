@@ -1,0 +1,21 @@
+{
+  "platform": "github",
+  "source_pr": 11,
+  "file_path": "scripts/generate_test_license.py",
+  "diff_snippet": "@@ -0,0 +1,210 @@\n+#!/usr/bin/env python3\n+\"\"\"Generate a test REVUE_LICENSE_KEY and insert it into the Fly.io production database.\n+\n+Gated by TOTP verification (1Password) or macOS Keychain before connecting to Fly.io.\n+See scripts/README.md for full setup instructions and security notes.\n+\n+Usage:\n+    python3 scripts/generate_test_license.py --label github-e2e\n+    python3 scripts/generate_test_license.py --auth keychain --dry-run\n+\"\"\"\n+\n+from __future__ import annotations\n+\n+import argparse\n+import os\n+import secrets\n+import subprocess\n+import sys\n+\n+FLY_APP = \"revue-io\"\n+DB_PATH = \"/data/revue.db\"\n+OP_ITEM_DEFAULT = \"Revue E2E License Generator\"\n+KEYCHAIN_SERVICE = \"revue-license-generator\"\n+KEYCHAIN_ACCOUNT = \"revue-license-generator\"\n+\n+TIER_LIMITS: dict[str, str] = {\n+    \"free\": \"25\",\n+    \"indie\": \"100\",\n+    \"pro\": \"None\",\n+}\n+\n+\n+# --- Auth ---\n+\n+def _op_available() -> bool:\n+    return subprocess.run(\n+        [\"which\", \"op\"], capture_output=True\n+    ).returncode == 0\n+\n+\n+def _auth_1password(item: str) -> None:\n+    \"\"\"Gate on 1Password authentication by fetching the item's TOTP.\n+\n+    Successful execution of `op item get --otp` is the security gate:\n+    it requires an active, biometric-or-password-authenticated op session.\n+    The fetched code is displayed so the user can confirm the right item\n+    is being used, but re-entry is not required.\n+    \"\"\"\n+    result = subprocess.run(\n+        [\"op\", \"item\", \"get\", item, \"--otp\"],\n+        capture_output=True, text=True,\n+    )\n+    if result.returncode != 0:\n+        err = result.stderr.strip()\n+        print(f\"1Password error: {err}\", file=sys.stderr)\n+        print(\"Run 'op signin' and ensure the item exists.\", file=sys.stderr)\n+        sys.exit(1)\n+\n+    otp = result.stdout.strip()\n+    if not otp:\n+        print(\"1Password returned an empty OTP \u2014 is a TOTP field configured on the item?\", file=sys.stderr)\n+        sys.exit(1)\n+\n+    print(f\"\u2713 1Password authenticated (current TOTP: {otp})\")\n+\n+\n+def _auth_keychain() -> None:\n+    \"\"\"Retrieve passphrase from macOS Keychain (triggers Touch ID if configured) and verify.\"\"\"\n+    result = subprocess.run(\n+        [\n+            \"security\", \"find-generic-password\",\n+            \"-a\", KEYCHAIN_ACCOUNT,\n+            \"-s\", KEYCHAIN_SERVICE,\n+            \"-w\",  # print password to stdout\n+        ],\n+        capture_output=True, text=True,\n+    )\n+    if result.returncode != 0:\n+        print(\"Keychain item not found. Set it up with:\", file=sys.stderr)\n+        print(\n+            f'  security add-generic-password -a {KEYCHAIN_ACCOUNT} -s {KEYCHAIN_SERVICE} -w \"your-passphrase\"',\n+            file=sys.stderr,\n+        )\n+        sys.exit(1)\n+\n+    expected = result.stdout.strip()\n+    entered = getpass.getpass(\"Enter the revue-license-generator passphrase: \").strip()\n+    if entered != expected:\n+        print(\"Passphrase mismatch. Aborted.\", file=sys.stderr)",
+  "posted_line": 89,
+  "posted_side": "RIGHT",
+  "comment_body_excerpt": "**\ud83d\udfe1 [MEDIUM] SQL injection in dynamically constructed Python code. The email, key, workspace, and tier values are interpolated directly into the Python string without escaping. If a label contains a quote, the Python syntax breaks and could be exploited.**\n*Zara \u00b7 Security*\n\n> \ud83d\udca1 **Recommendation:** ",
+  "reported_line": 88,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "scripts/generate_test_license.py",
+    "start_line": 88,
+    "end_line": 88
+  },
+  "expected_api_params": {
+    "path": "scripts/generate_test_license.py",
+    "side": "RIGHT",
+    "line": 88
+  }
+}

@@ -503,3 +503,40 @@ def test_resolve_file_type_routing_empty_reviewers_means_none(tmp_path: Path) ->
 
     result = resolve_file_type_routing("file.tmp", rules)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Synthesis-model parsing — REVUE-236 follow-up (Option 3)
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_parses_synthesis_model_from_ai_section(tmp_path: Path) -> None:
+    """ai.synthesis_model is read into AIConfig.synthesis_model when present."""
+    # Arrange
+    yml = """\
+version: "1"
+ai:
+  provider: anthropic
+  model: claude-haiku-4-5-20251001
+  synthesis_model: claude-sonnet-4-6
+"""
+    path = _write_yml(tmp_path, yml)
+
+    # Act
+    config = load_config(config_path=path)
+
+    # Assert
+    assert config.synthesis_model == "claude-sonnet-4-6"
+    assert config.model == "claude-haiku-4-5-20251001"
+
+
+def test_load_config_synthesis_model_defaults_to_empty_when_absent(tmp_path: Path) -> None:
+    """Omitting ai.synthesis_model leaves AIConfig.synthesis_model as empty string."""
+    # Arrange
+    path = _write_yml(tmp_path, _minimal_yml())
+
+    # Act
+    config = load_config(config_path=path)
+
+    # Assert — empty string signals "reuse main model for synthesis"
+    assert config.synthesis_model == ""

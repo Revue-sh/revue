@@ -1,0 +1,3 @@
+platform: github         # default platform for dry-run mode
+agents_dir: _revue/agents
+fixtures_dir: src/revue/tests/fixtures/positioning

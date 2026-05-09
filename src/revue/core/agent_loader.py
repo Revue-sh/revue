@@ -258,10 +258,9 @@ class LoadedAgent:
                 agent_name=self._def.name,
                 max_tokens=self._max_tokens,
             ).text
-            print(
-                f"[revue]     [{self._def.name}] raw response "
-                f"({len(raw)} chars, starts: {raw[:80]!r})",
-                flush=True,
+            Log.agent.info(
+                "[revue]     [%s] raw response (%d chars, starts: %r)",
+                self._def.name, len(raw), raw[:80],
             )
             # Strip markdown code fences that LLMs often wrap responses in
             clean = raw.strip()
@@ -274,23 +273,29 @@ class LoadedAgent:
             if not isinstance(data, list):
                 data = data.get("findings", []) if isinstance(data, dict) else []
             reviews = []
-            for item in data:
+            for idx, item in enumerate(data):
+                raw_line = item.get("line") or item.get("lines") or item.get("line_number")
+                raw_file = item.get("file_path") or item.get("filename") or item.get("file") or "(no file field)"
+                raw_issue = (item.get("issue") or item.get("message") or item.get("title") or "")[:80]
+                Log.position.info(
+                    "[pos] agent.finding[%d]  agent=%s  raw_line=%r  raw_file=%r  issue=%r  "
+                    "has_code_replacement=%s  raw_rlc=%r",
+                    idx, self._def.name, raw_line, raw_file, raw_issue,
+                    bool(item.get("code_replacement")),
+                    item.get("replacement_line_count"),
+                )
                 parsed = _parse_finding_item(item, self._def.name, self._def.severity_default)
                 if parsed is not None:
                     reviews.append(parsed)
-            print(
-                f"[revue]     [{self._def.name}] parsed {len(reviews)} finding(s)",
-                flush=True,
-            )
+            Log.agent.info("[revue]     [%s] parsed %d finding(s)", self._def.name, len(reviews))
             return reviews
         except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
             # Non-fatal: bad response shape/content — degrade gracefully.
             # Raw response is NOT logged — it may contain credentials or sensitive data.
             # The exception type and message are sufficient for diagnosis.
-            print(
-                f"[revue]     [{self._def.name}] response parse error "
-                f"({type(exc).__name__}): {exc}",
-                flush=True,
+            Log.agent.warning(
+                "[revue]     [%s] response parse error (%s): %s",
+                self._def.name, type(exc).__name__, exc,
             )
             return []
         # All other exceptions (HTTP errors, network failures, auth errors) propagate

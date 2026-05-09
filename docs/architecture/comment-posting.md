@@ -304,6 +304,7 @@ This is **transitional behaviour**. Once agent prompts are tightened to require 
 
 ## References
 
+- [Positioning Architecture](positioning.md) — full data flow diagram from diff ingestion through agents to platform API call; per-platform PositionAdapter design; AC7 gap
 - [Nova Consolidation Architecture](consolidation.md) — implementation detail of `NovaSingleShotStrategy`; Nova's TOML/JSON batch prompt format
 - [Agentic Review Loop](agentic-review-loop.md) — Track 2 plug-in shape; `LangGraphConversationalStrategy` integration point
 - [Comment Posting Refactor Plan](../planning/comment-posting-refactor-plan.md) — PR sequence and Jira ticket structure for Track 1 delivery

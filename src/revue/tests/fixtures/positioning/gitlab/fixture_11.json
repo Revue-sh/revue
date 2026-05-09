@@ -1,0 +1,27 @@
+{
+  "platform": "gitlab",
+  "source_mr": 14,
+  "file_path": "src/revue/core/diff_position_resolver.py",
+  "diff_snippet": "@@ -0,0 +1,128 @@\n+\"\"\"DiffPositionResolver \u2014 3-tier line number snapping for REVUE-201.\n+\n+Resolves agent-reported line numbers to accurate positions by:\n+1. Tier 1: Exact match in diff hunks\n+2. Tier 2: Nearest hunk line when outside diff bounds\n+3. Tier 3: File read fallback when repo_path provided (out-of-diff case)\n+\"\"\"\n+\n+import functools\n+import re\n+from pathlib import Path\n+\n+\n+class DiffPositionResolver:\n+    \"\"\"Snaps agent-reported line numbers to valid positions in a diff or file.\"\"\"\n+\n+    _DIFF_HUNK_RE = re.compile(r\"^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@\")\n+\n+    @staticmethod\n+    def snap(\n+        reported_line: int,\n+        diff_content: str,\n+        repo_path: str | None = None,\n+        file_path: str | None = None,\n+    ) -> int:\n+        \"\"\"Snap reported_line to a valid position using 3-tier strategy.\n+\n+        Args:\n+            reported_line: Agent-reported line number (1-indexed).\n+            diff_content: Unified diff bytes as string.\n+            repo_path: Root of cloned repo (for Tier 3 fallback). None disables Tier 3.\n+            file_path: Relative path within repo (used only if repo_path provided).\n+\n+        Returns:\n+            A line number that exists in the diff (Tier 1/2) or file (Tier 3).\n+        \"\"\"\n+        # Extract all (old_line, new_line) pairs from diff\n+        pairs = DiffPositionResolver._map_diff_lines(diff_content)\n+\n+        if not pairs:\n+            # Empty diff \u2014 line 1 is the safest anchor\n+            return 1\n+\n+        # Tier 1: Exact match in new_line?\n+        for _, new_line in pairs:\n+            if new_line == reported_line:\n+                return reported_line\n+\n+        # Tier 2: Snap to nearest new_line in diff\n+        nearest = min(pairs, key=lambda p: abs(p[1] - reported_line))\n+        nearest_line = nearest[1]\n+\n+        # Tier 3: If file access is available, clamp reported_line to valid file range\n+        if repo_path and file_path:\n+            # Reject null bytes before constructing a Path (Path() accepts them silently)\n+            if \"\\x00\" in file_path:\n+                return nearest_line\n+            fp = Path(file_path)\n+            # Reject absolute paths and '..' traversal components\n+            if fp.is_absolute() or \"..\" in fp.parts:\n+                return nearest_line\n+            full_path = Path(repo_path) / fp\n+            # Use relative_to() \u2014 raises ValueError if full_path escapes repo root\n+            # (handles symlinks and case-insensitive filesystem edge cases)\n+            try:\n+                resolved_full = full_path.resolve()\n+                resolved_repo = Path(repo_path).resolve()\n+                resolved_full.relative_to(resolved_repo)\n+            except Exception:\n+                return nearest_line\n+\n+            if full_path.exists():\n+                try:\n+                    content = full_path.read_text(encoding=\"utf-8\", errors=\"ignore\")\n+                    num_lines = len(content.splitlines())\n+                    if num_l",
+  "posted_line": 56,
+  "posted_base_sha": "6af5d4e390cd3e9927405126b57b560599afc8e0",
+  "posted_head_sha": "14285c1612398d5a5973ae445a445437dfdfecbf",
+  "posted_start_sha": "597da701d93cd5efc8ce4ef89c7e822ad4d99445",
+  "comment_body_excerpt": "**\ud83d\udfe1 [MEDIUM] Path traversal vulnerability \u2014 absolute path check uses Path.is_absolute() which returns False on Windows for drive-relative paths like 'C:relative', allowing escape outside repo root.**\n*Agents: Zara \ud83d\udd12 **Security** | Maya \u2728 **Code Quality** \u2192 Nova \ud83c\udf1f (synthesised)*\n\n> \ud83d\udca1 **Recommendation",
+  "reported_line": 60,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "src/revue/core/diff_position_resolver.py",
+    "start_line": 60,
+    "end_line": 60
+  },
+  "expected_api_params": {
+    "position_type": "text",
+    "base_sha": "6af5d4e390cd3e9927405126b57b560599afc8e0",
+    "head_sha": "14285c1612398d5a5973ae445a445437dfdfecbf",
+    "start_sha": "597da701d93cd5efc8ce4ef89c7e822ad4d99445",
+    "new_path": "src/revue/core/diff_position_resolver.py",
+    "old_path": "src/revue/core/diff_position_resolver.py",
+    "new_line": 60
+  }
+}

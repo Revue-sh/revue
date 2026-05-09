@@ -4,8 +4,9 @@ import importlib
 import logging
 import sys
 import unittest
+from unittest.mock import patch
 
-from revue.core.log import Log, VERBOSE
+from revue.core.log import Log, RevueLogger, VERBOSE
 
 
 class TestLoggingChannelsBootstrap(unittest.TestCase):
@@ -13,9 +14,12 @@ class TestLoggingChannelsBootstrap(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        """Force re-registration of channels (other tests may have cleared Log._channels)."""
+        """Force re-registration of channels without YAML overrides."""
         import revue.core.logging_channels as lc
-        importlib.reload(lc)
+        # Patch out YAML config so user's ~/.config/revue/log_channels.yaml
+        # does not override code-default levels during these tests.
+        with patch.object(RevueLogger.shared(), "_yaml_config", {}):
+            importlib.reload(lc)
 
     def test_logging_channels_bootstrap_registers_four_channels(self):
         """Importing logging_channels registers pipeline, agent, nova, cli channels."""

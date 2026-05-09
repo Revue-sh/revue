@@ -1,0 +1,22 @@
+{
+  "platform": "bitbucket",
+  "source_pr": 133,
+  "file_path": "src/revue/comments/summary_builder.py",
+  "diff_snippet": "diff --git a/src/revue/comments/summary_builder.py b/src/revue/comments/summary_builder.py\nnew file mode 100644\nindex 0000000..7c8fa8a\n--- /dev/null\n+++ b/src/revue/comments/summary_builder.py\n@@ -0,0 +1,232 @@\n+\"\"\"Summary comment body construction (REVUE-211).\n+\n+Extracted from cli.py so Poster can import it without inverting the\n+cli \u2192 service layer hierarchy. cli.py re-imports from here.\n+\"\"\"\n+from __future__ import annotations\n+\n+import json\n+\n+from revue.comments.body_builder import BodyBuilder\n+\n+# ---------------------------------------------------------------------------\n+# Display constants\n+# ---------------------------------------------------------------------------\n+\n+SEVERITY_EMOJI: dict[str, str] = {\"high\": \"\ud83d\udd34\", \"medium\": \"\ud83d\udfe1\", \"low\": \"\ud83d\udd35\", \"info\": \"\u2139\ufe0f\"}\n+SEVERITY_ORDER: list[str] = [\"high\", \"medium\", \"low\", \"info\"]\n+\n+_CATEGORY_MAP: dict[str, str] = {\n+    \"architecture\": \"Architecture\",\n+    \"security\": \"Security\",\n+    \"performance\": \"Performance\",\n+    \"code-quality\": \"Code Quality\",\n+}\n+_CATEGORY_CLEAN_LABELS: dict[str, str] = {\n+    \"Architecture\": \"SOLID compliant, no structural issues\",\n+    \"Security\": \"No vulnerabilities detected\",\n+    \"Performance\": \"No blocking issues\",\n+    \"Code Quality\": \"All patterns followed\",\n+}\n+_AGENT_DISPLAY_NAMES: dict[str, str] = {\n+    \"leo\": \"Leo\",\n+    \"zara\": \"Zara\",\n+    \"kai\": \"Kai\",\n+    \"maya\": \"Maya\",\n+    \"nova\": \"Nova\",\n+}\n+_AGENT_EMOJIS: dict[str, str] = {\n+    \"leo\": \"\ud83c\udfd7\ufe0f\",\n+    \"zara\": \"\ud83d\udd12\",\n+    \"kai\": \"\u26a1\ufe0f\",\n+    \"maya\": \"\u2728\",\n+    \"nova\": \"\ud83c\udf1f\",\n+}\n+\n+\n+# ---------------------------------------------------------------------------\n+# Helpers\n+# ---------------------------------------------------------------------------\n+\n+\n+def _star_rating(\n+    total: int,\n+    high: int,\n+    medium: int,\n+    low: int = 0,\n+    info: int = 0,\n+    rating_cfg: dict | None = None,\n+) -> str:\n+    \"\"\"Return a star rating string (1\u20135) based on finding severity counts.\"\"\"\n+    if total == 0:\n+        return \"\u2b50\u2b50\u2b50\u2b50\u2b50 5.0/5.0\"\n+    cfg = rating_cfg or {}\n+    w_high   = float(cfg.get(\"high\",   1.5))\n+    w_medium = float(cfg.get(\"medium\", 0.3))\n+    w_low    = float(cfg.get(\"low\",    0.05))\n+    w_info   = float(cfg.get(\"info\",   0.0))\n+    floor    = float(cfg.get(\"floor\",  1.0))\n+    score = 5.0 - (high * w_high + medium * w_medium + low * w_low + info * w_info)\n+    score = max(floor, min(5.0, score))\n+    full = int(score)\n+    half = 1 if (score - full) >= 0.5 else 0\n+    empty = 5 - full - half\n+    stars = \"\u2b50\" * full + (\"\u2728\" if half else \"\") + \"\u2606\" * empty\n+    return f\"{stars} {score:.1f}/5.0\"\n+\n+\n+def _parse_findings_for_summary(response: str) -> tuple[list, str]:\n+    \"\"\"Parse findings from a JSON review response. Returns (findings, summary).\"\"\"\n+    clean = response.strip()\n+    if clean.startswith(\"```\"):\n+        clean = \"\\n\".join(clean.split(\"\\n\")[1:])\n+    if clean.endswith(\"```\"):\n+        clean = \"\\n\".join(clean.split(\"\\n\")[:-1])\n+    data = json.loads(clean.strip())\n+    if \"review\" in data",
+  "posted_line_to": 1,
+  "posted_line_from": null,
+  "comment_body_excerpt": "**\ud83d\udd35 [LOW] New module extracted from cli.py to break a circular dependency, but the extraction rationale and resulting dependency chain (cli \u2192 summary_builder \u2192 body_builder) should be documented to prevent future maintainers from re-introducing the cycle.**\n*Maya \u00b7 Code Quality*\n> \ud83d\udca1 **Action:** Add ",
+  "reported_line": 1,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "src/revue/comments/summary_builder.py",
+    "start_line": 1,
+    "end_line": 1
+  },
+  "expected_api_params": {
+    "inline": {
+      "path": "src/revue/comments/summary_builder.py",
+      "to": 1
+    }
+  }
+}

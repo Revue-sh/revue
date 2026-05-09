@@ -1,0 +1,6 @@
+from typing import Protocol
+
+
+class PositioningExtractor(Protocol):
+    def get(self, path: str) -> list | dict: ...
+    def extract(self, target: int = 12) -> None: ...

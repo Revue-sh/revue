@@ -1,0 +1,27 @@
+{
+  "platform": "gitlab",
+  "source_mr": 14,
+  "file_path": "src/revue/core/dedup_consolidator.py",
+  "diff_snippet": "@@ -13,7 +13,9 @@ from dataclasses import dataclass, field\n from typing import Any, Protocol\n \n from .agent_names import NOVA\n+from .ai_client import AIClient\n from .models import AIReview\n+from .synthesis_protocol import ContradictionSynthesiser\n \n _log = logging.getLogger(__name__)\n \n@@ -435,6 +437,12 @@ def _synthesise_contradictions(\n             key=lambda s: _SEVERITY_ORDER.get(s, 99),\n         )\n \n+        # Preserve code_replacement from the highest-confidence source finding that has one\n+        source = max(\n+            (f for f in group if f.code_replacement),\n+            key=lambda f: f.confidence,\n+            default=None,\n+        )\n         synthesised = AIReview(\n             file_path=file_path,\n             line_number=line_number,\n@@ -444,6 +452,8 @@ def _synthesise_contradictions(\n             confidence=max(f.confidence for f in group),\n             agent_name=NOVA,\n             synthesised_from=[(f.agent_name, f.category) for f in group if f.agent_name],\n+            code_replacement=source.code_replacement if source else None,\n+            replacement_line_count=source.replacement_line_count if source else 1,\n         )\n         synthesised_findings[(file_path, line_number)] = synthesised\n \n@@ -470,6 +480,40 @@ def _synthesise_contradictions(\n     return result_findings, synthesis_events\n \n \n+class AIContradictionSynthesiser:\n+    \"\"\"Concrete ContradictionSynthesiser that wraps AIClient and delegates to\n+    _synthesise_contradictions() (DIP, REVUE-180).\n+\n+    This adapter is the bridge between the ContradictionSynthesiser Protocol\n+    boundary and the AI-backed implementation in _synthesise_contradictions().\n+    All JSON parsing, prompt construction, and response handling live in that\n+    private function; this class owns only the protocol contract enforcement.\n+    \"\"\"\n+\n+    def __init__(self, ai_client: AIClient) -> None:\n+        if ai_client is None:\n+            raise ValueError(\"AIContradictionSynthesiser requires a non-None AIClient\")\n+        self._client = ai_client\n+\n+    def synthesise(\n+        self, findings: list[AIReview]\n+    ) -> tuple[list[AIReview], list[dict]]:\n+        \"\"\"Synthesise contradiction groups via AI. Returns (findings, events).\n+\n+        Honors the ContradictionSynthesiser protocol contract: never raises \u2014\n+        returns (original_findings, []) on any failure.\n+        \"\"\"\n+        try:\n+            return _synthesise_contradictions(findings, self._client)\n+        except Exception:\n+            _log.exception(\n+                \"AIContradictionSynthesiser.synthesise() failed \u2014 passing findings through \"\n+                \"(affected findings: %d)\",\n+                len(findings),\n+            )\n+            return findings, []\n+\n+\n @dataclass\n class ConsolidationResult:\n     findings: list[AIReview]\n@@ -488,16 +532,18 @@ def consolidate(\n     findings: list[AIReview],\n     strategies: list[DeduplicationStrategy] | None = None,\n     min_confidence: float = 0.0,\n-    ai_client: Any | ",
+  "posted_line": 440,
+  "posted_base_sha": "6af5d4e390cd3e9927405126b57b560599afc8e0",
+  "posted_head_sha": "14285c1612398d5a5973ae445a445437dfdfecbf",
+  "posted_start_sha": "597da701d93cd5efc8ce4ef89c7e822ad4d99445",
+  "comment_body_excerpt": "**\ud83d\udd34 [HIGH] max() called on a generator that filters code_replacement may produce an empty sequence, causing ValueError at runtime. The code guards with default=None, but this creates unnecessary iteration for reviews with many findings but no code replacements.**\n*Agents: Zara \ud83d\udd12 **Code Quality** | M",
+  "reported_line": 440,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "src/revue/core/dedup_consolidator.py",
+    "start_line": 440,
+    "end_line": 440
+  },
+  "expected_api_params": {
+    "position_type": "text",
+    "base_sha": "6af5d4e390cd3e9927405126b57b560599afc8e0",
+    "head_sha": "14285c1612398d5a5973ae445a445437dfdfecbf",
+    "start_sha": "597da701d93cd5efc8ce4ef89c7e822ad4d99445",
+    "new_path": "src/revue/core/dedup_consolidator.py",
+    "old_path": "src/revue/core/dedup_consolidator.py",
+    "new_line": 440
+  }
+}

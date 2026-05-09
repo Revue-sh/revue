@@ -535,6 +535,33 @@ class BitbucketAdapter(PlatformAdapter):
             Log.cli.warning("❌ post_review_comment failed for PR %s: %s", pr_id, exc)
             return None
 
+    def post_review_comment_with_params(
+        self, pr_id: int, api_params: dict, body: str, replacement_line_count: int = 1
+    ) -> str | None:
+        """Post using pre-built api_params from BitbucketPositionAdapter.to_api_params().
+
+        api_params contains {"inline": {"path": ..., "to": ..., ["from": ...]}}
+        (REVUE-238: BitbucketPositionAdapter not yet wired; method stub for protocol compliance.)
+        """
+        payload: dict[str, Any] = {"content": {"raw": body}, **api_params}
+        try:
+            url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pr_id}/comments"
+            response = httpx.post(url, json=payload, **self._auth_kwargs())
+            response.raise_for_status()
+            comment_id = response.json().get("id")
+            return str(comment_id) if comment_id is not None else None
+        except httpx.HTTPStatusError as exc:
+            resp_body = exc.response.text[:300] if exc.response.text else "(empty)"
+            if exc.response.status_code == 403 and "200 comments" in exc.response.text:
+                self.comment_limit_reached = True
+                Log.cli.warning("❌ post_review_comment_with_params: PR %s reached 200-comment limit", pr_id)
+            else:
+                Log.cli.warning("❌ post_review_comment_with_params failed for PR %s: %s — %s", pr_id, exc, resp_body)
+            return None
+        except Exception as exc:
+            Log.cli.warning("❌ post_review_comment_with_params failed for PR %s: %s", pr_id, exc)
+            return None
+
     post_inline_comment = post_review_comment
 
     def post_summary_comment(self, pr_id: int, body: str) -> str | None:

@@ -1,0 +1,13 @@
+{
+  "platform": "github",
+  "source_pr": 11,
+  "file_path": "src/revue/core/agent_loader.py",
+  "diff_snippet": "@@ -41,11 +41,55 @@\n }\n ",
+  "posted_line": 42,
+  "posted_side": "RIGHT",
+  "comment_body_excerpt": "**\ud83d\udfe1 [MEDIUM] filter_code_replacement() escapes triple-backticks only at line start, but the docstring is redundant and could be clearer about why mid-line backticks are safe.**\n*Agents: Zara \ud83d\udd12 **Security** | Leo \ud83c\udfd7\ufe0f **Code Quality** \u2192 Nova \ud83c\udf1f (synthesised)*\n\n> \ud83d\udca1 **Recommendation:** Clarify the docstri",
+  "reported_line": 42,
+  "replacement_line_count": 1,
+  "expected_position": null,
+  "expected_api_params": null
+}

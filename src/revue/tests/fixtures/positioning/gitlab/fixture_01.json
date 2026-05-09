@@ -1,0 +1,27 @@
+{
+  "platform": "gitlab",
+  "source_mr": 23,
+  "file_path": "src/revue/comments/body_builder.py",
+  "diff_snippet": "@@ -1,16 +1,244 @@\n-\"\"\"Stub module for the BodyBuilder pipeline stage (REVUE-208).\n+\"\"\"Pure function module for rendering consolidated findings into comment bodies.\n+\n+BodyBuilder is a pure function module with no AI calls, no VCS I/O.\n+All rendering logic is testable without mocks.\n \n-Full implementation delivered in REVUE-212.\n Architecture spec: docs/architecture/comment-posting.md\n \"\"\"\n from __future__ import annotations\n \n+from typing import Callable, Literal\n+\n+from .models import ConsolidatedFinding\n+\n+# Severity emoji mapping\n+_SEVERITY_EMOJI = {\n+    \"high\": \"\ud83d\udd34\",\n+    \"medium\": \"\ud83d\udfe1\",\n+    \"low\": \"\ud83d\udd35\",\n+    \"info\": \"\u2139\ufe0f\",\n+}\n+\n+_SEVERITY_ORDER = [\"high\", \"medium\", \"low\", \"info\"]\n+\n+\n+def _highest_severity(items: list[ConsolidatedFinding]) -> str:\n+    severities = {item.severity for item in items}\n+    for sev in _SEVERITY_ORDER:\n+        if sev in severities:\n+            return sev\n+    return \"info\"\n+\n+# Agent display names for attribution\n+_AGENT_DISPLAY_NAMES = {\n+    \"leo\": \"Leo\",\n+    \"zara\": \"Zara\",\n+    \"kai\": \"Kai\",\n+    \"maya\": \"Maya\",\n+    \"nova\": \"Nova\",\n+}\n+\n+\n+def _github_suggestion_block(code_lines: list[str], replacement_line_count: int = 1) -> str:\n+    \"\"\"GitHub native suggestion block (```suggestion fence).\"\"\"\n+    return \"\\n```suggestion\\n\" + \"\\n\".join(code_lines) + \"\\n```\"\n+\n+\n+def _gitlab_suggestion_block(code_lines: list[str], replacement_line_count: int = 1) -> str:\n+    \"\"\"GitLab native suggestion block with line count directive.\"\"\"\n+    lines_to_delete = max(0, replacement_line_count - 1)\n+    return f\"\\n```suggestion:-0+{lines_to_delete}\\n\" + \"\\n\".join(code_lines) + \"\\n```\"\n+\n+\n+def _bitbucket_code_block(code_lines: list[str], replacement_line_count: int = 1) -> str:\n+    \"\"\"Bitbucket inline code block (no suggestion directive).\"\"\"\n+    return \"\\n```\\n\" + \"\\n\".join(code_lines) + \"\\n```\"\n+\n+\n+_PLATFORM_FORMATTERS: dict[str, Callable[[list[str], int], str]] = {\n+    \"github\": _github_suggestion_block,\n+    \"gitlab\": _gitlab_suggestion_block,\n+    \"bitbucket\": _bitbucket_code_block,\n+}\n+\n \n class BodyBuilder:\n-    \"\"\"Pure rendering: typed ConsolidatedFinding \u2192 platform-specific comment body.\n+    \"\"\"Renders ConsolidatedFinding objects into platform-specific comment body strings.\n \n     Per-platform kind-switching: GitHub suggestion blocks, GitLab suggestions, Bitbucket prose.\n     Reads summary_sink for the PR-level summary comment (Decision 6).\n     \"\"\"\n \n-    ...\n+    def build(\n+        self,\n+        finding: ConsolidatedFinding,\n+        fp: str,\n+        platform: Literal[\"github\", \"gitlab\", \"bitbucket\"] = \"github\",\n+    ) -> str:\n+        \"\"\"Render a single consolidated finding as a comment body.\n+\n+        Args:\n+            finding: The finding to render.\n+            fp: Pre-computed fingerprint string (embedded as [//]: # (revue:fp:{fp})).\n+            platform: Target VCS platform \u2014 determines suggestion fence format.\n+\n+        Returns:\n+            Comment body string with severity badge, issue, suggest",
+  "posted_line": 130,
+  "posted_base_sha": "f40428ad953bc210d50c5736efb7be35da30bc42",
+  "posted_head_sha": "b72b51a2cc57f836df91316dd87d5b3e99f2a8ff",
+  "posted_start_sha": "f40428ad953bc210d50c5736efb7be35da30bc42",
+  "comment_body_excerpt": "**\ud83d\udd34 [HIGH] Code replacement lines are embedded directly into suggestion fences without escaping backticks or fence markers. If a code_replacement contains triple backticks, it will break the fence and allow injection of arbitrary markdown into the comment. Additionally, build_grouped() method does n",
+  "reported_line": 14,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "src/revue/comments/body_builder.py",
+    "start_line": 14,
+    "end_line": 14
+  },
+  "expected_api_params": {
+    "position_type": "text",
+    "base_sha": "f40428ad953bc210d50c5736efb7be35da30bc42",
+    "head_sha": "b72b51a2cc57f836df91316dd87d5b3e99f2a8ff",
+    "start_sha": "f40428ad953bc210d50c5736efb7be35da30bc42",
+    "new_path": "src/revue/comments/body_builder.py",
+    "old_path": "src/revue/comments/body_builder.py",
+    "new_line": 14
+  }
+}

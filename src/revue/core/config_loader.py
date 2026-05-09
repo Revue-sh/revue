@@ -141,6 +141,7 @@ def load_config(
     ai: dict[str, object] = raw.get("ai", {}) or {}  # type: ignore[assignment]
     _set_if(config, "provider", ai, "provider")
     _set_if(config, "model", ai, "model")
+    _set_if(config, "synthesis_model", ai, "synthesis_model")
     _set_if(config, "api_key_env", ai, "api_key_env")
     _set_if(config, "base_url", ai, "base_url")
     if "temperature" in ai:

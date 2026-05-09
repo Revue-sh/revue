@@ -347,8 +347,9 @@ def test_pipeline_uses_simplified_path_for_free_tier():
     assert mock_client.complete.called
 
 
-def test_pipeline_uses_orchestration_path_for_pro_tier(capsys):
+def test_pipeline_uses_orchestration_path_for_pro_tier(caplog):
     """Pro tier triggers orchestration path — log says 'orchestrated'."""
+    import logging
     mock_client = MagicMock()
     mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config()
@@ -363,12 +364,12 @@ def test_pipeline_uses_orchestration_path_for_pro_tier(capsys):
     )
     pipeline = ReviewPipeline(config, client=mock_client, license_info=pro_license)
 
-    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+    with caplog.at_level(logging.INFO, logger="revue.core.pipeline"), \
+         patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage"):
         pipeline.run("fake.diff")
 
-    captured = capsys.readouterr()
-    assert "orchestrated" in captured.out
+    assert "orchestrated" in caplog.text
 
 
 def test_pipeline_orchestration_falls_back_when_no_agents_match():
@@ -393,27 +394,27 @@ def test_pipeline_orchestration_falls_back_when_no_agents_match():
     assert isinstance(excluded, list)
 
 
-def test_pipeline_logs_active_agents(capsys):
+def test_pipeline_logs_active_agents(caplog):
     """Pipeline logs active agents after license validation."""
+    import logging
     mock_client = MagicMock()
     mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config()
-    
+
     license_info = _license_info(
         agents_allowed=["orchestrator", "code-quality-expert"],
     )
     pipeline = ReviewPipeline(config, client=mock_client, license_info=license_info)
 
-    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+    with caplog.at_level(logging.INFO, logger="revue.core.pipeline"), \
+         patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage"):
         pipeline.run("fake.diff")
 
-    captured = capsys.readouterr()
-    
     # Verify log output contains active agents
-    assert "Active agents:" in captured.out
-    assert "orchestrator" in captured.out
-    assert "code-quality-expert" in captured.out
+    assert "Active agents:" in caplog.text
+    assert "orchestrator" in caplog.text
+    assert "code-quality-expert" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -654,8 +655,9 @@ def test_pipeline_passes_max_parallel_agents_to_runner(capsys):
     assert call_kwargs.get("timeout_seconds") == config.agent_timeout_seconds
 
 
-def test_pipeline_sequential_mode_logged(capsys):
+def test_pipeline_sequential_mode_logged(caplog):
     """When max_parallel_agents=1, pipeline logs 'sequentially' not 'in parallel'."""
+    import logging
     mock_client = MagicMock()
     mock_client.complete.return_value = _cr('{"findings": []}')
     config = _config(max_parallel_agents=1)
@@ -668,12 +670,12 @@ def test_pipeline_sequential_mode_logged(capsys):
     )
     pipeline = ReviewPipeline(config, client=mock_client, license_info=pro_license)
 
-    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+    with caplog.at_level(logging.INFO, logger="revue.core.pipeline"), \
+         patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
          patch("revue.core.pipeline.track_usage"):
         pipeline.run("fake.diff")
 
-    captured = capsys.readouterr()
-    assert "sequentially" in captured.out
+    assert "sequentially" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -1061,8 +1063,9 @@ def test_fallback_sticky():
 
 # TC11 ----------------------------------------------------------------------
 
-def test_fallback_log_warning_emitted(capsys):
-    """TC11: A warning is printed to stdout when the rate-limit cascade escalates."""
+def test_fallback_log_warning_emitted(caplog):
+    """TC11: A warning is logged when the rate-limit cascade escalates."""
+    import logging
     changes = [_fc("a.py"), _fc("b.py")]
     agents = [_cascade_mock_agent("maya"), _cascade_mock_agent("zara")]
     call_n = [0]
@@ -1074,12 +1077,12 @@ def test_fallback_log_warning_emitted(capsys):
     orch, _ = _cascade_orch(agents, run_side)
     pl = _cascade_pipeline_obj(max_parallel=1)
 
-    with patch("revue.core.pipeline._import_orchestration", return_value=orch):
+    with caplog.at_level(logging.WARNING, logger="revue.core.pipeline"), \
+         patch("revue.core.pipeline._import_orchestration", return_value=orch):
         pl._run_orchestration(changes, _CASCADE_AGENTS_ALLOWED)
 
-    captured = capsys.readouterr()
-    assert "⚠" in captured.out
-    assert "file-assigned" in captured.out
+    assert "⚠" in caplog.text
+    assert "file-assigned" in caplog.text
 
 
 # TC12 ----------------------------------------------------------------------
@@ -1779,3 +1782,91 @@ def test_p4_pipeline_calls_record_synthesis_after_consolidation():
     assert isinstance(event.synthesis_events, list)
     assert event.synthesised_count >= 0
     assert event.total_findings >= 0
+
+
+# ---------------------------------------------------------------------------
+# Synthesis-client resolution — REVUE-236 follow-up (Option 3)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_synthesis_client_returns_main_client_when_synthesis_model_empty():
+    """Empty synthesis_model means Nova reuses the reviewer client — no separate client built."""
+    # Arrange
+    from revue.core.pipeline import resolve_synthesis_client
+
+    main_client = MagicMock(name="main_client")
+    config = _config(model="claude-haiku-4-5-20251001", synthesis_model="")
+
+    # Act
+    result = resolve_synthesis_client(config, main_client=main_client)
+
+    # Assert
+    assert result is main_client
+
+
+def test_resolve_synthesis_client_returns_main_client_when_synthesis_model_equals_main_model():
+    """If synthesis_model matches main model, building a separate client is wasteful — reuse."""
+    # Arrange
+    from revue.core.pipeline import resolve_synthesis_client
+
+    main_client = MagicMock(name="main_client")
+    same_model = "claude-sonnet-4-6"
+    config = _config(model=same_model, synthesis_model=same_model)
+
+    # Act
+    result = resolve_synthesis_client(config, main_client=main_client)
+
+    # Assert
+    assert result is main_client
+
+
+def test_resolve_synthesis_client_builds_separate_client_with_synthesis_model_when_set():
+    """When synthesis_model differs from main model, a separate client is built using the override."""
+    # Arrange
+    from revue.core.pipeline import resolve_synthesis_client
+
+    main_client = MagicMock(name="main_client")
+    synthesis_client = MagicMock(name="synthesis_client_built_for_sonnet")
+    captured_configs: list[AIConfig] = []
+
+    def fake_create_ai_client(cfg: AIConfig, metrics=None):
+        captured_configs.append(cfg)
+        return synthesis_client
+
+    config = _config(
+        model="claude-haiku-4-5-20251001",
+        synthesis_model="claude-sonnet-4-6",
+    )
+
+    # Act
+    with patch("revue.core.pipeline.create_ai_client", side_effect=fake_create_ai_client):
+        result = resolve_synthesis_client(config, main_client=main_client)
+
+    # Assert — separate client was built, with the synthesis model in its config
+    assert result is synthesis_client
+    assert result is not main_client
+    assert len(captured_configs) == 1
+    assert captured_configs[0].model == "claude-sonnet-4-6"
+    # Other config fields preserved (provider, api_key, etc.)
+    assert captured_configs[0].provider == "anthropic"
+
+
+def test_pipeline_constructor_accepts_injected_synthesis_client_for_testability():
+    """Tests need to inject a synthesis client without going through create_ai_client."""
+    # Arrange
+    main_client = MagicMock(name="main_client")
+    main_client.complete.return_value = _cr("ok")
+    synthesis_client = MagicMock(name="synthesis_client")
+    config = _config(synthesis_model="claude-sonnet-4-6")
+
+    # Act
+    pipeline = ReviewPipeline(
+        config,
+        client=main_client,
+        synthesis_client=synthesis_client,
+        license_info=_license_info(),
+    )
+
+    # Assert — exposed via a public attribute named for the synthesis client
+    assert pipeline.synthesis_client is synthesis_client
+    assert pipeline.synthesis_client is not main_client

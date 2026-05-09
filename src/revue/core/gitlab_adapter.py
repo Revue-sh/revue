@@ -204,6 +204,28 @@ class GitLabAdapter:
             )
             return None
 
+    def post_review_comment_with_params(
+        self, pr_id: int, api_params: dict, body: str, replacement_line_count: int = 1
+    ) -> str | None:
+        """Post using pre-built api_params from GitLabPositionAdapter.to_api_params().
+
+        SHAs are already embedded in api_params — no second fetch needed.
+        """
+        try:
+            resp = self._request(
+                "POST",
+                f"/merge_requests/{pr_id}/discussions",
+                {"body": body, "position": api_params},
+            )
+            discussion_id = resp.get("id")
+            return str(discussion_id) if discussion_id is not None else None
+        except Exception as exc:
+            Log.cli.warning(
+                "post_review_comment_with_params failed for MR %s: %s\n  position=%s",
+                pr_id, exc, api_params,
+            )
+            return None
+
     # Backward-compat alias — remove in v2.0
     post_inline_comment = post_review_comment
 

@@ -1,0 +1,23 @@
+{
+  "platform": "github",
+  "source_pr": 11,
+  "file_path": "src/revue/core/agent_loader.py",
+  "diff_snippet": "@@ -41,11 +41,55 @@\n }\n \n _REVIEW_INSTRUCTIONS = (\n-    \"Respond with a JSON array of findings (no markdown fences, raw JSON only):\\n\"\n-    '[{\"file_path\": \"...\", \"line_number\": 1, \"severity\": \"high|medium|low|info\", '\n-    '\"issue\": \"...\", \"suggestion\": \"...\", \"confidence\": 0.0-1.0, \"category\": \"architecture|security|performance|code-quality\"}]'\n+    # IMPORTANT: output strictly valid JSON \u2014 no comments, no trailing commas, no JS syntax.\n+    \"Respond with a JSON array of findings. Output valid JSON only \u2014 no markdown fences, \"\n+    \"no inline comments, no trailing commas.\\n\"\n+    \"[\\n\"\n+    '  {\\n'\n+    '    \"file_path\": \"src/example.py\",\\n'\n+    '    \"line_number\": 42,\\n'\n+    '    \"severity\": \"high|medium|low|info\",\\n'\n+    '    \"issue\": \"One sentence naming the problem.\",\\n'\n+    '    \"suggestion\": \"One sentence fix.\",\\n'\n+    '    \"confidence\": 0.85,\\n'\n+    '    \"category\": \"architecture|security|performance|code-quality\",\\n'\n+    '    \"code_replacement\": [\"replacement line 1\", \"line 2\"],\\n'\n+    '    \"replacement_line_count\": 2\\n'\n+    \"  }\\n\"\n+    \"]\\n\"\n+    \"\\n\"\n+    \"Field rules:\\n\"\n+    \"- confidence: float 0.0\u20131.0 reflecting how certain you are this is a real issue.\\n\"\n+    \"- code_replacement: when you can provide exact verbatim replacement lines for a \"\n+    \"single-location fix, set this to an array of strings \u2014 one string per source line, \"\n+    \"no line numbers, no integers, no nulls inside the array. Leave it null when the fix \"\n+    \"requires broader context or is descriptive only.\\n\"\n+    \"- replacement_line_count: when code_replacement is provided, set this to the number \"\n+    \"of original source lines being replaced (default 1). For example, if you are replacing \"\n+    \"a function signature that spans 3 lines, set this to 3.\\n\"\n+    \"- If suggestion includes a code example, wrap it in a markdown code fence \"\n+    \"(e.g. ```python\\\\n...\\\\n```).\"\n )\n \n+def filter_code_replacement(raw: object) -> \"list[str] | None\":\n+    \"\"\"Return a sanitised list of string lines from an AI-supplied code_replacement value.\n+\n+    Filters out any non-string items (integers, nulls) that the AI may return.",
+  "posted_line": 77,
+  "posted_side": "RIGHT",
+  "comment_body_excerpt": "**\ud83d\udfe1 [MEDIUM] The _parse_finding_item() function is a new helper extracted from LoadedAgent.analyse(), but it is not used anywhere else in the codebase and lacks documentation of its purpose.**\n*Agents: Maya \u2728 **Code Quality** | Leo \ud83c\udfd7\ufe0f **Code Quality** \u2192 Nova \ud83c\udf1f (synthesised)*\n\n> \ud83d\udca1 **Recommendation:**",
+  "reported_line": 74,
+  "replacement_line_count": 2,
+  "expected_position": {
+    "file_path": "src/revue/core/agent_loader.py",
+    "start_line": 74,
+    "end_line": 75
+  },
+  "expected_api_params": {
+    "path": "src/revue/core/agent_loader.py",
+    "side": "RIGHT",
+    "line": 75,
+    "start_line": 74,
+    "start_side": "RIGHT"
+  }
+}
