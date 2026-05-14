@@ -1,7 +1,7 @@
 ---
 name: jira-ticket
 model: haiku
-description: Fetch, list, search, create, and transition Jira tickets for the REVUE project. Use when the user asks to read, create, search, or transition a Jira ticket. Invoked as /jira-ticket [KEY|search query|transition KEY status|create ...].
+description: Fetch, list, search, create, update, and transition Jira tickets for the REVUE project. Use when the user asks to read, create, edit, search, or transition a Jira ticket. Invoked as /jira-ticket [KEY|search query|transition KEY status|create ...|update KEY field value].
 allowed-tools: Bash
 ---
 
@@ -28,6 +28,7 @@ themselves — no need to source it beforehand.
 | `jira_transition.sh` | Transition a ticket to done / in-progress / todo |
 | `jira_set_epic.sh` | Assign one or more tickets to an epic |
 | `jira_create.sh` | Create a new Task ticket |
+| `jira_update.sh` | Update a single string field (description, summary) on an existing ticket |
 
 ## Common status IDs
 
@@ -129,7 +130,30 @@ Description format: Jira wiki markup (`h2.`, `*bold*`, `_italic_`, `\n` for newl
 Use `""` as a placeholder for label when you only want to set the description.
 Description template: read the `docs/story-dod-checklist.md`
 
-### 6. No argument — list all open tickets
+### 6. Update a field on an existing ticket — `/jira-ticket update REVUE-247 description ...`
+
+```bash
+# Update summary inline
+bash .claude/skills/jira-ticket/scripts/jira_update.sh REVUE-247 summary "New summary text"
+
+# Update description from a heredoc (preferred for long Jira wiki markup)
+bash .claude/skills/jira-ticket/scripts/jira_update.sh REVUE-247 description <<'EOF'
+h2. User Story
+
+As a ...
+EOF
+
+# Or update description from a file
+bash .claude/skills/jira-ticket/scripts/jira_update.sh REVUE-247 description "$(cat /path/to/description.md)"
+```
+
+Supports any plain-string Jira field (description, summary). For array/object fields
+(labels, components, fixVersions, parent), call the API directly with the same
+`PUT /rest/api/2/issue/{key}` endpoint.
+
+PUT replaces the whole field — pass the *complete* new value, not a patch.
+
+### 7. No argument — list all open tickets
 
 ```bash
 bash .claude/skills/jira-ticket/scripts/jira_search.sh "project=REVUE AND status in ('To Do','In Progress') ORDER BY updated DESC" 30
