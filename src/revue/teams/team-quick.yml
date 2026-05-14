@@ -17,6 +17,7 @@ agents:
   primary:
     - maya
     - nova
+    - vex
   secondary: []
 
 triggers:

@@ -33,7 +33,16 @@ logging.getLogger("anthropic._base_client").setLevel("WARNING")
 logging.getLogger("httpcore").setLevel("WARNING")
 logging.getLogger("httpx").setLevel("WARNING")
 
+from revue.core.display import SEVERITY_EMOJI_ALT  # noqa: E402
 from revue.core.logging_channels import Log  # noqa: F401, E402
+from revue.core.log import RevueLogger  # noqa: E402
+
+# REVUE-241: route channel messages (Log.nova, Log.pipeline, ...) to stdout.
+# Channel level filters still apply (per-channel default INFO, overridable
+# via REVUE_LOG_<CHANNEL> env var) — without this hook, Log.nova INFO lines
+# such as ``[vex-verdict] reject_finding ...`` only land in the dated file
+# logger and never reach a dogfood / pipeline run's terminal output.
+RevueLogger.shared().setup(on_log=lambda message: print(message, flush=True))
 from revue.core.config_loader import (
     DEFAULT_REVUE_YML,
     load_config,
@@ -404,13 +413,22 @@ def cmd_review(
     # We post findings from successful agents first (above) so developers
     # still see partial results, but exit non-zero signals the incomplete state.
     if failed_agents:
-        print(
+        details = getattr(pipeline, "last_failed_agent_details", []) or []
+        # REVUE-241: list per-agent reason inline so operators don't have to
+        # scroll back through the log to find which client method raised.
+        by_name = {d.get("name", ""): d for d in details}
+        lines = [
             f"\n[revue] ❌ Review incomplete — {len(failed_agents)} agent(s) failed: "
-            f"{', '.join(failed_agents)}\n"
-            f"  Findings from failed agents are missing from this review.\n"
-            f"  Check the errors above for details (rate limits, timeouts, credentials).",
-            flush=True,
-        )
+            f"{', '.join(failed_agents)}",
+            "  Findings from failed agents are missing from this review.",
+        ]
+        for name in failed_agents:
+            d = by_name.get(name)
+            if d:
+                lines.append(f"    • {name}: {d.get('reason', 'unknown')}")
+            else:
+                lines.append(f"    • {name}: (no detail captured)")
+        print("\n".join(lines), flush=True)
         return 1
 
     fmt = config.output_format
@@ -437,7 +455,11 @@ def cmd_review(
 
 
 def _format_synthesis_attribution(contributors: list) -> str:
-    """Format synthesis attribution as 'Agents: Kai ⚡ **Performance** | Zara 🔒 **Security** → Nova 🌟 (synthesised)'.
+    """Format synthesis attribution as ``Agents: <Name> <emoji> **<Category>** | ... → Nova <emoji> (synthesised)``.
+
+    Emojis and display names are looked up from ``core.display.AGENT_EMOJIS``
+    / ``AGENT_DISPLAY_NAMES``; this docstring no longer embeds specific
+    glyphs so re-skinning an agent doesn't make the example stale.
 
     contributors: list of (agent_name, category) pairs — tuples or 2-element lists.
     """
@@ -568,12 +590,14 @@ def _format_file_review(file_path: str, response: str) -> str:
 
 # Compiled once at module level — used by fingerprint scanning helpers below.
 _FP_SENTINEL_RE = re.compile(r'\[//\]: # \(revue:fp:([a-f0-9]+)\)')
-_FINDING_HEADER_RE = re.compile(r'^\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]')
+# Severity emoji alternation derived from core.display so renaming a badge
+# propagates here automatically.
+_FINDING_HEADER_RE = re.compile(rf'^\*\*(?:{SEVERITY_EMOJI_ALT})\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]')
 # Extracts the normalised severity token from an existing Revue comment body.
 # Used so open-prior counting uses the ORIGINAL severity (as posted) not the
 # current-run re-analysis, keeping the Quality Breakdown consistent with what
 # users see in the UI.
-_FINDING_SEV_EXTRACT_RE = re.compile(r'\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(HIGH|MEDIUM|LOW|INFO)\]')
+_FINDING_SEV_EXTRACT_RE = re.compile(rf'\*\*(?:{SEVERITY_EMOJI_ALT})\s*\[(HIGH|MEDIUM|LOW|INFO)\]')
 
 
 def _apply_sentinel_strategy(

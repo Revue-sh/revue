@@ -13,7 +13,9 @@ from revue.core.metrics import (
     MetricsCollector,
     MetricsEvent,
     RoutingMetricsData,
+    RunVerdictMetricsData,
     SynthesisMetricsData,
+    VexMetricsData,
 )
 
 
@@ -26,6 +28,8 @@ class JsonlMetricsCollector(MetricsCollector):
         self._last_totals: dict | None = None
         self._routing: RoutingMetricsData | None = None
         self._synthesis: SynthesisMetricsData | None = None
+        self._vex: VexMetricsData | None = None
+        self._run_verdict: RunVerdictMetricsData | None = None
 
     def record(self, event: MetricsEvent) -> None:
         """Accumulate an event in memory."""
@@ -39,12 +43,24 @@ class JsonlMetricsCollector(MetricsCollector):
         """Store synthesis observability data to be included in the next flush."""
         self._synthesis = data
 
+    def record_vex(self, data: VexMetricsData) -> None:
+        """Store Vex verdict/failure tallies to be included in the next flush."""
+        self._vex = data
+
+    def record_run_verdict(self, data: RunVerdictMetricsData) -> None:
+        """REVUE-246 AC7: capture the four-state run verdict for the next flush."""
+        self._run_verdict = data
+
     def flush(self, run_id: str) -> None:
         """Write accumulated events to .revue/metrics.jsonl as a single JSON object."""
         routing = self._routing
         self._routing = None
         synthesis = self._synthesis
         self._synthesis = None
+        vex = self._vex
+        self._vex = None
+        run_verdict = self._run_verdict
+        self._run_verdict = None
         if not self.events:
             return
 
@@ -133,6 +149,25 @@ class JsonlMetricsCollector(MetricsCollector):
                 "total": synthesis.total_findings,
                 "synthesised": synthesis.synthesised_count,
                 "synthesis_events": synthesis.synthesis_events,
+            }
+
+        # Include Vex verdict/failure tallies if recorded (REVUE-241).
+        if vex is not None:
+            run_record["vex"] = {
+                "verdict_counts": dict(vex.verdict_counts),
+                "failure_counts": dict(vex.failure_counts),
+            }
+
+        # REVUE-246 AC7: include the four-state run verdict + per-status
+        # counts + per-error-code breakdown so operators can grep metrics.jsonl
+        # for runs that bailed out silently.
+        if run_verdict is not None:
+            run_record["run_verdict"] = {
+                "verdict": run_verdict.verdict,
+                "clean_count": run_verdict.clean_count,
+                "finding_count": run_verdict.finding_count,
+                "error_count": run_verdict.error_count,
+                "errors_by_code": dict(run_verdict.errors_by_code),
             }
 
         # Store totals in memory before clearing (for verbose_summary())

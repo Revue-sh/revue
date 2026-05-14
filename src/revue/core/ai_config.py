@@ -58,7 +58,7 @@ class AIConfig:
     api_key_env: str = ""
     base_url: str = ""
     model: str = "claude-sonnet-4-5-20250929"
-    synthesis_model: str = ""  # REVUE-236: optional override for Nova synthesis. Empty → reuse `model`.
+    synthesis_model: str = ""  # REVUE-236/240: reasoning-tier override (Nova + Vex). Empty → reuse `model`.
     azure_endpoint: str = ""
     azure_deployment: str = ""
     azure_api_version: str = "2024-02-01"
@@ -83,6 +83,7 @@ class AIConfig:
     # Feature flags (configurable via .revue.yml)
     preserve_comment_threads: bool = False  # REVUE-104: preserve inline comment threads across commits
     show_reviewed_files: bool = True  # REVUE-134: show/hide reviewed-files list in summary
+    reviewer_tool_use: bool = True  # REVUE-241: enable lazy full-file reads for reviewer agents
 
     # File type routing (AC4 — REVUE-166)
     file_type_routing: list[FileTypeRule] = field(default_factory=list)

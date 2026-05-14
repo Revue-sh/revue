@@ -2,7 +2,7 @@ from .protocol import PositioningExtractor
 from .github import GitHubClient
 from .gitlab import GitLabClient
 from .bitbucket import BitbucketClient
-from .calculator import PositionResult, calculate
+from revue.comments.position_adapter import PositionResult, PositionStatus, calculate
 from .adapters import (
     PositionAdapter,
     GitHubPositionAdapter,
@@ -17,6 +17,7 @@ __all__ = [
     "GitLabClient",
     "BitbucketClient",
     "PositionResult",
+    "PositionStatus",
     "calculate",
     "PositionAdapter",
     "GitHubPositionAdapter",

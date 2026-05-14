@@ -24,7 +24,7 @@ from revue.core.logging_channels import Log
 # ---------------------------------------------------------------------------
 
 # Agents that are infrastructure (routing/consolidation) not reviewers
-_INFRASTRUCTURE_AGENTS = frozenset({"cleo", "nova"})
+_INFRASTRUCTURE_AGENTS = frozenset({"cleo", "nova", "vex"})
 
 SECURITY_FILE_PATTERNS: frozenset[str] = frozenset({
     "*.sql",
@@ -66,11 +66,11 @@ _LANG_TO_TEAM: dict[str, str] = {
 
 # Team presets: team_name → list of agent names
 TEAM_PRESETS: dict[str, list[str]] = {
-    "team-full-review": ["cleo", "zara", "kai", "maya", "leo", "nova"],
-    "team-quick": ["maya", "nova"],          # trivial/small diffs — Maya only
-    "team-lean": ["cleo", "zara", "nova"],   # legacy — kept for compat
-    "team-swift-ios": ["cleo", "zara", "maya", "nova"],
-    "team-security-focus": ["cleo", "zara", "nova"],
+    "team-full-review": ["cleo", "zara", "kai", "maya", "leo", "nova", "vex"],
+    "team-quick": ["maya", "nova", "vex"],          # trivial/small diffs — Maya only
+    "team-lean": ["cleo", "zara", "nova", "vex"],   # legacy — kept for compat
+    "team-swift-ios": ["cleo", "zara", "maya", "nova", "vex"],
+    "team-security-focus": ["cleo", "zara", "nova", "vex"],
 }
 
 DEFAULT_TEAM: str = "team-full-review"

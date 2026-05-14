@@ -12,14 +12,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import dataclasses
 import time
 from dataclasses import dataclass
-from typing import NamedTuple, Optional
+from pathlib import Path
+from typing import Any, NamedTuple, Optional
 from uuid import uuid4
 
-from .agent_names import ORCHESTRATOR
+from .agent_names import NOVA, ORCHESTRATOR, VEX
+from ..comments.summary_builder import _AGENT_EMOJIS
 from .ai_config import AIConfig
 from .ai_client import AIClient, create_ai_client
 
@@ -29,10 +32,12 @@ def resolve_synthesis_client(
     main_client: AIClient,
     metrics: "MetricsCollector | None" = None,
 ) -> AIClient:
-    """Return the AI client Nova should use for synthesis.
+    """Return the AI client the reasoning tier should use (Nova + Vex).
 
-    When ``config.synthesis_model`` is set and differs from ``config.model``,
-    a separate client is built with the override. Otherwise the reviewer
+    Both Nova (synthesis) and Vex (verification) run on this client — they
+    are reasoning-tier agents and MUST share a model (REVUE-240). When
+    ``config.synthesis_model`` is set and differs from ``config.model``, a
+    separate client is built with the override. Otherwise the reviewer
     client is reused (no extra API initialisation).
     """
     override = config.synthesis_model
@@ -55,6 +60,8 @@ from .pr_description_adapter import PRDescription
 from .pr_context import PRContextExtractor
 from .pattern_injection import inject_patterns
 from .usage_tracker import check_reviews_left, track as track_usage
+from .reviewer_tools import build_reviewer_read_file_tool, build_reviewer_toolset
+from .run_verdict import AgentStatus, RunVerdict, compute_run_verdict
 
 _log = logging.getLogger(__name__)
 
@@ -82,6 +89,7 @@ _LICENCE_NAME_TO_AGENT: dict[str, str] = {
     # Pass-throughs — already match agent file names
     "cleo": "cleo",
     "nova": "nova",
+    "vex": "vex",
     # Server-side alias mismatch — API returns these names instead of the canonical
     # "security-expert" / "architecture-expert". Remove once REVUE-204 is resolved.
     "security-analyst": "zara",
@@ -93,27 +101,63 @@ _LICENCE_NAME_TO_AGENT: dict[str, str] = {
 _VIRTUAL_AGENTS = frozenset({"orchestrator", "sage"})
 
 
-def _short_error(error: str) -> str:
-    """Return a brief, human-readable summary of an agent error string.
+_HTTP_CODE_RE = re.compile(r"\b([45]\d{2})\b")
 
-    Rate-limit JSON blobs and other verbose SDK errors are condensed to a
-    single line so the '⚠ Agent X failed:' log stays readable. The full
-    reason has already been printed by _with_retry's ❌ RATE LIMIT ERROR block.
+
+def _extract_http_code(error: str) -> str:
+    """Return the first 4xx/5xx HTTP code in the error string, or empty.
+
+    Operators triaging an agent failure need the code to decide whether
+    to retry (transient 5xx), back off (429), check credentials (401/403),
+    or escalate (500). The classifier message strips the rest of the
+    payload — without preserving the code, we'd lose the routing signal.
+    """
+    m = _HTTP_CODE_RE.search(error)
+    return m.group(1) if m else ""
+
+
+def _classify_error_body(error: str) -> str:
+    """Condense a raw error string to a single human-readable line.
+
+    Rate-limit JSON blobs and other verbose SDK errors collapse to a known
+    classifier ("rate limit exceeded", "authentication error", …) with the
+    originating HTTP code preserved in parentheses. Unknown errors fall back
+    to the first line, capped at 120 chars.
+
+    Pure single-responsibility helper: no prefix/suffix decoration, no
+    knowledge of ``error_type`` or ``call_site`` — those belong to the
+    caller (``_short_error``) so this function stays trivially testable
+    against just the raw string input.
     """
     if not error:
         return "unknown error"
     low = error.lower()
+    code = _extract_http_code(error)
+    code_suffix = f" ({code})" if code else ""
     if "rate_limit" in low or "rate limit" in low or "429" in low:
-        return "rate limit exceeded (see ❌ RATE LIMIT ERROR above)"
+        return f"rate limit exceeded{code_suffix} (see ❌ RATE LIMIT ERROR above)"
     if "timeout" in low or "timed out" in low:
         return "timed out"
     if "401" in low or "403" in low or "authentication" in low or "unauthorized" in low:
-        return "authentication error"
+        return f"authentication error{code_suffix}"
     if "500" in low or "502" in low or "503" in low:
-        return "server error"
-    # Fallback: first line only, capped at 120 chars
+        return f"server error{code_suffix}"
     first_line = error.split("\n")[0]
     return first_line[:120] + ("…" if len(first_line) > 120 else "")
+
+
+def _short_error(error: str, *, error_type: str = "", call_site: str = "") -> str:
+    """Decorate a classified error body with ``[Type]`` prefix and
+    ``(at Client.method)`` suffix so the '⚠ Agent X failed:' log line tells
+    operators *what* failed and *where* in one glance.
+
+    REVUE-241: classification is delegated to ``_classify_error_body``;
+    this function only owns the prefix/suffix formatting (SRP).
+    """
+    body = _classify_error_body(error)
+    prefix = f"[{error_type}] " if error_type else ""
+    suffix = f" (at {call_site})" if call_site else ""
+    return f"{prefix}{body}{suffix}"
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +525,18 @@ class ReviewPipeline:
         self._license_info: LicenseInfo | None = license_info
         # REVUE-117: set by _run_orchestration(); readable by CLI after run()
         self.last_fallback_mode: str = _FB_NORMAL
+        # REVUE-241: per-agent failure details (error_type, call_site, reason)
+        # captured from the latest run so the CLI summary can surface them
+        # without re-parsing log lines. List of dicts with keys: name,
+        # error_type, call_site, reason, timed_out.
+        self.last_failed_agent_details: list[dict[str, str]] = []
+        # REVUE-246: per-agent statuses + run-level four-state verdict captured
+        # from the latest run so Step 4/4 can render the breakdown and the CLI
+        # / metrics can read it after run() returns. Empty until orchestration
+        # populates it; the simplified free-tier loop populates a synthetic
+        # findings status per file.
+        self.last_agent_statuses: list[Any] = []
+        self.last_run_verdict: "Any | None" = None
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -617,11 +673,56 @@ class ReviewPipeline:
 
         # ── Step 4: Verdict ───────────────────────────────────────────────────
         _log.info("[revue] ── Step 4/4: Verdict")
+        # REVUE-246 AC10: render the four-state run verdict and the per-agent
+        # breakdown so a silent bail-out can no longer hide behind a 0-finding
+        # severity count. ``last_agent_statuses`` is populated by the
+        # orchestration path; the free-tier simplified path leaves it empty
+        # and the legacy severity-based verdict logs below as a fallback.
+        run_verdict: "RunVerdict | None" = None
+        if self.last_agent_statuses:
+            run_verdict = compute_run_verdict(self.last_agent_statuses)
+            self.last_run_verdict = run_verdict
+            # REVUE-246 AC7: feed the verdict into the metrics collector so
+            # .revue/metrics.jsonl carries clean_count / finding_count /
+            # error_count + errors_by_code for the run.
+            from .metrics import RunVerdictMetricsData
+            self._metrics.record_run_verdict(RunVerdictMetricsData(
+                verdict=run_verdict.verdict,
+                clean_count=run_verdict.clean_count,
+                finding_count=run_verdict.finding_count,
+                error_count=run_verdict.error_count,
+                errors_by_code=dict(run_verdict.errors_by_code),
+            ))
+            _log.info(
+                "[revue]   Verdict: %s  (%d clean, %d findings, %d error)",
+                run_verdict.verdict.upper(),
+                run_verdict.clean_count,
+                run_verdict.finding_count,
+                run_verdict.error_count,
+            )
+            for agent_status in run_verdict.breakdown:
+                if agent_status.status == "error":
+                    _log.warning(
+                        "[revue]     • %s → error(%s)",
+                        agent_status.agent_name, agent_status.error_code or "?",
+                    )
+                elif agent_status.status == "clean":
+                    _log.info(
+                        "[revue]     • %s → clean (confidence %s)",
+                        agent_status.agent_name,
+                        f"{agent_status.confidence:.2f}" if agent_status.confidence is not None else "?",
+                    )
+                else:
+                    _log.info(
+                        "[revue]     • %s → %d finding(s)",
+                        agent_status.agent_name, agent_status.finding_count,
+                    )
+
         high_med = _count_severity(results, ("high", "medium"))
         low = _count_severity(results, ("low", "info"))
         if high_med > 0:
             _log.warning(
-                "[revue]   ⚠ Escalate to human — %d high/medium finding(s) require attention",
+                "[revue]   ⚠️ Escalate to human — %d high/medium finding(s) require attention",
                 high_med,
             )
         elif low > 0:
@@ -786,9 +887,27 @@ class ReviewPipeline:
                 languages=[fc.file_path.rsplit(".", 1)[-1] for fc in included]
             )
 
+        # 1b. Build ReadFileTool for reviewer agents (REVUE-241 — lazy full-file reads).
+        # The decision (flag check), construction, and error policy live in
+        # reviewer_tools.py — pipeline.py only asks for a tool. Resolve repo_root
+        # once and reuse it for Nova/Vex below so all tool-using agents share
+        # exactly the same sandbox root.
+        repo_root = Path.cwd()
+        # REVUE-243: build the targeted-retrieval toolset (read_file +
+        # read_lines + find_code). The single ``reviewer_tool_use`` flag still
+        # gates the whole set. read_file alone stays available as a fallback
+        # for the Nova consolidator path which calls build_reviewer_read_file_tool.
+        reviewer_toolset = build_reviewer_toolset(self.config, included, repo_root=repo_root)
+        read_file_tool = reviewer_toolset.read_file
+
         # 2. Load and filter agents by license (REVUE-99: resolve licence names → agent names)
         _log.info("[revue]   Loading agents...")
-        all_agents = load_all_agents(self.config, self._client)
+        all_agents = load_all_agents(
+            self.config, self._client,
+            read_file_tool=reviewer_toolset.read_file,
+            read_lines_tool=reviewer_toolset.read_lines,
+            find_code_tool=reviewer_toolset.find_code,
+        )
         agents_by_name = {a.name: a for a in all_agents}
 
         # Expand licence names through the mapping, warn on unknowns (AC6)
@@ -804,6 +923,13 @@ class ReviewPipeline:
                     "[revue]   ⚠ Unknown agent '%s' in licence — skipping.",
                     licence_name,
                 )
+
+        # Infrastructure agents (cleo, nova, vex) are pipeline components, not
+        # user-license-gated reviewers. They must survive even when the license
+        # server returns an `agents_allowed` list that predates their existence.
+        for infra_name in _INFRASTRUCTURE_AGENTS:
+            if infra_name in agents_by_name:
+                resolved_agent_names.add(infra_name)
 
         allowed_agents = [agents_by_name[n] for n in resolved_agent_names if n in agents_by_name]
 
@@ -951,9 +1077,45 @@ class ReviewPipeline:
         agents_used = [r.agent_name for r in parallel_result.agent_results if r.success]
         failed = [r for r in parallel_result.agent_results if not r.success]
         if failed:
+            details: list[dict[str, str]] = []
             for f in failed:
-                reason = "timed out" if f.timed_out else _short_error(f.error)
+                if f.timed_out:
+                    reason = "timed out"
+                else:
+                    reason = _short_error(
+                        f.error, error_type=f.error_type, call_site=f.call_site,
+                    )
                 _log.warning("[revue]   ⚠ Agent %s failed: %s", f.agent_name, reason)
+                details.append({
+                    "name": f.agent_name,
+                    "error_type": f.error_type,
+                    "call_site": f.call_site,
+                    "reason": reason,
+                    "timed_out": "true" if f.timed_out else "false",
+                })
+            self.last_failed_agent_details = details
+
+        # REVUE-246: per-agent status snapshot. Built from AgentRunResult.status
+        # so the run-level verdict can distinguish clean / findings / error —
+        # the legacy "any agent with findings == 0 was either clean OR error"
+        # ambiguity is exactly what the three-state contract eliminates.
+        agent_statuses: list[AgentStatus] = []
+        for r in parallel_result.agent_results:
+            if r.timed_out:
+                agent_statuses.append(AgentStatus(
+                    agent_name=r.agent_name, status="error",
+                    error_code="internal_error",
+                ))
+                continue
+            agent_statuses.append(AgentStatus(
+                agent_name=r.agent_name,
+                status=r.status or "findings",
+                finding_count=len(r.findings),
+                error_code=r.error_code,
+                summary=r.summary,
+                confidence=r.confidence,
+            ))
+        self.last_agent_statuses = agent_statuses
 
         # Per-agent finding count — makes 0-finding runs diagnosable
         for r in parallel_result.agent_results:
@@ -970,7 +1132,7 @@ class ReviewPipeline:
             raise AllAgentsFailedError(first_error)
 
         # 5. Consolidation — group, synthesise, and post-process findings (REVUE-210)
-        _log.info("[revue]   Consolidating findings (Nova)...")
+        _log.info("[revue]   %s Nova is consolidating findings...", _AGENT_EMOJIS[NOVA])
         raw_findings = [
             finding
             for r in parallel_result.agent_results
@@ -979,34 +1141,41 @@ class ReviewPipeline:
         ]
         original_count = len(raw_findings)
 
-        from revue.comments.consolidator import (
-            Consolidator,
-            NoOpSuggestionDropper,
-            NovaSingleShotStrategy,
-            ProximityAndCountGroupingStrategy,
-            UnanchoredFindingExtractor,
-        )
-        # Get Nova's system prompt from its agent definition.
-        # Nova is in routed_agents (infrastructure agent) but stripped from reviewer_agents.
-        nova_system_prompt = None
+        # Infrastructure agents (Nova, Vex) live in routed_agents but are
+        # stripped from reviewer_agents. Look up their system prompts here.
+        nova_system_prompt: str | None = None
+        vex_system_prompt: str | None = None
         for agent in routed_agents:
-            if agent.name == "nova" and hasattr(agent, "definition") and agent.definition:
+            if not (hasattr(agent, "definition") and agent.definition):
+                continue
+            if agent.name == "nova":
                 nova_system_prompt = getattr(agent.definition, "system_prompt", None)
-                break
+            elif agent.name == "vex":
+                vex_system_prompt = getattr(agent.definition, "system_prompt", None)
+
+        # P4: surface silent prompt fallback. A missing/unparseable vex.yaml
+        # would otherwise leave Vex running on a weaker built-in prompt with
+        # no examples — degraded mode that's invisible in metrics.
+        if vex_system_prompt is None:
+            _log.warning(
+                "[revue]   Vex system prompt not found in routed_agents (vex.yaml may be missing "
+                "or unparseable). Falling back to the built-in default prompt — verification "
+                "quality will be degraded."
+            )
+
+        diff_by_file = {fc.file_path: fc.diff for fc in included}
+        # repo_root was resolved at step 1b so all tool-using agents (reviewers,
+        # Nova, Vex) share exactly the same sandbox anchor.
+
         # summary_sink accumulates unanchored findings for the PR-level summary comment.
         # BodyBuilder reads it when building the summary block (wired in REVUE-poster, next story).
         summary_sink: list = []
-        consolidator = Consolidator(
-            grouping=ProximityAndCountGroupingStrategy(
-                n=self.config.consolidation_proximity_lines,
-                k=self.config.consolidation_max_group_size,
-            ),
-            synthesis=NovaSingleShotStrategy(
-                ai_client=self.synthesis_client,
-                system_prompt=nova_system_prompt,
-                diff_by_file={fc.file_path: fc.diff for fc in included},
-            ),
-            post_processors=[NoOpSuggestionDropper(), UnanchoredFindingExtractor(summary_sink)],
+        consolidator, vex_post_processor = self._build_consolidator(
+            nova_system_prompt=nova_system_prompt,
+            vex_system_prompt=vex_system_prompt,
+            diff_by_file=diff_by_file,
+            repo_root=repo_root,
+            summary_sink=summary_sink,
         )
         agent_findings = [_air_to_agent_finding(f) for f in raw_findings]
         consolidated = consolidator.consolidate(agent_findings)
@@ -1016,6 +1185,28 @@ class ReviewPipeline:
             original_count,
             len(consolidated),
         )
+
+        v_counts = vex_post_processor.verdict_counts
+        f_counts = vex_post_processor.failure_counts
+        if any(v_counts.values()) or any(f_counts.values()):
+            _log.info(
+                "[revue]   %s Vex: apply=%d drop_cr=%d reject=%d | "
+                "no_cr=%d read_err=%d exc=%d",
+                _AGENT_EMOJIS[VEX],
+                v_counts.get("apply", 0),
+                v_counts.get("drop_cr_keep_prose", 0),
+                v_counts.get("reject_finding", 0),
+                f_counts.get("no_code_replacement", 0),
+                f_counts.get("read_error", 0),
+                f_counts.get("verifier_exception", 0),
+            )
+            # Persist Vex tallies to metrics.jsonl so a later audit can see
+            # rejection rate / failure mix without re-parsing terminal output.
+            from revue.core.metrics import VexMetricsData
+            self._metrics.record_vex(VexMetricsData(
+                verdict_counts=dict(v_counts),
+                failure_counts=dict(f_counts),
+            ))
 
         # Record synthesis metrics (REVUE-179 AC4)
         synthesised_count = sum(1 for f in consolidated if f.group_type != "singleton")
@@ -1037,3 +1228,84 @@ class ReviewPipeline:
 
         failed_agent_names = [f.agent_name for f in failed]
         return results, agents_used, failed_agent_names
+
+    # ------------------------------------------------------------------
+    # Consolidator construction (REVUE-240 — reasoning-tier invariant)
+    # ------------------------------------------------------------------
+
+    def _build_consolidator(
+        self,
+        *,
+        nova_system_prompt: str | None,
+        vex_system_prompt: str | None,
+        diff_by_file: dict[str, str],
+        repo_root: Path,
+        summary_sink: list,
+    ):
+        """Wire Nova (synthesis) and Vex (verification) onto the reasoning-tier client.
+
+        REVUE-240 invariant: Vex and Nova MUST share `self.synthesis_client`.
+        They are both reasoning-tier agents — running them on divergent models
+        breaks coherence. The identity is locked by a runtime test (see
+        test_vex_and_nova_share_the_reasoning_tier_client). Future refactors
+        that split this wire will fail that test.
+        """
+        from revue.comments.consolidator import (
+            Consolidator,
+            NoOpSuggestionDropper,
+            NovaSingleShotStrategy,
+            ProximityAndCountGroupingStrategy,
+            UnanchoredFindingExtractor,
+        )
+        from revue.comments._verifier import VexVerifier, VexVerifyPostProcessor
+
+        reasoning_client = self.synthesis_client  # shared by Nova + Vex (REVUE-240)
+
+        # P10: Vex runs its verification calls concurrently up to the same
+        # parallelism budget already configured for reviewer agents.
+        vex_post_processor = VexVerifyPostProcessor(
+            verifier=VexVerifier(
+                ai_client=reasoning_client,
+                system_prompt=vex_system_prompt,
+            ),
+            repo_root=repo_root,
+            diff_by_file=diff_by_file,
+            max_workers=self.config.max_parallel_agents,
+        )
+
+        # P3: NoOpSuggestionDropper runs FIRST so trivial no-ops are filtered
+        # before they burn Vex LLM calls. Vex then verifies the remaining
+        # real candidates. UnanchoredFindingExtractor runs last because it
+        # observes the post-verification outcome.
+        consolidator = Consolidator(
+            grouping=ProximityAndCountGroupingStrategy(
+                n=self.config.consolidation_proximity_lines,
+                k=self.config.consolidation_max_group_size,
+            ),
+            synthesis=NovaSingleShotStrategy(
+                ai_client=reasoning_client,
+                system_prompt=nova_system_prompt,
+                diff_by_file=diff_by_file,
+                repo_root=repo_root,
+            ),
+            post_processors=[
+                NoOpSuggestionDropper(),
+                vex_post_processor,
+                UnanchoredFindingExtractor(summary_sink),
+            ],
+        )
+
+        # REVUE-240 invariant — defensive runtime check. The test
+        # test_vex_and_nova_share_the_reasoning_tier_client locks identity at
+        # CI time; this assertion catches the same divergence in production if
+        # a future refactor accidentally splits the wire between Nova's
+        # synthesis client and Vex's verifier client.
+        nova_client = consolidator._synthesis._client
+        vex_client = vex_post_processor._verifier._client
+        assert vex_client is nova_client, (
+            "REVUE-240 invariant violated: Vex and Nova must share the same "
+            "reasoning-tier client. Got nova_client=%r, vex_client=%r"
+            % (nova_client, vex_client)
+        )
+
+        return consolidator, vex_post_processor

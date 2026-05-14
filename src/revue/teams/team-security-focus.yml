@@ -17,6 +17,7 @@ agents:
     - zara
     - cleo
     - nova
+    - vex
   secondary: []
 
 triggers:

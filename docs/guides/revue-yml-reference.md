@@ -38,7 +38,8 @@ Controls which AI provider and model Revue uses.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `provider` | string | `anthropic` | AI provider. One of: `anthropic`, `openai`, `azure`, `openrouter`, `custom`. |
-| `model` | string | `claude-sonnet-4-5-20250929` | Model identifier passed to the provider API. |
+| `model` | string | `claude-sonnet-4-5-20250929` | Model identifier passed to the provider API. Drives the reviewer agents (Maya, Zara, Kai, Leo). |
+| `synthesis_model` | string | — | Optional override for the **reasoning tier**: both Nova (synthesis) and Vex (verification) run on this model. Defaults to `model` when unset. Reviewer agents are not affected. |
 | `api_key_env` | string | — | Name of the environment variable that holds your API key (BYOK). Example: `ANTHROPIC_API_KEY`. |
 | `base_url` | string | — | Override the provider's base URL. Useful for corporate AI gateways. |
 | `temperature` | float | `0.3` | Sampling temperature (0.0–2.0). Lower = more deterministic output. |
@@ -100,14 +101,25 @@ Controls how Revue processes the diff and filters files.
 | `min_confidence` | int | `70` | Suppress findings with AI confidence below this percentage (0–100). |
 | `agent_timeout_seconds` | int | `90` | Per-agent wall-clock timeout in seconds (1–600). Raise to `120` on slow or VPN-constrained networks. |
 | `ignore_patterns` | list[string] | `[]` | Glob patterns for files to skip during review. Applied to `file_path`. |
+| `reviewer_tool_use` | bool | `true` | Enable lazy full-file reads for reviewer agents (Maya, Leo, Kai, Zara). When enabled, agents can call the `read_file` tool to verify claims against the full file context before flagging findings (REVUE-241). Improves accuracy of prose-only findings at the cost of slightly higher token usage. Set to `false` to disable and save tokens. |
+| `max_parallel_agents` | int | `1` | Maximum number of agents to run in parallel. Range: 1–8. Setting to 1 runs agents sequentially (safe default). Increase to reduce wall-clock time at higher API cost. |
 
-### Ignore pattern examples
+### Review configuration examples
 
 ```yaml
+# Basic configuration
 review:
   max_diff_lines: 3000
   min_confidence: 65
   agent_timeout_seconds: 90
+
+# With ignore patterns and feature flags
+review:
+  max_diff_lines: 3000
+  min_confidence: 65
+  agent_timeout_seconds: 90
+  max_parallel_agents: 2  # Run 2 reviewers in parallel to reduce wall-clock time
+  reviewer_tool_use: true  # Enable full-file reads for reviewers (default)
   ignore_patterns:
     - "*.md"
     - "*.lock"
@@ -129,7 +141,7 @@ review:
 
 Controls how Revue groups and synthesises multiple findings into single comments (REVUE-210, Decision 2–3).
 
-Pass A (deterministic) clusters findings by proximity. Pass B (single-shot Nova) synthesises clusters into coherent comments.
+Pass A (deterministic) clusters findings by proximity. Pass B (single-shot Nova) synthesises clusters into coherent comments. A verification pass (Vex) then checks Nova's output against the diff. Nova and Vex share the **reasoning tier** model — set `ai.synthesis_model` to control both.
 
 | Key | Type | Default | Description |
 |---|---|---|---|

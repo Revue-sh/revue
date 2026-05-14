@@ -9,17 +9,12 @@ from __future__ import annotations
 
 from typing import Callable, Literal
 
+from ..core.display import (
+    AGENT_DISPLAY_NAMES as _AGENT_DISPLAY_NAMES,
+    SEVERITY_EMOJIS as _SEVERITY_EMOJI,
+    SEVERITY_ORDER as _SEVERITY_ORDER,
+)
 from .models import ConsolidatedFinding
-
-# Severity emoji mapping
-_SEVERITY_EMOJI = {
-    "high": "🔴",
-    "medium": "🟡",
-    "low": "🔵",
-    "info": "ℹ️",
-}
-
-_SEVERITY_ORDER = ["high", "medium", "low", "info"]
 
 
 def _highest_severity(items: list[ConsolidatedFinding]) -> str:
@@ -28,16 +23,6 @@ def _highest_severity(items: list[ConsolidatedFinding]) -> str:
         if sev in severities:
             return sev
     return "info"
-
-# Agent display names for attribution
-_AGENT_DISPLAY_NAMES = {
-    "leo": "Leo",
-    "zara": "Zara",
-    "kai": "Kai",
-    "maya": "Maya",
-    "nova": "Nova",
-}
-
 
 def _github_suggestion_block(code_lines: list[str], replacement_line_count: int = 1) -> str:
     """GitHub native suggestion block (```suggestion fence)."""
@@ -60,6 +45,15 @@ _PLATFORM_FORMATTERS: dict[str, Callable[[list[str], int], str]] = {
     "gitlab": _gitlab_suggestion_block,
     "bitbucket": _bitbucket_code_block,
 }
+
+# Hallucination disclaimer (REVUE-239 Phase 1).
+# Placed immediately before the suggestion fence so the developer reads it
+# before scrolling/clicking on GitHub's "Commit suggestion" button. Removed
+# once Vex (REVUE-240) verifies suggestions semantically.
+_AI_DISCLAIMER = (
+    "_⚠️ AI suggestions can be incorrect — open the file in your editor and "
+    "verify the change before clicking *Commit suggestion*._"
+)
 
 
 class BodyBuilder:
@@ -103,8 +97,10 @@ class BodyBuilder:
             vocab_label = self._compute_vocabulary_label(finding.severity, finding.code_replacement is not None)
             parts.append(f"{vocab_label} {finding.suggestion}")
 
-        # Code fence if applicable
+        # Code fence if applicable — disclaimer placed immediately before so
+        # the developer reads it before clicking "Commit suggestion".
         if finding.code_replacement:
+            parts.append(_AI_DISCLAIMER)
             formatter = _PLATFORM_FORMATTERS.get(platform, _bitbucket_code_block)
             fence = formatter(finding.code_replacement, finding.replacement_line_count)
             parts.append(fence.lstrip())
@@ -112,7 +108,7 @@ class BodyBuilder:
         # Brand footer + fingerprint sentinel
         body = "\n".join(parts)
         body += f"\n\n— 🤖 Revue"
-        body += f"\n[//]: # (revue:fp:{fp})"
+        body += f"\n\n[//]: # (revue:fp:{fp})"
 
         return body
 
@@ -156,13 +152,14 @@ class BodyBuilder:
                 parts.append(f"{vocab_label} {item.suggestion}")
 
             if item.code_replacement:
+                parts.append(_AI_DISCLAIMER)
                 formatter = _PLATFORM_FORMATTERS.get(platform, _bitbucket_code_block)
                 fence = formatter(item.code_replacement, item.replacement_line_count)
                 parts.append(fence.lstrip())
 
         body = "\n".join(parts)
         body += f"\n\n— 🤖 Revue"
-        body += f"\n[//]: # (revue:fp:{fp})"
+        body += f"\n\n[//]: # (revue:fp:{fp})"
         return body
 
     @staticmethod

@@ -38,8 +38,14 @@ class TestLoggingChannelsBootstrap(unittest.TestCase):
         self.assertEqual(Log.agent.emoji, "🤖")
 
     def test_logging_channels_nova_emoji(self):
-        """Nova channel has ✨ emoji."""
-        self.assertEqual(Log.nova.emoji, "✨")
+        """Nova channel emoji matches the canonical AGENT_EMOJIS map.
+
+        Previously this asserted a hardcoded ✨ — which is actually Maya's
+        emoji in the canonical map. Locking the channel to the agent map
+        means re-skinning Nova propagates everywhere automatically.
+        """
+        from revue.core.display import AGENT_EMOJIS
+        self.assertEqual(Log.nova.emoji, AGENT_EMOJIS["nova"])
 
     def test_logging_channels_cli_emoji(self):
         """CLI channel has 💻 emoji."""

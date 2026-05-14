@@ -8,10 +8,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 from ..core.agent_loader import filter_code_replacement
-from ._span_validator import is_anchor_coherent, validate_replacement_span
+from ..core.tools import ReadFileTool
 from .models import (
     AgentFinding,
     Attribution,
@@ -39,6 +41,23 @@ def _strip_sigils(line: str) -> str:
     return line
 
 
+def _coerce_positive_int(value: Any, *, default: int) -> int:
+    """Return *value* as a positive int, or *default* when it can't be coerced.
+
+    Accepts native ints (≥ 1) and integer-valued floats (LLMs frequently emit
+    6.0 instead of 6 when JSON-encoding numbers). Negative, zero, fractional,
+    string, and missing values all fall through to *default*.
+    """
+    if isinstance(value, bool):
+        # bools subclass int — exclude them explicitly so True/False don't sneak in.
+        return default
+    if isinstance(value, int) and value >= 1:
+        return value
+    if isinstance(value, float) and value >= 1 and value.is_integer():
+        return int(value)
+    return default
+
+
 # ---------------------------------------------------------------------------
 # Consolidator
 # ---------------------------------------------------------------------------
@@ -52,10 +71,12 @@ class Consolidator:
         grouping: GroupingStrategy,
         synthesis: SynthesisStrategy,
         post_processors: tuple[FindingPostProcessor, ...] | list[FindingPostProcessor] = (),
+        max_synthesis_workers: int = 8,
     ) -> None:
         self._grouping = grouping
         self._synthesis = synthesis
         self._post_processors = list(post_processors)
+        self._max_synthesis_workers = max(1, max_synthesis_workers)
 
     def consolidate(self, findings: list[AgentFinding]) -> list[ConsolidatedFinding]:
         """Run Pass A → Pass B → post-processor chain, then sort output.
@@ -69,21 +90,50 @@ class Consolidator:
         # Pass A — deterministic grouping
         groups: list[SynthesisGroup] = self._grouping.group(findings)
 
-        # Pass B — synthesis (one call per group)
-        consolidated: list[ConsolidatedFinding] = []
-        for group in groups:
-            try:
-                result = self._synthesis.synthesise(group)
-                consolidated.append(result)
-            except Exception:
-                Log.nova.exception(
-                    "Consolidator: synthesis failed for group at %s:%s — skipping",
-                    group.file_path,
-                    group.line_range,
-                )
+        # Pass B — synthesis (one call per group, parallelised).
+        # Each group → one Nova call which may chain up to max_iterations tool
+        # rounds via read_file. Serially this is O(groups × iterations) API
+        # roundtrips and stalls CI for many minutes on typical PRs. Threads
+        # are safe here: NovaSingleShotStrategy.synthesise is stateless across
+        # groups and the underlying SDK clients are thread-safe (httpx).
+        results_by_index: dict[int, ConsolidatedFinding] = {}
+        worker_count = min(self._max_synthesis_workers, max(1, len(groups)))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            future_to_index = {
+                executor.submit(self._synthesis.synthesise, group): idx
+                for idx, group in enumerate(groups)
+            }
+            for future in future_to_index:
+                idx = future_to_index[future]
+                try:
+                    results_by_index[idx] = future.result()
+                except Exception:
+                    Log.nova.exception(
+                        "Consolidator: synthesis failed for group at %s:%s — skipping",
+                        groups[idx].file_path,
+                        groups[idx].line_range,
+                    )
 
-        # Post-processor chain
+        consolidated: list[ConsolidatedFinding] = [
+            results_by_index[i] for i in range(len(groups)) if i in results_by_index
+        ]
+
+        # Post-processor chain. A processor may opt into batch processing
+        # (parallel execution, batched LLM calls, etc.) by defining
+        # ``process_all(findings) -> list[finding | None]``; otherwise the
+        # default per-finding sequential loop runs.
         for processor in self._post_processors:
+            batch_fn = getattr(processor, "process_all", None)
+            if callable(batch_fn):
+                try:
+                    consolidated = [f for f in batch_fn(consolidated) if f is not None]
+                except Exception:
+                    Log.nova.exception(
+                        "Consolidator: batch post-processor %s raised — keeping findings as-is",
+                        type(processor).__name__,
+                    )
+                continue
+
             next_batch: list[ConsolidatedFinding] = []
             for finding in consolidated:
                 try:
@@ -213,16 +263,29 @@ class NovaSingleShotStrategy:
         ai_client: Any,
         system_prompt: str | None = None,
         diff_by_file: dict[str, str] | None = None,
+        repo_root: Path | None = None,
     ) -> None:
         self._client = ai_client
         self._system_prompt = system_prompt or _SYNTHESIS_SYSTEM_PROMPT
         self._diff_by_file = diff_by_file or {}
+        self._repo_root = repo_root or Path.cwd()
+        # Pre-built once: avoids re-creating the tool, schema dict, and
+        # handler map on every group (parallel Pass B amplified the waste:
+        # 8 workers × ~30 groups = ~240 tool allocations per run).
+        self._read_file_tool = ReadFileTool(
+            repo_root=self._repo_root,
+            allowed_paths=set(self._diff_by_file.keys()),
+        )
+        self._tools = [ReadFileTool.tool_definition()]
+        self._tool_handlers = {"read_file": self._read_file_tool.execute}
 
     def synthesise(self, group: SynthesisGroup) -> ConsolidatedFinding:
-        """Synthesise a SynthesisGroup into a ConsolidatedFinding."""
-        if len(group.findings) == 1:
-            return self._passthrough(group.findings[0], group.group_type)
+        """Synthesise a SynthesisGroup into a ConsolidatedFinding.
 
+        All groups — including singletons — route through Nova so the synthesiser
+        can use file context (via read_file tool) to anchor the comment to the
+        relevant span. There is no passthrough path.
+        """
         try:
             return self._synthesise_via_nova(group)
         except Exception:
@@ -237,49 +300,33 @@ class NovaSingleShotStrategy:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _passthrough(self, finding: AgentFinding, group_type: str) -> ConsolidatedFinding:
-        diff = self._diff_by_file.get(finding.file_path, "")
-        code_replacement = finding.code_replacement
-        rlc = finding.replacement_line_count
-
-        if code_replacement and not is_anchor_coherent(diff, finding.line_number, code_replacement):
-            code_replacement = None
-            rlc = 1
-        elif code_replacement and rlc > 1:
-            rlc = validate_replacement_span(
-                diff=diff,
-                line_number=finding.line_number,
-                code_replacement=code_replacement,
-                declared_rlc=rlc,
-            )
-
-        return ConsolidatedFinding(
-            file_path=finding.file_path,
-            line_number=finding.line_number,
-            severity=finding.severity,
-            issue=finding.issue,
-            suggestion=finding.suggestion,
-            confidence=finding.confidence,
-            category=finding.category,
-            attribution=[Attribution(agent_name=finding.agent_name, category=finding.category)],
-            code_replacement=code_replacement,
-            replacement_line_count=rlc,
-            snippet=finding.snippet,
-            group_type=group_type,
-        )
-
     def _synthesise_via_nova(self, group: SynthesisGroup) -> ConsolidatedFinding:
         prompt_content = (
             "Synthesise the following finding groups and return a JSON array, one entry per group.\n\n"
             + json.dumps(self._build_group_payload(group), indent=2, ensure_ascii=False)
         )
-        result = self._client.complete(
-            [{"role": "user", "content": prompt_content}],
-            system=self._system_prompt,
-            max_tokens=4096,
-            temperature=0.2,
-            agent_name=_NOVA,
-        )
+
+        # Tool, schema, and handler map built once in __init__ and reused.
+        if hasattr(self._client, "complete_with_tools"):
+            result = self._client.complete_with_tools(
+                messages=[{"role": "user", "content": prompt_content}],
+                system=self._system_prompt,
+                tools=self._tools,
+                tool_handlers=self._tool_handlers,
+                max_tokens=4096,
+                temperature=0.2,
+                agent_name=_NOVA,
+            )
+        else:
+            # Legacy clients without tool-use — single-shot, no file context.
+            result = self._client.complete(
+                [{"role": "user", "content": prompt_content}],
+                system=self._system_prompt,
+                max_tokens=4096,
+                temperature=0.2,
+                agent_name=_NOVA,
+            )
+
         parsed = self._parse_response(result.text)
         if not parsed:
             return self._deterministic_fallback(group)
@@ -327,55 +374,55 @@ class NovaSingleShotStrategy:
         return [d for d in data if isinstance(d, dict)]
 
     def _build_consolidated(self, group: SynthesisGroup, syn: dict) -> ConsolidatedFinding:
+        """Map Nova's JSON synthesis to a ConsolidatedFinding.
+
+        Nova's ``line`` and ``replacement_line_count`` are authoritative — she
+        has read the file via ``read_file`` and her anchor reflects that
+        context, not the agents' first guess. The consolidator only falls
+        back to ``group.line_range[0]`` when Nova omits ``line``.
+
+        No deterministic anchor validation runs here. Indent matching and
+        span-bounds checks were rejecting legitimate refactors (e.g. 5
+        lines → 2 lines simplifications) while still missing the destructive
+        cases they were meant to catch. Semantic validation is the job of
+        the verifier agent (Vex — REVUE-240). Until Vex lands, suggestions
+        are post-and-pray and the BodyBuilder appends a hallucination
+        disclaimer so developers verify before clicking "Commit suggestion".
+        """
         severity = str(syn.get("severity", "medium")).lower()
         if severity not in _SEVERITY_ORDER:
             severity = "medium"
 
-        # Use unified code_replacement from Nova if valid; fall back to best finding (AC9)
         nova_code_replacement = syn.get("code_replacement")
-        code_replacement = None
-        replacement_line_count = 1
+        code_replacement = (
+            filter_code_replacement(nova_code_replacement)
+            if nova_code_replacement is not None
+            else None
+        )
 
-        diff = self._diff_by_file.get(group.file_path, "")
-        anchor_line = group.line_range[0]
-
-        if nova_code_replacement is not None:
-            code_replacement = filter_code_replacement(nova_code_replacement)
-            if code_replacement and not is_anchor_coherent(diff, anchor_line, code_replacement):
-                # Anchor mismatch — drop the suggestion block; prose still posts.
-                code_replacement = None
-                replacement_line_count = 1
-            elif code_replacement:
-                declared = syn.get("replacement_line_count")
-                if isinstance(declared, int) and declared >= 1:
-                    replacement_line_count = declared
-                elif isinstance(declared, float) and declared >= 1 and declared.is_integer():
-                    replacement_line_count = int(declared)
-                else:
-                    replacement_line_count = len(code_replacement)
-                replacement_line_count = validate_replacement_span(
-                    diff=diff,
-                    line_number=anchor_line,
-                    code_replacement=code_replacement,
-                    declared_rlc=replacement_line_count,
-                )
-
-        # Fallback applies when Nova omits code_replacement OR returns an all-invalid list
+        # Fall back to the highest-confidence source finding's code_replacement
+        # when Nova omits hers — preserves the agent's suggested fix verbatim.
         if code_replacement is None:
             best_source = max(
                 (f for f in group.findings if f.code_replacement),
                 key=lambda f: f.confidence,
                 default=None,
             )
-            if best_source:
-                if is_anchor_coherent(diff, anchor_line, best_source.code_replacement):
-                    code_replacement = best_source.code_replacement
-                    replacement_line_count = validate_replacement_span(
-                        diff=diff,
-                        line_number=anchor_line,
-                        code_replacement=code_replacement,
-                        declared_rlc=best_source.replacement_line_count,
-                    )
+            if best_source is not None:
+                code_replacement = best_source.code_replacement
+                rlc_fallback = best_source.replacement_line_count
+            else:
+                rlc_fallback = 1
+        else:
+            rlc_fallback = len(code_replacement)
+
+        anchor_line = _coerce_positive_int(syn.get("line"), default=group.line_range[0])
+        replacement_line_count = _coerce_positive_int(
+            syn.get("replacement_line_count"), default=rlc_fallback
+        )
+        # An anchor-only comment (no code_replacement) has rlc=1 by definition.
+        if code_replacement is None:
+            replacement_line_count = 1
 
         attribution = [
             Attribution(agent_name=f.agent_name, category=f.category)
@@ -383,12 +430,12 @@ class NovaSingleShotStrategy:
             if f.agent_name
         ]
         if not attribution:
-            # Ensure attribution is never empty (ConsolidatedFinding invariant)
+            # ConsolidatedFinding invariant: attribution must be non-empty.
             attribution = [Attribution(agent_name=_NOVA, category=group.findings[0].category)]
 
         return ConsolidatedFinding(
             file_path=group.file_path,
-            line_number=group.line_range[0],
+            line_number=anchor_line,
             severity=severity,
             issue=str(syn.get("issue", "")),
             suggestion=str(syn.get("suggestion", "")),
@@ -505,20 +552,24 @@ class NoOpSuggestionDropper:
 
 
 class UnanchoredFindingExtractor:
-    """Post-processor: demote findings without anchor evidence to summary_sink (Decision 6).
+    """Post-processor: pass findings through to the poster.
 
-    A finding with neither snippet nor code_replacement has no verifiable anchor.
-    Returns None (removes from inline stream) and appends to summary_sink.
+    The earlier heuristic — demote any finding with empty snippet AND no
+    code_replacement — predated REVUE-239 Phase 1, where Nova became the
+    authoritative owner of ``line_number`` and the ConsolidatedFinding
+    dataclass started enforcing ``line_number > 0``. That made the heuristic
+    silently strip every prose-only finding from the inline stream, even
+    though the poster could anchor them by their line number.
 
-    Must run after NoOpSuggestionDropper so that a finding with only a no-op
-    code_replacement and no snippet is correctly identified as unanchored.
+    Genuine unanchored detection (line not in any diff hunk) now lives in
+    the position adapter and poster, which feed their own summary_sink at
+    the layer that actually knows about hunk geometry. This post-processor
+    is kept as a stable shape in the consolidator chain so future regressions
+    can be expressed here without re-threading wiring.
     """
 
     def __init__(self, summary_sink: list[ConsolidatedFinding]) -> None:
         self._sink = summary_sink
 
     def process(self, finding: ConsolidatedFinding) -> ConsolidatedFinding | None:
-        if not finding.snippet and not finding.code_replacement:
-            self._sink.append(finding)
-            return None
         return finding

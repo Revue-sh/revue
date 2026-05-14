@@ -47,6 +47,7 @@ A **Proposed** ADR is the RFC phase. Add feedback to its **Review Notes** sectio
 | [pipeline-metrics.md](pipeline-metrics.md) | Proposed | Per-run JSONL metrics artifacts for cache observability and future dashboard; `MetricsCollector` Protocol injection |
 | [system-context-injection.md](system-context-injection.md) | Proposed | Inject architecture docs and adjacent file contracts into agent prompts so agents can detect system-assumption errors, not just diff-level defects |
 | [critical-path-escalation.md](critical-path-escalation.md) | Proposed | Declarative `critical_paths` and `escalation` config in `.revue.yml`; structured escalation comments when sensitive areas are touched or severity thresholds are exceeded |
+| [reviewer-agent-tool-use.md](reviewer-agent-tool-use.md) | Proposed | Extend `read_file` tool-use to Maya/Leo/Kai/Zara so reviewers can verify claims against full-file context before emitting findings; complements (not replaces) system-context-injection |
 
 ---
 

@@ -1,7 +1,7 @@
 ai:
-  api_key_env: ANTHROPIC_API_KEY
+  api_key_env: REVUE_ANTHROPIC_API_KEY
   model: claude-haiku-4-5-20251001
-  synthesis_model: claude-sonnet-4-6
+  synthesis_model: claude-haiku-4-5-20251001
   provider: anthropic
 noise_filters:
   allowed_patterns:
@@ -161,7 +161,7 @@ review:
   - dist/**
   - '*.whl'
   - .claude/**
-  max_diff_lines: 10000
+  max_diff_lines: 15000
   max_parallel_agents: 2
   min_confidence: 70
   retry_on_rate_limit: true

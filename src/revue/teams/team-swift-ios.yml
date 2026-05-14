@@ -18,6 +18,7 @@ agents:
     - cleo
     - maya
     - nova
+    - vex
   secondary:
     - zara
 

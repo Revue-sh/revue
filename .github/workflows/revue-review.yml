@@ -13,12 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          # Broken gitlink at context/ai-code-review-service (no .gitmodules)
+          # would otherwise cause "git failed with exit code 128" warnings in
+          # the post-checkout cleanup. Skip submodules until that is resolved.
+          submodules: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -51,9 +55,9 @@ jobs:
         env:
           # Provider and model are read from .revue.yml — no CLI flags needed.
           # Set the API key matching your configured provider:
-          #   anthropic → ANTHROPIC_API_KEY
+          #   anthropic → REVUE_ANTHROPIC_API_KEY
           #   openai    → OPENAI_API_KEY  (see REVUE-148 for per-provider key docs)
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REVUE_ANTHROPIC_API_KEY: ${{ secrets.REVUE_ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           REVUE_TIER_OVERRIDE: ${{ vars.REVUE_TIER_OVERRIDE }}
           GITHUB_TOKEN: ${{ secrets.REVUE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -73,7 +77,7 @@ jobs:
 
       - name: Upload metrics artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: revue-metrics
           path: .revue/metrics.jsonl

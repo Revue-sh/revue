@@ -101,6 +101,101 @@ class TestSingletonProseOnly:
         # Footer should be in one of the last lines
         assert any("— 🤖 Revue" in l for l in non_empty_lines[-3:])
 
+    def test_sentinel_preceded_by_blank_line_in_single_build(self, simple_finding):
+        """Markdown hides [//]: # (...) only when a blank line precedes it.
+
+        Without the blank line, the sentinel renders inline after the brand footer
+        instead of being hidden (REVUE-239 follow-up: visible sentinel on GitHub PR #23).
+        """
+        builder = BodyBuilder()
+        result = builder.build(simple_finding, fp="abc123")
+        lines = result.split("\n")
+        sentinel_idx = next(i for i, l in enumerate(lines) if "[//]: # (revue:fp:" in l)
+        assert sentinel_idx > 0
+        assert lines[sentinel_idx - 1] == "", (
+            f"Sentinel must be preceded by a blank line for markdown to hide it. "
+            f"Got line above sentinel: {lines[sentinel_idx - 1]!r}"
+        )
+
+    def test_sentinel_preceded_by_blank_line_in_grouped_build(self, multi_finding_grouped):
+        """build_grouped() output: same blank-line-before-sentinel rule applies."""
+        builder = BodyBuilder()
+        result = builder.build_grouped([multi_finding_grouped], fp="grp123")
+        lines = result.split("\n")
+        sentinel_idx = next(i for i, l in enumerate(lines) if "[//]: # (revue:fp:" in l)
+        assert sentinel_idx > 0
+        assert lines[sentinel_idx - 1] == "", (
+            f"Grouped sentinel must be preceded by a blank line. "
+            f"Got line above sentinel: {lines[sentinel_idx - 1]!r}"
+        )
+
+    # ------------------------------------------------------------------
+    # AI hallucination disclaimer — REVUE-239 Phase 1
+    # ------------------------------------------------------------------
+    # Until Vex (REVUE-240) provides semantic verification, Nova's
+    # code_replacement may anchor at the wrong line or contain a
+    # destructive patch. The disclaimer is the only thing standing between
+    # a hallucinated suggestion and a developer clicking "Commit suggestion"
+    # in the GitHub UI.
+
+    def test_disclaimer_present_when_finding_has_code_replacement(
+        self, finding_with_code_replacement
+    ):
+        """build() must emit the AI hallucination disclaimer when a suggestion fence is rendered."""
+        # Arrange / Act
+        builder = BodyBuilder()
+        result = builder.build(finding_with_code_replacement, fp="disclaimer1")
+
+        # Assert — disclaimer text appears verbatim and precedes the suggestion fence
+        assert "AI suggestions can be incorrect" in result
+        assert "Commit suggestion" in result
+        # Placement check: disclaimer must appear BEFORE the suggestion fence
+        disclaimer_idx = result.index("AI suggestions can be incorrect")
+        fence_idx = result.index("```suggestion")
+        assert disclaimer_idx < fence_idx, (
+            "Disclaimer must precede the suggestion fence so the developer "
+            "reads it before clicking 'Commit suggestion'."
+        )
+
+    def test_disclaimer_absent_when_finding_has_no_code_replacement(self, simple_finding):
+        """Prose-only comments (no suggestion fence) must NOT carry the disclaimer."""
+        # Arrange — simple_finding has code_replacement=None
+        # Act
+        builder = BodyBuilder()
+        result = builder.build(simple_finding, fp="disclaimer2")
+
+        # Assert
+        assert "AI suggestions can be incorrect" not in result
+
+    def test_disclaimer_present_in_grouped_build_when_any_item_has_code_replacement(
+        self, multi_finding_grouped, finding_with_code_replacement
+    ):
+        """build_grouped() must emit the disclaimer when at least one grouped item has a fence."""
+        # Arrange
+        builder = BodyBuilder()
+        # Mix: one finding with CR, one without
+        items = [multi_finding_grouped, finding_with_code_replacement]
+
+        # Act
+        result = builder.build_grouped(items, fp="grouped_disclaimer")
+
+        # Assert
+        assert "AI suggestions can be incorrect" in result
+        assert "Commit suggestion" in result
+
+    def test_disclaimer_absent_in_grouped_build_when_no_item_has_code_replacement(
+        self, multi_finding_grouped
+    ):
+        """Grouped comments where no item has a code_replacement: no disclaimer."""
+        # Arrange — multi_finding_grouped has code_replacement=None
+        builder = BodyBuilder()
+
+        # Act
+        result = builder.build_grouped([multi_finding_grouped], fp="grouped_no_disclaimer")
+
+        # Assert
+        assert "AI suggestions can be incorrect" not in result
+
     def test_severity_emoji_mapping(self):
         """All severity levels render with correct emoji."""
         builder = BodyBuilder()

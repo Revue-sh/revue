@@ -1,0 +1,25 @@
+{
+  "platform": "gitlab",
+  "file_path": "src/example/offset_hunk_stub.py",
+  "diff_snippet": "@@ -10,5 +50,5 @@\n context_line_A\n+added_feature\n context_line_B\n context_line_C\n context_line_D\n",
+  "reported_line": 51,
+  "replacement_line_count": 1,
+  "posted_base_sha": "aabbccdd11223344aabbccdd11223344aabbccdd",
+  "posted_head_sha": "55667788aabbccdd55667788aabbccdd55667788",
+  "posted_start_sha": "aabbccdd11223344aabbccdd11223344aabbccdd",
+  "expected_position": {
+    "file_path": "src/example/offset_hunk_stub.py",
+    "start_line": 51,
+    "end_line": 51
+  },
+  "expected_api_params": {
+    "position_type": "text",
+    "base_sha": "aabbccdd11223344aabbccdd11223344aabbccdd",
+    "head_sha": "55667788aabbccdd55667788aabbccdd55667788",
+    "start_sha": "aabbccdd11223344aabbccdd11223344aabbccdd",
+    "new_path": "src/example/offset_hunk_stub.py",
+    "old_path": "src/example/offset_hunk_stub.py",
+    "new_line": 51
+  },
+  "_note": "TC5 — offset hunk @@ -10,5 +50,5 @@: absolute new-file line 51 anchors correctly for GitLab"
+}

@@ -57,7 +57,7 @@ EXAMPLE:
   "selected_agents": [
     {{"emoji": "🛡️", "name": "Security Agent", "reason": "for auth review", "files": ["app/auth.py", "app/middleware.py"]}},
     {{"emoji": "🗄️", "name": "Data Agent", "reason": "for schema validation", "files": ["migrations/001_users.sql"]}},
-    {{"emoji": "⚡", "name": "Performance Agent", "reason": "for API optimization", "files": ["app/api.py", "app/routes.py"]}}
+    {{"emoji": "⏱️", "name": "Performance Agent", "reason": "for API optimization", "files": ["app/api.py", "app/routes.py"]}}
   ],
   "languages": ["python"],
   "risk_areas": ["authentication", "database", "api-boundary"],

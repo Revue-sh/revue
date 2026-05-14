@@ -37,6 +37,7 @@ TIER_ALL_AGENTS = [
     "sage",
     "cleo",
     "nova",
+    "vex",
 ]
 
 AGENTS_BY_TIER: dict[str, list[str]] = {

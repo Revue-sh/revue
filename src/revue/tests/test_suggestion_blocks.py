@@ -373,7 +373,7 @@ def test_agent_loader_propagates_code_replacement_to_ai_review() -> None:
     from revue.core.agent_loader import LoadedAgent, AgentDefinition
     from revue.core.models import FileChange
 
-    ai_response = json.dumps([{
+    ai_response = json.dumps({"status": "findings", "findings": [{
         "file_path": "app.py",
         "line_number": 5,
         "severity": "high",
@@ -382,7 +382,7 @@ def test_agent_loader_propagates_code_replacement_to_ai_review() -> None:
         "confidence": 0.9,
         "category": "code-quality",
         "code_replacement": ["if value is None:", "    return"],
-    }])
+    }]})
 
     mock_result = MagicMock()
     mock_result.text = ai_response
@@ -416,7 +416,7 @@ def test_agent_loader_rejects_non_string_items_in_code_replacement() -> None:
     from revue.core.agent_loader import LoadedAgent, AgentDefinition
     from revue.core.models import FileChange
 
-    ai_response = json.dumps([{
+    ai_response = json.dumps({"status": "findings", "findings": [{
         "file_path": "app.py",
         "line_number": 1,
         "severity": "low",
@@ -425,7 +425,7 @@ def test_agent_loader_rejects_non_string_items_in_code_replacement() -> None:
         "confidence": 0.5,
         "category": "code-quality",
         "code_replacement": ["valid line", 42, None, "another valid line"],
-    }])
+    }]})
 
     mock_result = MagicMock()
     mock_result.text = ai_response

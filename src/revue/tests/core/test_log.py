@@ -218,6 +218,10 @@ class TestFileLogger(unittest.TestCase):
                 else:
                     self.assertFalse(os.path.exists(filepath), f"{date_str}.log should be deleted")
 
+    @unittest.skipIf(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        "root bypasses POSIX read-only permissions, so chmod 0o444 cannot simulate an unwritable dir",
+    )
     def test_filelogger_handles_unwritable_dir(self):
         """FileLogger gracefully disables output if directory is unwritable."""
         with tempfile.TemporaryDirectory() as tmpdir:

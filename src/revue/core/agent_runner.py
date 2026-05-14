@@ -33,12 +33,25 @@ class AgentProtocol(Protocol):
 
 @dataclass
 class AgentRunResult:
-    """Result for a single agent's execution."""
+    """Result for a single agent's execution.
+
+    REVUE-246: the ``status`` field carries the three-state contract verdict
+    (``findings`` / ``clean`` / ``error``) so the pipeline-level verdict
+    composition can read it directly. Legacy callers using ``success`` /
+    ``findings`` / ``error`` continue to work — the new fields are additive.
+    """
     agent_name: str
     findings: list[AIReview]
     elapsed_seconds: float
     timed_out: bool = False
     error: str = ""
+    error_type: str = ""  # unqualified exception class (e.g. "BadRequestError")
+    call_site: str = ""   # client.method that raised (e.g. "AnthropicClient.complete_with_tools")
+    status: str = "findings"  # "findings" | "clean" | "error" — REVUE-246
+    error_code: "str | None" = None
+    summary: "str | None" = None
+    confidence: "float | None" = None
+    iterations_used: "int | None" = None
 
     @property
     def success(self) -> bool:
@@ -103,11 +116,24 @@ def run_agents_parallel(
     def _run_one(agent: AgentProtocol) -> AgentRunResult:
         t0 = time.monotonic()
         try:
-            findings = agent.analyse(changes, shared)
+            verdict = agent.analyse(changes, shared)
+            # REVUE-246: ``analyse`` returns an ``AgentVerdict`` (or, for legacy
+            # in-test stubs, a bare list). Treat a bare list as a findings
+            # verdict so test doubles that pre-date the typed return don't
+            # require a sweep of every fixture.
+            status = getattr(verdict, "status", "findings")
+            findings_list = list(getattr(verdict, "findings", verdict) or [])
             return AgentRunResult(
                 agent_name=agent.name,
-                findings=findings,
+                findings=findings_list,
                 elapsed_seconds=time.monotonic() - t0,
+                status=status,
+                error_code=getattr(verdict, "error_code", None),
+                summary=getattr(verdict, "summary", None),
+                confidence=getattr(verdict, "confidence", None),
+                iterations_used=getattr(verdict, "iterations_used", None),
+                error=(getattr(verdict, "error_message", None) or "") if status == "error" else "",
+                error_type="AgentVerdictError" if status == "error" else "",
             )
         except Exception as exc:
             return AgentRunResult(
@@ -115,6 +141,10 @@ def run_agents_parallel(
                 findings=[],
                 elapsed_seconds=time.monotonic() - t0,
                 error=str(exc),
+                error_type=type(exc).__name__,
+                call_site=getattr(exc, "call_site", ""),
+                status="error",
+                error_code="internal_error",
             )
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -130,6 +160,8 @@ def run_agents_parallel(
                         findings=[],
                         elapsed_seconds=0.0,
                         error=str(exc),
+                        error_type=type(exc).__name__,
+                        call_site=getattr(exc, "call_site", ""),
                     ))
         except FuturesTimeoutError:
             # Overall timeout — mark any agents that haven't completed yet

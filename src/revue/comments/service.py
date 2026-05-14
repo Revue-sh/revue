@@ -15,6 +15,7 @@ from .file_store import CommentFileStore
 from .fingerprint import fingerprint
 from .json_store import PerPRCommentStore
 
+from revue.core.display import SEVERITY_EMOJIS, SEVERITY_EMOJI_ALT
 from revue.core.logging_channels import Log
 
 
@@ -861,9 +862,11 @@ class WontFixReplyService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    # Matches the opening line of every Revue finding comment.
+    # Matches the opening line of every Revue finding comment. Emoji
+    # alternation is rebuilt from core.display.SEVERITY_EMOJIS, so re-skinning
+    # a severity badge cannot silently drift the matcher.
     _FINDING_PATTERN = re.compile(
-        r'^\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]',
+        rf'^\*\*(?:{SEVERITY_EMOJI_ALT})\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]',
     )
 
     def _collect_threads_with_replies(self, pr_number: int) -> list[dict]:
@@ -992,11 +995,12 @@ class WontFixReplyService:
 
     @staticmethod
     def _severity_from_body(body: str) -> str:
-        if "🔴" in body[:30]:
+        head = body[:30]
+        if SEVERITY_EMOJIS["high"] in head:
             return "high"
-        if "🟡" in body[:30]:
+        if SEVERITY_EMOJIS["medium"] in head:
             return "medium"
-        if "🔵" in body[:30]:
+        if SEVERITY_EMOJIS["low"] in head:
             return "low"
         return "info"
 

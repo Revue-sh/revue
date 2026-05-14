@@ -112,6 +112,73 @@ def test_agent_run_result_success_property():
     assert errored.success is False
 
 
+# ---------------------------------------------------------------------------
+# REVUE-241: per-agent failure attribution
+#
+# When an agent fails, the existing report shows only the agent name and a
+# truncated message. Operators investigating a CI failure (e.g. Maya + Kai
+# blowing the 200K context window) need to know:
+#   1. The Python exception class (RuntimeError vs APIStatusError vs …)
+#   2. Which client method raised it (complete vs complete_with_tools)
+# AgentRunResult now exposes those as explicit fields so the pipeline and CLI
+# can surface them in the "Review incomplete" summary without re-parsing free
+# text from log lines.
+# ---------------------------------------------------------------------------
+
+
+def test_error_agent_captures_exception_type():
+    """`error_type` is the unqualified class name of the raised exception.
+
+    A bare `str(exc)` collapses ValueError("x") and RuntimeError("x") into the
+    same surface — operators can't distinguish a config bug from a transport
+    fault. The exception class is the first triage signal.
+    """
+    agents = [_ErrorAgent()]
+    result = run_agents_parallel(agents, [_fc()])
+    err = result.agent_results[0]
+    assert err.error_type == "RuntimeError"
+    assert err.error == "agent crashed"
+
+
+def test_error_agent_captures_call_site_attribute_when_set():
+    """Agents may attach a ``call_site`` attribute to their exception to name
+    the client method that raised. The runner reads it without coupling
+    AgentProtocol to any specific exception class — any duck-typed object
+    with ``.call_site`` works."""
+    class _CallSiteAgent:
+        name = "with-call-site"
+        def analyse(self, changes, shared=None):
+            exc = RuntimeError("prompt is too long")
+            exc.call_site = "AnthropicClient.complete_with_tools"  # type: ignore[attr-defined]
+            raise exc
+
+    result = run_agents_parallel([_CallSiteAgent()], [_fc()])
+    err = result.agent_results[0]
+    assert err.error_type == "RuntimeError"
+    assert err.call_site == "AnthropicClient.complete_with_tools"
+
+
+def test_error_agent_without_call_site_has_empty_call_site():
+    """Agents that don't attach a call_site leave the field empty — the
+    field is informational, never a hard requirement."""
+    agents = [_ErrorAgent()]
+    result = run_agents_parallel(agents, [_fc()])
+    err = result.agent_results[0]
+    assert err.call_site == ""
+
+
+def test_timed_out_agent_has_empty_error_type_and_call_site():
+    """Timeouts are a distinct failure mode (no exception was raised inside
+    the agent's body — the future was cancelled). Don't conflate them with
+    exception-bearing failures."""
+    slow = _SlowAgent(delay=5.0)
+    result = run_agents_parallel([slow], [_fc()], timeout_seconds=0.1)
+    r = result.agent_results[0]
+    assert r.timed_out
+    assert r.error_type == ""
+    assert r.call_site == ""
+
+
 def test_agents_run_in_parallel():
     """Two 0.1s agents should finish in ~0.1s total, not 0.2s."""
     class _SlightlySlowAgent:

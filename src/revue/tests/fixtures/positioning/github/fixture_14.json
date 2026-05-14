@@ -1,0 +1,18 @@
+{
+  "platform": "github",
+  "file_path": "src/example/offset_hunk_stub.py",
+  "diff_snippet": "@@ -10,5 +50,5 @@\n context_line_A\n+added_feature\n context_line_B\n context_line_C\n context_line_D\n",
+  "reported_line": 51,
+  "replacement_line_count": 1,
+  "expected_position": {
+    "file_path": "src/example/offset_hunk_stub.py",
+    "start_line": 51,
+    "end_line": 51
+  },
+  "expected_api_params": {
+    "path": "src/example/offset_hunk_stub.py",
+    "side": "RIGHT",
+    "line": 51
+  },
+  "_note": "TC5 — offset hunk @@ -10,5 +50,5 @@: absolute new-file line 51 anchors correctly; naive relative offset 2 would miss (out_of_hunk)"
+}

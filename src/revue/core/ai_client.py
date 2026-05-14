@@ -12,7 +12,10 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Final, Protocol
+from typing import Any, Callable, Final, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .tool_loop import ToolHandler
 
 from revue.core.logging_channels import Log
 
@@ -204,6 +207,80 @@ def _build_openai_token_usage(usage: Any, provider_tag: str) -> TokenUsage:
     )
 
 
+def _openai_complete_with_tools(
+    sdk_client: Any,
+    model: str,
+    provider_label: str,
+    max_attempts: int,
+    *,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    tool_handlers: "dict[str, ToolHandler]",
+    max_iterations: "int | None",
+    max_tokens: int,
+    temperature: float,
+    system: "str | list[dict[str, Any]] | None",
+    output_config: "dict[str, Any] | None" = None,
+    agent_name: "str | None" = None,
+    metrics: "Any | None" = None,
+) -> "CompletionResult":
+    """Shared tool-loop driver for all OpenAI-compatible clients.
+
+    REVUE-241 P1: wraps openai_tool_loop in ``_with_retry`` so callers inherit
+    the same rate-limit contract as ``complete()``. DRY across OpenAI / Azure /
+    OpenRouter / Custom — without this helper, each client owned a near-identical
+    copy of the same boilerplate.
+
+    REVUE-241: ``output_config`` (Anthropic-style) is translated here into
+    OpenAI's ``response_format`` shape so callers can pass one provider-
+    agnostic kwarg regardless of which client they hold.
+
+    REVUE-241 P2 (OpenAI path): ``agent_name`` and ``metrics`` are forwarded
+    to the inner loop so the OpenAI-compatible path records the same per-agent
+    telemetry as the Anthropic path. Without this forwarding, every tool-use
+    review on OpenAI / Azure / OpenRouter / Custom is invisible in
+    .revue/metrics.jsonl even though the underlying loop now supports it.
+    """
+    from . import tool_loop as _tl
+    iterations = max_iterations if max_iterations is not None else _tl.DEFAULT_MAX_TOOL_ITERATIONS
+
+    # Translate Anthropic's output_config (which carries {format: {type,
+    # schema}}) into OpenAI's response_format ({type, json_schema: {name,
+    # strict, schema}}). Caller doesn't need to know which provider they're
+    # speaking to; the conversion happens here at the boundary.
+    response_format: "dict[str, Any] | None" = None
+    if output_config is not None:
+        fmt = output_config.get("format") or {}
+        if fmt.get("type") == "json_schema" and "schema" in fmt:
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": fmt.get("name", "findings_response"),
+                    "strict": True,
+                    "schema": fmt["schema"],
+                },
+            }
+
+    def _call() -> "CompletionResult":
+        return _tl.openai_tool_loop(
+            sdk_client,
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_handlers=tool_handlers,
+            max_iterations=iterations,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            provider_label=provider_label,
+            response_format=response_format,
+            agent_name=agent_name,
+            metrics=metrics,
+        )
+
+    return _with_retry(_call, max_attempts=max_attempts)
+
+
 def _openai_messages(
     messages: list[dict[str, Any]],
     system: "str | list[dict[str, Any]] | None",
@@ -248,11 +325,14 @@ def _openai_messages(
     return out
 
 
-
 class OpenAIClient:
     """OpenAI-compatible client (api.openai.com or custom base_url)."""
 
-    def __init__(self, config: AIConfig) -> None:
+    def __init__(
+        self,
+        config: AIConfig,
+        metrics: MetricsCollector | None = None,
+    ) -> None:
         self._model = config.model
         self._max_attempts = 3 if config.retry_on_rate_limit else 1
         self._client = openai.OpenAI(
@@ -260,6 +340,7 @@ class OpenAIClient:
             base_url=config.base_url or None,
             timeout=_TIMEOUT,
         )
+        self._metrics = metrics or NullMetricsCollector()
 
     def complete(
         self,
@@ -294,6 +375,28 @@ class OpenAIClient:
             )
 
         return _with_retry(_call, max_attempts=self._max_attempts)
+
+    def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]],
+        tool_handlers: "dict[str, ToolHandler]",
+        max_iterations: "int | None" = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
+        agent_name: "str | None" = None,
+        output_config: "dict[str, Any] | None" = None,
+    ) -> CompletionResult:
+        return _openai_complete_with_tools(
+            self._client, self._model, "openai", self._max_attempts,
+            messages=messages, tools=tools, tool_handlers=tool_handlers,
+            max_iterations=max_iterations, max_tokens=max_tokens,
+            temperature=temperature, system=system,
+            output_config=output_config,
+            agent_name=agent_name, metrics=self._metrics,
+        )
 
 
 class AnthropicClient:
@@ -380,11 +483,52 @@ class AnthropicClient:
 
         return _with_retry(_call, max_attempts=self._max_attempts)
 
+    def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]],
+        tool_handlers: "dict[str, ToolHandler]",
+        max_iterations: "int | None" = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
+        agent_name: "str | None" = None,
+        output_config: "dict[str, Any] | None" = None,
+    ) -> CompletionResult:
+        # REVUE-241 P1: the tool loop must inherit the same retry contract as
+        # complete() — without _with_retry a single transient 429 collapses a
+        # reviewer that previously got 3 attempts.
+        from . import tool_loop as _tl
+        iterations = max_iterations if max_iterations is not None else _tl.DEFAULT_MAX_TOOL_ITERATIONS
+
+        def _call() -> CompletionResult:
+            return _tl.anthropic_tool_loop(
+                self._client,
+                model=self._model,
+                messages=messages,
+                tools=tools,
+                tool_handlers=tool_handlers,
+                max_iterations=iterations,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system,
+                agent_name=agent_name,
+                metrics=self._metrics,
+                output_config=output_config,
+            )
+
+        return _with_retry(_call, max_attempts=self._max_attempts)
+
 
 class AzureOpenAIClient:
     """Azure OpenAI Service client."""
 
-    def __init__(self, config: AIConfig) -> None:
+    def __init__(
+        self,
+        config: AIConfig,
+        metrics: MetricsCollector | None = None,
+    ) -> None:
         self._model = config.azure_deployment or config.model
         self._max_attempts = 3 if config.retry_on_rate_limit else 1
         self._client = openai.AzureOpenAI(
@@ -393,6 +537,7 @@ class AzureOpenAIClient:
             api_version=config.azure_api_version,
             timeout=_TIMEOUT,
         )
+        self._metrics = metrics or NullMetricsCollector()
 
     def complete(
         self,
@@ -428,11 +573,39 @@ class AzureOpenAIClient:
 
         return _with_retry(_call, max_attempts=self._max_attempts)
 
+    def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]],
+        tool_handlers: "dict[str, ToolHandler]",
+        max_iterations: "int | None" = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
+        agent_name: "str | None" = None,
+        output_config: "dict[str, Any] | None" = None,
+    ) -> CompletionResult:
+        # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
+        # their 3-attempt retry budget on the new default path.
+        return _openai_complete_with_tools(
+            self._client, self._model, "azure", self._max_attempts,
+            messages=messages, tools=tools, tool_handlers=tool_handlers,
+            max_iterations=max_iterations, max_tokens=max_tokens,
+            temperature=temperature, system=system,
+            output_config=output_config,
+            agent_name=agent_name, metrics=self._metrics,
+        )
+
 
 class OpenRouterClient:
     """OpenRouter (openrouter.ai) client — OpenAI-compatible with extra headers."""
 
-    def __init__(self, config: AIConfig) -> None:
+    def __init__(
+        self,
+        config: AIConfig,
+        metrics: MetricsCollector | None = None,
+    ) -> None:
         self._model = config.model
         self._max_attempts = 3 if config.retry_on_rate_limit else 1
         self._client = openai.OpenAI(
@@ -444,6 +617,7 @@ class OpenRouterClient:
                 "X-Title": "Revue AI Code Review",
             },
         )
+        self._metrics = metrics or NullMetricsCollector()
 
     def complete(
         self,
@@ -479,11 +653,39 @@ class OpenRouterClient:
 
         return _with_retry(_call, max_attempts=self._max_attempts)
 
+    def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]],
+        tool_handlers: "dict[str, ToolHandler]",
+        max_iterations: "int | None" = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
+        agent_name: "str | None" = None,
+        output_config: "dict[str, Any] | None" = None,
+    ) -> CompletionResult:
+        # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
+        # their 3-attempt retry budget on the new default path.
+        return _openai_complete_with_tools(
+            self._client, self._model, "openrouter", self._max_attempts,
+            messages=messages, tools=tools, tool_handlers=tool_handlers,
+            max_iterations=max_iterations, max_tokens=max_tokens,
+            temperature=temperature, system=system,
+            output_config=output_config,
+            agent_name=agent_name, metrics=self._metrics,
+        )
+
 
 class CustomGatewayClient:
     """Generic OpenAI-compatible gateway at a user-supplied base_url."""
 
-    def __init__(self, config: AIConfig) -> None:
+    def __init__(
+        self,
+        config: AIConfig,
+        metrics: MetricsCollector | None = None,
+    ) -> None:
         self._model = config.model
         self._max_attempts = 3 if config.retry_on_rate_limit else 1
         self._client = openai.OpenAI(
@@ -491,6 +693,7 @@ class CustomGatewayClient:
             base_url=config.base_url,
             timeout=_TIMEOUT,
         )
+        self._metrics = metrics or NullMetricsCollector()
 
     def complete(
         self,
@@ -526,6 +729,30 @@ class CustomGatewayClient:
 
         return _with_retry(_call, max_attempts=self._max_attempts)
 
+    def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]],
+        tool_handlers: "dict[str, ToolHandler]",
+        max_iterations: "int | None" = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.3,
+        system: "str | list[dict[str, Any]] | None" = None,
+        agent_name: "str | None" = None,
+        output_config: "dict[str, Any] | None" = None,
+    ) -> CompletionResult:
+        # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
+        # their 3-attempt retry budget on the new default path.
+        return _openai_complete_with_tools(
+            self._client, self._model, "custom", self._max_attempts,
+            messages=messages, tools=tools, tool_handlers=tool_handlers,
+            max_iterations=max_iterations, max_tokens=max_tokens,
+            temperature=temperature, system=system,
+            output_config=output_config,
+            agent_name=agent_name, metrics=self._metrics,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Factory (OCP: registry-based — extend via register_provider, no edits needed)
@@ -539,16 +766,26 @@ _PROVIDER_REGISTRY: dict[str, type] = {
     "custom": CustomGatewayClient,
 }
 
-# Providers that natively support response_format={"type": "json_object"}.
-# Callers omit prompt-engineering JSON suffixes for these. Co-located here so
-# adding a new provider to _PROVIDER_REGISTRY is the only edit needed.
-# REVUE-107: extend AIClient.complete() to forward response_format for this set.
+# Providers whose chat-completions API natively supports the OpenAI-style
+# response_format={"type": "json_object"} mode. Anthropic is intentionally
+# omitted here — it uses its own ``output_config.format`` grammar (wired via
+# ``output_config`` on messages.create, see finding_schema.py for the schema
+# and tool_loop.anthropic_tool_loop for the wiring). Adding a new provider
+# to _PROVIDER_REGISTRY only requires editing this set if it speaks OpenAI's
+# response_format dialect; structured outputs for Anthropic-compatible
+# providers belong on the output_config path instead.
 _JSON_FORMAT_PROVIDERS: frozenset[str] = frozenset({
     "openai", "azure", "openrouter", "custom", "google", "groq",
 })
 
 # Providers whose constructors accept a `metrics` keyword argument.
-_METRICS_AWARE_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
+# REVUE-241 P2: OpenAI-compatible clients now also persist MetricsEvent on
+# the tool-use path (via openai_tool_loop). Listing them here lets
+# ``create_ai_client`` forward the collector so reviewer-agent token usage
+# surfaces in .revue/metrics.jsonl regardless of provider.
+_METRICS_AWARE_PROVIDERS: frozenset[str] = frozenset({
+    "anthropic", "openai", "azure", "openrouter", "custom",
+})
 
 
 def register_provider(name: str, cls: type) -> None:

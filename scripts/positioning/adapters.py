@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .calculator import PositionResult
+from revue.comments.position_adapter import PositionResult, PositionStatus
 
 
 class PositionAdapter(Protocol):
@@ -22,7 +22,7 @@ class GitHubPositionAdapter:
     """
 
     def build_params(self, result: PositionResult, fixture_meta: dict) -> dict | None:
-        if result.status != "anchored":
+        if result.status != PositionStatus.ANCHORED:
             return None
         params: dict = {
             "path": result.file_path,
@@ -43,7 +43,7 @@ class GitLabPositionAdapter:
     """
 
     def build_params(self, result: PositionResult, fixture_meta: dict) -> dict | None:
-        if result.status != "anchored":
+        if result.status != PositionStatus.ANCHORED:
             return None
         return {
             "position_type": "text",
@@ -64,7 +64,7 @@ class BitbucketPositionAdapter:
     """
 
     def build_params(self, result: PositionResult, fixture_meta: dict) -> dict | None:
-        if result.status != "anchored":
+        if result.status != PositionStatus.ANCHORED:
             return None
         inline: dict = {"path": result.file_path, "to": result.end_line}
         if result.end_line != result.start_line:

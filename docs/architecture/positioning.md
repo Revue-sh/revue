@@ -190,8 +190,170 @@ Run all fixtures: `python scripts/local_run.py position --all`
 
 ---
 
+## Open gaps — identified 2026-05-09 (REVUE-239 analysis)
+
+The following gaps were identified during a local dry-run of the full pipeline and
+a debug session on inline comment positioning. They are sequenced in dependency
+order: Gap 1 is a prerequisite for Gaps 2–4.
+
+---
+
+### Gap 1 — Two classification code paths (resolve + calculate)
+
+**Problem:**
+
+`_BasePositionAdapter.resolve()` and the new `calculate()` function in
+`position_adapter.py` implement the same diff-classification logic independently.
+Both call `_parse_diff()` directly. Neither delegates to the other.
+
+Consequences:
+- A bug fix in one path does not fix the other.
+- `Log.position` traces are only emitted by `resolve()`. `calculate()` is silent —
+  the local sandbox and fixture tests have zero visibility into why a line was
+  classified as `out_of_hunk`.
+- The two paths can silently diverge in behaviour as either is modified.
+
+**Decision:**
+
+`resolve()` must delegate to `calculate()` internally. `calculate()` becomes the
+single classification implementation. `resolve()` becomes a thin shell:
+
+```
+calculate(diff, line, file_path, rlc) → PositionResult   ← single logic path
+    ↑
+resolve(...)                                              ← logging + PlatformPosition mapping
+```
+
+`resolve()` cannot be removed in favour of routing everything through it because:
+- `resolve()` returns `PlatformPosition | None` (no `status`, no `reason`).
+- Tests and the local sandbox require `PositionResult` (typed status + reason) to
+  assert correctness. The return types are incompatible.
+
+`calculate()` cannot be removed in favour of routing through `resolve()` for the
+same reason: callers that need `PositionResult` would need to instantiate an adapter
+class and lose the structured failure information.
+
+**Work required:** REVUE-239
+
+---
+
+### Gap 2 — Agent line-number coordinate system is undefined
+
+**Problem:**
+
+Agent system prompts specify `line_number: specific line number` with no further
+guidance on coordinate system. A unified diff hunk header:
+
+```
+@@ -old_start,old_count +new_start,new_count @@
+```
+
+gives absolute new-file line numbers, but an agent counting naively from the top
+of the diff snippet would report a small relative offset (1, 2, 3 …) instead of
+the absolute new-file line number. Both behaviours are observed in practice.
+
+When `old_start` equals `new_start` (no prior insertions/deletions), relative and
+absolute line numbers coincide — the bug is silent. When they diverge (e.g.
+`@@ -10,5 +50,5 @@`), `calculate()` looks for the reported number in `plus_new`
+(which contains absolute new-file numbers) and returns `out_of_hunk` for a
+correctly identified issue.
+
+**Decision:**
+
+Agent system prompts must explicitly specify:
+
+> `line_number` must be the absolute line number in the **new version of the file**
+> — derive it from the `+new_start` value in the hunk header (`@@ … +new_start,… @@`)
+> plus the count of non-removed lines before the issue within that hunk.
+
+This is the coordinate system the GitHub, GitLab, and Bitbucket APIs all expect
+(`line`/`new_line`/`inline.to` respectively).
+
+**Verification required:** Run the pipeline against a diff where `old_start` and
+`new_start` diverge significantly and confirm all four agents report absolute
+new-file line numbers consistently.
+
+**Work required:** REVUE-239 (agent prompt update + fixture coverage for offset hunks)
+
+---
+
+### Gap 3 — PlatformPosition loses status and reason; Nova cannot reason about anchor quality
+
+**Problem:**
+
+`resolve()` maps `PositionResult → PlatformPosition | None`. The `status`
+(`anchored`, `context_line`, `removed_line`, `out_of_hunk`) and `reason` fields
+are discarded. By the time Nova synthesises a group:
+
+- All non-anchored findings look identical — `None` — regardless of whether the
+  line was a context line, a removed line, or simply absent from the diff.
+- Nova cannot distinguish a stale finding (removed line) from a misreported
+  coordinate (out of hunk) from an architectural comment with no specific anchor
+  (line 1, file-level).
+
+**Decision:**
+
+Extend `PlatformPosition` to carry `status: PositionStatus` and `reason: str`,
+populated from `PositionResult` inside `resolve()`. Platform adapters that gate on
+`status == ANCHORED` to build API params are unaffected — they already do this.
+
+With this information Nova can route by status:
+
+| Status | Nova routing |
+|--------|-------------|
+| `anchored` | Post inline |
+| `context_line` | Post inline with note that exact line is unchanged |
+| `removed_line` | Flag as potentially stale finding; post to summary |
+| `out_of_hunk` | Post to summary with `(~line N)` notation |
+
+Nova can also be given the per-file diff for cases where the anchor is uncertain,
+enabling it to reason about whether a re-classification is possible before
+routing to the summary sink.
+
+**Work required:** REVUE-239 + follow-on story
+
+---
+
+### Gap 4 — ANCHORED_INFERRED is indistinguishable from ANCHORED
+
+**Problem:**
+
+`calculate()` has two paths to `status=ANCHORED`:
+
+1. **Direct** — `reported_line` found in `plus_new` (confirmed from diff body).
+2. **Inferred** — truncation fallback: line confirmed only from the pure-addition
+   hunk header (`@@ -0,0 +N,M @@`) because the diff body was truncated before
+   reaching that line. Higher probability of being wrong.
+
+Both return `status=PositionStatus.ANCHORED` today. Nothing downstream can
+distinguish them.
+
+**Decision:**
+
+Add `ANCHORED_INFERRED` to `PositionStatus`:
+
+```python
+class PositionStatus(str, Enum):
+    ANCHORED          = "anchored"           # confirmed from diff body
+    ANCHORED_INFERRED = "anchored_inferred"  # inferred from hunk header only
+    CONTEXT_LINE      = "context_line"
+    REMOVED_LINE      = "removed_line"
+    OUT_OF_HUNK       = "out_of_hunk"
+```
+
+Nova routing for `anchored_inferred`: post inline but include a note that the
+position was inferred from a truncated diff — the developer should verify the
+line before applying any suggestion.
+
+This is deterministic and testable. It does not require Nova to inspect the diff.
+
+**Work required:** follow-on story after REVUE-239
+
+---
+
 ## References
 
 - [Comment Posting Architecture](comment-posting.md) — Consolidator, BodyBuilder, Poster contracts
 - [Consolidation Architecture](consolidation.md) — Nova batch prompt format, SynthesisStrategy
 - REVUE-236 — per-platform PositionAdapter implementation ticket
+- REVUE-239 — inline comment positioning bug; Gaps 1–2 above

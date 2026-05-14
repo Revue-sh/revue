@@ -53,7 +53,7 @@ definitions:
           - export REVUE_LOG_LEVEL=DEBUG  # Enable logging of BodyBuilder routing and platform selection
           # Provider and model are read from .revue.yml — no --provider/--model flags needed.
           # Set the API key CI variable matching your configured provider:
-          #   anthropic → ANTHROPIC_API_KEY   openai → OPENAI_API_KEY  (REVUE-148)
+          #   anthropic → REVUE_ANTHROPIC_API_KEY   openai → OPENAI_API_KEY  (REVUE-148)
           - python3 -u src/revue/cli.py review --diff /tmp/revue_pr.diff --platform bitbucket --pr-id "$BITBUCKET_PR_ID" --workspace "$BITBUCKET_WORKSPACE" --repo-slug "$BITBUCKET_REPO_SLUG" --bb-username "$BITBUCKET_USERNAME" --bb-token "$BITBUCKET_API_TOKEN" --config .revue.yml --comment-style per-issue --pr-description-file /tmp/revue_pr_description.txt --verbose
           - echo "[revue] Review complete"
         artifacts:

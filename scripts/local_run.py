@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import sys
 import tempfile
@@ -34,7 +35,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(REPO_ROOT))  # for _revue package
 
-from positioning.calculator import calculate
+from revue.comments.position_adapter import calculate, PositionStatus
 from positioning.adapters import ADAPTERS
 
 LOG_DIR = Path("/tmp/revue_local")
@@ -131,7 +132,7 @@ def _check_fixture(path: Path) -> tuple[bool, str]:
     exp_params = f.get("expected_api_params")
 
     if exp_pos is None:
-        if result.status == "anchored":
+        if result.status == PositionStatus.ANCHORED:
             return False, (
                 f"  expected: null (not anchored)\n"
                 f"  got:      anchored start_line={result.start_line} "
@@ -139,7 +140,7 @@ def _check_fixture(path: Path) -> tuple[bool, str]:
             )
         return True, f"  status={result.status}  reason={result.reason}"
 
-    if result.status != "anchored":
+    if result.status != PositionStatus.ANCHORED:
         return False, (
             f"  expected: anchored start_line={exp_pos['start_line']}\n"
             f"  got:      status={result.status}  reason={result.reason}"
@@ -218,13 +219,13 @@ def cmd_position_diff(diff_path: Path, file_path: str, line: int, platform: str)
     adapter = ADAPTERS.get(platform)
     api_params = adapter.build_params(result, {}) if adapter else None
 
-    icon = "✅" if result.status == "anchored" else "⚠️ "
+    icon = "✅" if result.status == PositionStatus.ANCHORED else "⚠️ "
     print(f"{icon} {file_path}:{line}  [{platform}]  status={result.status}")
     print(f"   reason: {result.reason}")
-    if result.status == "anchored":
+    if result.status == PositionStatus.ANCHORED:
         print(f"   start_line={result.start_line}  end_line={result.end_line}")
         print(f"   api_params: {json.dumps(api_params, indent=2)}")
-    return 0 if result.status == "anchored" else 1
+    return 0 if result.status == PositionStatus.ANCHORED else 1
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +393,11 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     user_prompt = (
         "Carefully review the code diff for bugs, security issues, performance "
         f"problems, and code quality concerns. {_REVIEW_INSTRUCTIONS}"
+        "\n\nIMPORTANT: Your ONLY task is to review the diff above and output a JSON "
+        "array of findings. Do NOT use the Agent tool. Do NOT spawn other agents. "
+        "Do NOT make any HTTP requests to api.anthropic.com or any other external API. "
+        "Produce your findings using only the diff text provided above, then write your "
+        "JSON output to the output file using the Write tool."
     )
 
     manifest = []
@@ -459,7 +465,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         ProximityAndCountGroupingStrategy,
         NovaSingleShotStrategy,
     )
-    from positioning.calculator import _HUNK_RE
+    _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
     manifest_path = jobs_dir / "manifest.json"
     if not manifest_path.exists():
@@ -582,7 +588,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         )
         api_params = adapter.build_params(pos, {}) if adapter else None
         sev = finding.severity.upper()
-        anchor = "📍" if pos.status == "anchored" else "⚠️ "
+        anchor = "📍" if pos.status == PositionStatus.ANCHORED else "⚠️ "
         agents_str = ", ".join(a.agent_name for a in finding.attribution)
 
         Log.cli.info(
@@ -601,7 +607,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
                 Log.cli.info("       %s", ln)
 
         Log.cli.info("     Position:   %s %s  — %s", anchor, pos.status, pos.reason)
-        if pos.status == "anchored":
+        if pos.status == PositionStatus.ANCHORED:
             Log.cli.info(
                 "       start_line=%d  end_line=%d", pos.start_line, pos.end_line
             )

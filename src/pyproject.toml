@@ -36,6 +36,7 @@ changelog_file = ""
 
 [tool.pytest.ini_options]
 testpaths = ["revue/tests"]
+pythonpath = ["."]
 markers = [
     "e2e: End-to-end tests that require a live browser (Playwright)",
 ]

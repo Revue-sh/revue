@@ -59,6 +59,21 @@ def _cr(text: str) -> CompletionResult:
     return CompletionResult(text=text, usage=TokenUsage())
 
 
+_CLEAN_RESPONSE = '{"status": "clean", "summary": "ok", "confidence": 1.0}'
+
+
+def _stub_both_paths(mock_client, text: str = _CLEAN_RESPONSE) -> None:
+    """REVUE-246: many orchestration tests stub ``complete`` but the
+    orchestration path actually calls ``complete_with_tools``. Pre-REVUE-246
+    the unmocked path returned MagicMock objects that parsed as ``findings=[]``
+    silently; the three-state contract now classifies that as an error and
+    fails the agent. Stubbing both paths preserves the pre-REVUE-246 effective
+    behaviour for tests that don't care about the response shape."""
+    cr = _cr(text)
+    mock_client.complete.return_value = cr
+    mock_client.complete_with_tools.return_value = cr
+
+
 def _pipeline(config: AIConfig | None = None, client=None, **li_kwargs) -> ReviewPipeline:
     """Build a pipeline with mocked license and usage tracking."""
     cfg = config or _config()
@@ -75,7 +90,7 @@ def _pipeline(config: AIConfig | None = None, client=None, **li_kwargs) -> Revie
 def test_pipeline_uses_injected_client():
     """Injected mock client is used — not the real one (DIP)."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    mock_client.complete.return_value = _cr('{"status": "clean", "summary": "ok", "confidence": 1.0}')
     config = _config()
     pipeline = ReviewPipeline(config, client=mock_client, license_info=_license_info())
 
@@ -260,7 +275,7 @@ def test_pipeline_calls_validate_license_when_none_injected(monkeypatch):
 def test_pipeline_respects_free_tier_agents_allowed():
     """Free tier: only orchestrator, code-quality-expert, consolidator allowed."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    mock_client.complete.return_value = _cr('{"status": "clean", "summary": "ok", "confidence": 1.0}')
     config = _config()
     
     free_license = _license_info(
@@ -295,7 +310,7 @@ def test_pipeline_respects_pro_tier_agents_allowed():
     3. track_usage was called
     """
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    _stub_both_paths(mock_client)
     config = _config()
 
     pro_license = _license_info(
@@ -330,7 +345,7 @@ def test_pipeline_uses_simplified_path_for_free_tier():
     directly); orchestration path does NOT call client.complete() directly.
     """
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    mock_client.complete.return_value = _cr('{"status": "clean", "summary": "ok", "confidence": 1.0}')
     config = _config()
 
     free_license = _license_info(
@@ -351,7 +366,7 @@ def test_pipeline_uses_orchestration_path_for_pro_tier(caplog):
     """Pro tier triggers orchestration path — log says 'orchestrated'."""
     import logging
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    _stub_both_paths(mock_client)
     config = _config()
 
     pro_license = _license_info(
@@ -375,7 +390,7 @@ def test_pipeline_uses_orchestration_path_for_pro_tier(caplog):
 def test_pipeline_orchestration_falls_back_when_no_agents_match():
     """If no loaded agents match agents_allowed, falls back to simplified review."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    mock_client.complete.return_value = _cr('{"status": "clean", "summary": "ok", "confidence": 1.0}')
     config = _config()
 
     # Premium tier BUT with an agent name that doesn't exist in the agents dir
@@ -398,7 +413,7 @@ def test_pipeline_logs_active_agents(caplog):
     """Pipeline logs active agents after license validation."""
     import logging
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    mock_client.complete.return_value = _cr('{"status": "clean", "summary": "ok", "confidence": 1.0}')
     config = _config()
 
     license_info = _license_info(
@@ -426,7 +441,7 @@ def test_pipeline_run_accepts_pr_description_param():
     from revue.core.pr_description_adapter import PRDescription
 
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    mock_client.complete.return_value = _cr('{"status": "clean", "summary": "ok", "confidence": 1.0}')
     pipeline = _pipeline(client=mock_client)
 
     pr = PRDescription(
@@ -445,7 +460,7 @@ def test_pipeline_run_accepts_pr_description_param():
 def test_pipeline_run_no_pr_description_unaffected():
     """pipeline.run() without pr_description behaves identically to before (AC4 backward compat)."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    mock_client.complete.return_value = _cr('{"status": "clean", "summary": "ok", "confidence": 1.0}')
     pipeline = _pipeline(client=mock_client)
 
     with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
@@ -534,7 +549,7 @@ def test_pipeline_free_tier_ignores_pr_description(capsys):
     from revue.core.pr_description_adapter import PRDescription
 
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    mock_client.complete.return_value = _cr('{"status": "clean", "summary": "ok", "confidence": 1.0}')
     free_license = _license_info(
         tier="free",
         agents_allowed=["orchestrator", "code-quality-expert", "consolidator"],
@@ -569,7 +584,12 @@ def test_pipeline_aborts_when_all_agents_fail(capsys):
     from revue.core.pipeline import AllAgentsFailedError
 
     mock_client = MagicMock()
-    mock_client.complete.side_effect = RuntimeError("Error code: 400 - credit balance too low")
+    # REVUE-241: reviewer agents now route through complete_with_tools when a
+    # ReadFileTool is wired in. The mock must fail consistently on both methods
+    # so the test simulates an API outage regardless of which path the agent takes.
+    api_error = RuntimeError("Error code: 400 - credit balance too low")
+    mock_client.complete.side_effect = api_error
+    mock_client.complete_with_tools.side_effect = api_error
 
     pro_license = _license_info(
         tier="pro",
@@ -626,7 +646,7 @@ def test_partial_failure_does_not_abort_agent_runner():
 def test_pipeline_passes_max_parallel_agents_to_runner(capsys):
     """Pipeline passes config.max_parallel_agents as max_workers to run_agents_parallel."""
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    mock_client.complete.return_value = _cr('{"status": "clean", "summary": "ok", "confidence": 1.0}')
     config = _config(max_parallel_agents=2)
 
     pro_license = _license_info(
@@ -659,7 +679,7 @@ def test_pipeline_sequential_mode_logged(caplog):
     """When max_parallel_agents=1, pipeline logs 'sequentially' not 'in parallel'."""
     import logging
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    _stub_both_paths(mock_client)
     config = _config(max_parallel_agents=1)
 
     pro_license = _license_info(
@@ -1672,7 +1692,10 @@ def test_pipeline_failure_produces_no_metrics_artefact() -> None:
     from revue.infrastructure.metrics_writer import JsonlMetricsCollector
 
     mock_client = MagicMock()
-    mock_client.complete.side_effect = RuntimeError("api error")
+    # REVUE-241: reviewer agents may route through complete_with_tools — mock both.
+    api_error = RuntimeError("api error")
+    mock_client.complete.side_effect = api_error
+    mock_client.complete_with_tools.side_effect = api_error
 
     pro_license = _license_info(
         tier="pro",
@@ -1713,7 +1736,7 @@ def test_p4_pipeline_calls_record_routing_after_orchestration():
     from revue.core.metrics import CapturingMetricsCollector
 
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    _stub_both_paths(mock_client)
     capturing = CapturingMetricsCollector()
 
     pro_license = _license_info(
@@ -1754,7 +1777,7 @@ def test_p4_pipeline_calls_record_synthesis_after_consolidation():
     from revue.core.metrics import CapturingMetricsCollector
 
     mock_client = MagicMock()
-    mock_client.complete.return_value = _cr('{"findings": []}')
+    _stub_both_paths(mock_client)
     capturing = CapturingMetricsCollector()
 
     pro_license = _license_info(
@@ -1870,3 +1893,112 @@ def test_pipeline_constructor_accepts_injected_synthesis_client_for_testability(
     # Assert — exposed via a public attribute named for the synthesis client
     assert pipeline.synthesis_client is synthesis_client
     assert pipeline.synthesis_client is not main_client
+
+
+# ---------------------------------------------------------------------------
+# Reasoning-tier invariant — REVUE-240
+# ---------------------------------------------------------------------------
+
+
+def test_vex_and_nova_share_the_reasoning_tier_client():
+    """Vex (verification) and Nova (synthesis) MUST share the same AI client.
+
+    Both are reasoning-tier agents; divergence breaks coherence (REVUE-240).
+    Identity check, not equality — guards against future refactors that
+    accidentally split the wire into two separately-built clients.
+    """
+    # Arrange
+    from pathlib import Path
+
+    main_client = MagicMock(name="main_client")
+    main_client.complete.return_value = _cr("ok")
+    synthesis_client = MagicMock(name="synthesis_client")
+    pipeline = ReviewPipeline(
+        _config(),
+        client=main_client,
+        synthesis_client=synthesis_client,
+        license_info=_license_info(),
+    )
+
+    # Act
+    consolidator, vex_post_processor = pipeline._build_consolidator(
+        nova_system_prompt=None,
+        vex_system_prompt=None,
+        diff_by_file={},
+        repo_root=Path("."),
+        summary_sink=[],
+    )
+
+    # Assert — identity, not equality
+    nova_client = consolidator._synthesis._client
+    vex_client = vex_post_processor._verifier._client
+    assert vex_client is nova_client
+    assert vex_client is synthesis_client
+
+
+def test_infrastructure_agents_survive_license_filter_when_absent_from_agents_allowed():
+    """Cleo/Nova/Vex must survive even when the license server omits them.
+
+    The license API at revue-io.fly.dev returned ``agents_allowed`` lists that
+    predate Vex. Without this guarantee, Vex was filtered out at the license
+    stage, the warning ``Vex system prompt not found in routed_agents``
+    fired in CI, and Vex ran on the degraded built-in default prompt.
+    """
+    from revue.core.cleo_router import _INFRASTRUCTURE_AGENTS, TeamSelection
+    from revue.core.pipeline import OrchestrationModules
+
+    captured: dict = {}
+
+    def _capture_route(included, allowed_agents, shared=None, config=None):
+        captured["allowed_names"] = {a.name for a in allowed_agents}
+        return (
+            TeamSelection(team="team-full-review", agents=[a.name for a in allowed_agents]),
+            list(allowed_agents),
+        )
+
+    def _fake_agent(name: str):
+        m = MagicMock()
+        m.name = name
+        m.analyse.return_value = MagicMock(success=True, findings=[], file_path="app.py")
+        return m
+
+    fake_agents = [_fake_agent(n) for n in ("maya", "cleo", "nova", "vex")]
+
+    main_client = MagicMock()
+    main_client.complete.return_value = _cr('{"status": "clean", "summary": "ok", "confidence": 1.0}')
+    pipeline = ReviewPipeline(
+        _config(),
+        client=main_client,
+        license_info=_license_info(
+            agents_allowed=[
+                "orchestrator", "code-quality-expert", "security-expert",
+                "performance-expert", "architecture-expert", "consolidator",
+                "sage", "cleo",
+            ],  # paid-tier list pre-Vex — vex is deliberately absent
+        ),
+    )
+
+    from revue.core.shared_analysis import run_shared_analysis
+    from revue.core.formatting import format_selection_message
+    from revue.core.cleo_router import assign_files_to_agents
+    from revue.core.agent_runner import run_agents_parallel, ParallelRunResult
+
+    fake_mods = OrchestrationModules(
+        load_all_agents=lambda config, client, read_file_tool=None, read_lines_tool=None, find_code_tool=None: fake_agents,
+        run_agents_parallel=run_agents_parallel,
+        run_shared_analysis=run_shared_analysis,
+        route=_capture_route,
+        format_selection_message=format_selection_message,
+        assign_files_to_agents=assign_files_to_agents,
+        ParallelRunResult=ParallelRunResult,
+    )
+
+    with patch("revue.core.pipeline.parse_diff_file", return_value=[_fc("app.py")]), \
+         patch("revue.core.pipeline.track_usage"), \
+         patch("revue.core.pipeline._import_orchestration", return_value=fake_mods):
+        pipeline.run("fake.diff")
+
+    assert _INFRASTRUCTURE_AGENTS.issubset(captured["allowed_names"]), (
+        f"Infrastructure agents must survive license filter even when omitted from "
+        f"agents_allowed. Got allowed_agents={captured['allowed_names']}"
+    )

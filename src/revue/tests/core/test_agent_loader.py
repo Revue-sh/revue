@@ -66,13 +66,30 @@ def _cr(text: str) -> CompletionResult:
     return CompletionResult(text=text, usage=TokenUsage())
 
 
+def _findings_response(items: list[dict]) -> str:
+    """Wrap a list of finding dicts in the REVUE-246 three-state envelope.
+
+    Pre-REVUE-246 tests fed bare arrays to the analyse() parser. The atomic
+    migration (AC8) rejects the array shape; tests express the same intent
+    by wrapping items in the findings branch of the three-state schema.
+    """
+    return json.dumps({"status": "findings", "findings": items})
+
+
+def _clean_response(summary: str = "ok", confidence: float = 0.9) -> str:
+    """Three-state ``clean`` response — for tests asserting on the clean path."""
+    return json.dumps({"status": "clean", "summary": summary, "confidence": confidence})
+
+
 def _mock_client(response=None) -> MagicMock:
     c = MagicMock()
-    c.complete.return_value = _cr(response or json.dumps([{
-        "file_path": "app.py", "line_number": 5,
-        "severity": "minor", "issue": "test finding",
-        "suggestion": "fix it", "confidence": 0.8,
-    }]))
+    if response is None:
+        response = _findings_response([{
+            "file_path": "app.py", "line_number": 5,
+            "severity": "minor", "issue": "test finding",
+            "suggestion": "fix it", "confidence": 0.8,
+        }])
+    c.complete.return_value = _cr(response)
     return c
 
 
@@ -180,7 +197,11 @@ def test_loaded_agent_passes_own_name_to_complete():
     defn = AgentDefinition(name="leo", display_name="Leo", role="architecture",
                            system_prompt="Review architecture.")
     mock_client = MagicMock()
-    mock_client.complete.return_value = MagicMock(text='[{"file_path":"a.py","line_number":1,"severity":"low","issue":"x","suggestion":"y","confidence":0.8,"category":"architecture"}]')
+    mock_client.complete.return_value = MagicMock(text=_findings_response([
+        {"file_path": "a.py", "line_number": 1, "severity": "low",
+         "issue": "x", "suggestion": "y", "confidence": 0.8,
+         "category": "architecture"},
+    ]))
     agent = LoadedAgent(defn, mock_client, 4096)
     agent.analyse([_fc()])
 
@@ -201,16 +222,24 @@ def test_loaded_agent_analyse_propagates_client_error():
 
 
 def test_loaded_agent_analyse_graceful_on_bad_json():
+    """REVUE-246 AC8: unparseable JSON surfaces as error(invalid_response_schema),
+    not a silent empty list — the failure must be visible so operators can fix it."""
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     agent = LoadedAgent(defn, _mock_client("not json"), 4096)
-    results = agent.analyse([_fc()])
-    assert results == []
+    verdict = agent.analyse([_fc()])
+    assert verdict.is_error
+    assert verdict.error_code == "invalid_response_schema"
+    assert verdict.findings == []
 
 
 def test_loaded_agent_analyse_strips_markdown_fences():
     """analyse() must parse findings even when LLM wraps response in ```json fences."""
-    fenced = '```json\n[{"file_path": "a.py", "line_number": 1, "severity": "high", "issue": "XSS", "suggestion": "escape", "confidence": 0.9}]\n```'
+    inner = _findings_response([
+        {"file_path": "a.py", "line_number": 1, "severity": "high",
+         "issue": "XSS", "suggestion": "escape", "confidence": 0.9},
+    ])
+    fenced = f"```json\n{inner}\n```"
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     agent = LoadedAgent(defn, _mock_client(fenced), 4096)
@@ -221,7 +250,11 @@ def test_loaded_agent_analyse_strips_markdown_fences():
 
 def test_loaded_agent_analyse_strips_plain_fences():
     """analyse() strips plain ``` fences too (no language tag)."""
-    fenced = '```\n[{"file_path": "a.py", "line_number": 1, "severity": "medium", "issue": "issue", "suggestion": "fix", "confidence": 0.8}]\n```'
+    inner = _findings_response([
+        {"file_path": "a.py", "line_number": 1, "severity": "medium",
+         "issue": "issue", "suggestion": "fix", "confidence": 0.8},
+    ])
+    fenced = f"```\n{inner}\n```"
     defn = AgentDefinition(name="maya", display_name="Maya", role="code-quality",
                            system_prompt="Review code quality.")
     agent = LoadedAgent(defn, _mock_client(fenced), 4096)
@@ -231,8 +264,10 @@ def test_loaded_agent_analyse_strips_plain_fences():
 
 def test_loaded_agent_analyse_maps_severity_minor_to_low():
     """analyse() maps legacy 'minor' severity to 'low' for cli.py compatibility."""
-    payload = json.dumps([{"file_path": "a.py", "line_number": 1, "severity": "minor",
-                           "issue": "style issue", "suggestion": "fix", "confidence": 0.5}])
+    payload = _findings_response([{
+        "file_path": "a.py", "line_number": 1, "severity": "minor",
+        "issue": "style issue", "suggestion": "fix", "confidence": 0.5,
+    }])
     defn = AgentDefinition(name="maya", display_name="Maya", role="code-quality",
                            system_prompt="Review.")
     agent = LoadedAgent(defn, _mock_client(payload), 4096)
@@ -242,8 +277,10 @@ def test_loaded_agent_analyse_maps_severity_minor_to_low():
 
 def test_loaded_agent_analyse_maps_severity_critical_to_high():
     """analyse() maps 'critical' → 'high'."""
-    payload = json.dumps([{"file_path": "a.py", "line_number": 1, "severity": "critical",
-                           "issue": "SQL injection", "suggestion": "use params", "confidence": 0.95}])
+    payload = _findings_response([{
+        "file_path": "a.py", "line_number": 1, "severity": "critical",
+        "issue": "SQL injection", "suggestion": "use params", "confidence": 0.95,
+    }])
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     agent = LoadedAgent(defn, _mock_client(payload), 4096)
@@ -253,8 +290,10 @@ def test_loaded_agent_analyse_maps_severity_critical_to_high():
 
 def test_loaded_agent_analyse_maps_severity_major_to_medium():
     """analyse() maps 'major' → 'medium'."""
-    payload = json.dumps([{"file_path": "a.py", "line_number": 1, "severity": "major",
-                           "issue": "perf issue", "suggestion": "cache", "confidence": 0.8}])
+    payload = _findings_response([{
+        "file_path": "a.py", "line_number": 1, "severity": "major",
+        "issue": "perf issue", "suggestion": "cache", "confidence": 0.8,
+    }])
     defn = AgentDefinition(name="kai", display_name="Kai", role="performance",
                            system_prompt="Find performance issues.")
     agent = LoadedAgent(defn, _mock_client(payload), 4096)
@@ -264,9 +303,11 @@ def test_loaded_agent_analyse_maps_severity_major_to_medium():
 
 def test_loaded_agent_analyse_preserves_category_from_finding():
     """analyse() uses category from finding JSON, not agent name, when present."""
-    payload = json.dumps([{"file_path": "a.py", "line_number": 1, "severity": "high",
-                           "issue": "XSS", "suggestion": "escape", "confidence": 0.9,
-                           "category": "security"}])
+    payload = _findings_response([{
+        "file_path": "a.py", "line_number": 1, "severity": "high",
+        "issue": "XSS", "suggestion": "escape", "confidence": 0.9,
+        "category": "security",
+    }])
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
     agent = LoadedAgent(defn, _mock_client(payload), 4096)
@@ -282,9 +323,9 @@ def test_loaded_agent_falls_back_to_canonical_category_not_agent_name():
     cli._CATEGORY_MAP so findings with those as category were silently dropped
     from the Quality Breakdown while still being counted in total_findings.
     """
-    payload = json.dumps([{
+    payload = _findings_response([{
         "file_path": "a.py", "line_number": 3, "severity": "medium",
-        "issue": "Dead code", "suggestion": "remove", "confidence": 0.7
+        "issue": "Dead code", "suggestion": "remove", "confidence": 0.7,
         # No "category" field — AI omitted it
     }])
     defn = AgentDefinition(name="maya", display_name="Maya", role="code quality",
@@ -297,10 +338,10 @@ def test_loaded_agent_falls_back_to_canonical_category_not_agent_name():
 def test_loaded_agent_normalises_unknown_category_to_agent_canonical():
     """When AI returns an unrecognised category string, normalise to the agent's
     canonical so the Quality Breakdown never silently drops findings."""
-    payload = json.dumps([{
+    payload = _findings_response([{
         "file_path": "a.py", "line_number": 1, "severity": "high",
         "issue": "SQL injection", "suggestion": "parameterize", "confidence": 0.9,
-        "category": "some-unexpected-value"
+        "category": "some-unexpected-value",
     }])
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find security issues.")
@@ -554,23 +595,31 @@ def test_analyse_propagates_runtime_error():
 
 
 def test_analyse_graceful_on_json_parse_error():
-    """TC2 (AC2): JSONDecodeError returns [] — graceful degradation preserved."""
+    """REVUE-246 AC8: unparseable JSON surfaces as error(invalid_response_schema).
+    Pre-REVUE-246 this returned ``[]`` silently — the whole point of the
+    three-state contract is to make that visible."""
     defn = AgentDefinition(name="maya", display_name="Maya", role="quality",
                            system_prompt="Find issues.")
     agent = LoadedAgent(defn, _mock_client("not valid json at all"), 4096)
-    results = agent.analyse([_fc()])
-    assert results == []
+    verdict = agent.analyse([_fc()])
+    assert verdict.is_error
+    assert verdict.error_code == "invalid_response_schema"
+    assert verdict.findings == []
 
 
 def test_analyse_graceful_on_empty_response():
-    """AC2: Empty string response returns [] gracefully (JSONDecodeError caught)."""
+    """REVUE-246 AC8: empty text — the 14K-line silent bail-out — surfaces as
+    error(invalid_response_schema). Operators see the failure instead of an
+    empty findings list indistinguishable from a clean review."""
     defn = AgentDefinition(name="leo", display_name="Leo", role="arch",
                            system_prompt="Find issues.")
     c = MagicMock()
     c.complete.return_value = _cr("")  # empty text — _mock_client("") is falsy and would use the default non-empty response
     agent = LoadedAgent(defn, c, 4096)
-    results = agent.analyse([_fc()])
-    assert results == []
+    verdict = agent.analyse([_fc()])
+    assert verdict.is_error
+    assert verdict.error_code == "invalid_response_schema"
+    assert verdict.findings == []
 
 
 def test_agent_runner_marks_failed_on_http_error():
@@ -917,7 +966,12 @@ def test_agent_loader_uses_1h_cache_for_diff() -> None:
 # ---------------------------------------------------------------------------
 
 def test_agent_loader_uses_result_text() -> None:
-    """LoadedAgent.analyse() extracts .text from CompletionResult — behaviour unchanged."""
+    """LoadedAgent.analyse() extracts .text from CompletionResult — behaviour unchanged.
+
+    REVUE-246: ``[]`` (legacy bare-array shape) now classifies as an error
+    verdict. The original intent of this test — that the client's
+    CompletionResult.text is consulted — still holds; the assertion just
+    checks that analyse() consumed the text rather than dropping it."""
     from revue.core.ai_client import CompletionResult, TokenUsage
     defn = AgentDefinition(name="zara", display_name="Zara", role="security",
                            system_prompt="Find issues.")
@@ -925,7 +979,8 @@ def test_agent_loader_uses_result_text() -> None:
     mock_client.complete.return_value = CompletionResult(text="[]", usage=TokenUsage())
     agent = LoadedAgent(defn, mock_client, 4096)
     result = agent.analyse([_fc()])
-    assert result == []
+    assert result.is_error
+    assert result.findings == []
 
 
 # ---------------------------------------------------------------------------
@@ -1199,3 +1254,177 @@ class TestPipelineLanguageMapping:
         )
         finding = _air_to_agent_finding(air)
         assert finding.language == "unknown"
+
+
+class TestInfrastructureAgentsRegistered:
+    """Guard: every infrastructure agent must ship with a loadable YAML.
+
+    Why: a missing or misplaced YAML silently downgrades the pipeline (Vex
+    fell back to a default prompt and produced no verdicts on PR #25).
+    The guard fails fast at unit-test time instead of in production.
+    """
+
+    def test_every_infrastructure_agent_has_non_empty_system_prompt(self) -> None:
+        from revue.core.agent_loader import load_agents_from_dir
+        from revue.core.cleo_router import _INFRASTRUCTURE_AGENTS
+
+        builtin_dir = Path(__file__).resolve().parent.parent.parent / "agents"
+        client = MagicMock()
+        loaded = load_agents_from_dir(str(builtin_dir), client, max_tokens=1024)
+        by_name = {a.name: a for a in loaded}
+
+        for name in _INFRASTRUCTURE_AGENTS:
+            assert name in by_name, (
+                f"Infrastructure agent '{name}' has no YAML in {builtin_dir}. "
+                f"The pipeline will silently fall back to a default prompt."
+            )
+            prompt = getattr(by_name[name].definition, "system_prompt", "") or ""
+            assert prompt.strip(), (
+                f"Infrastructure agent '{name}' loaded with empty system_prompt — "
+                f"check the YAML's `system_prompt:` field."
+            )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-241: Lazy full-file reads for reviewer agents (tool-use wiring)
+# ---------------------------------------------------------------------------
+
+class TestLoadedAgentToolUse:
+    """REVUE-241: Lazy full-file reads via ReadFileTool in reviewer agents."""
+
+    def test_loaded_agent_accepts_read_file_tool(self):
+        """LoadedAgent.__init__ accepts optional read_file_tool parameter."""
+        from revue.core.tools.read_file import ReadFileTool
+        defn = AgentDefinition(name="maya", display_name="Maya", role="quality",
+                               system_prompt="Review.")
+        tool = ReadFileTool(Path.cwd(), {"app.py"})
+        agent = LoadedAgent(defn, _mock_client(), 4096, read_file_tool=tool)
+        assert agent._read_file_tool is tool
+
+    def test_loaded_agent_analyse_calls_complete_with_tools_when_tool_available(self):
+        """LoadedAgent.analyse() calls complete_with_tools when tool is provided and client supports it."""
+        from revue.core.tools.read_file import ReadFileTool
+
+        defn = AgentDefinition(name="maya", display_name="Maya", role="quality",
+                               system_prompt="Review.")
+        tool = ReadFileTool(Path.cwd(), {"app.py"})
+
+        # Mock client with complete_with_tools method
+        client = MagicMock()
+        client.complete_with_tools.return_value = _cr(_findings_response([{
+            "file_path": "app.py", "line_number": 5,
+            "severity": "low", "issue": "test", "suggestion": "fix",
+            "confidence": 0.8,
+        }]))
+
+        agent = LoadedAgent(defn, client, 4096, read_file_tool=tool)
+        results = agent.analyse([_fc()])
+
+        # Assert complete_with_tools was called, not complete
+        assert client.complete_with_tools.called
+        assert not client.complete.called
+        assert len(results) == 1
+
+    def test_loaded_agent_analyse_falls_back_to_complete_without_tool(self):
+        """LoadedAgent.analyse() calls complete() when no tool is provided."""
+        defn = AgentDefinition(name="maya", display_name="Maya", role="quality",
+                               system_prompt="Review.")
+
+        client = _mock_client()
+        agent = LoadedAgent(defn, client, 4096, read_file_tool=None)
+        results = agent.analyse([_fc()])
+
+        assert client.complete.called
+        assert len(results) == 1
+
+    def test_loaded_agent_analyse_falls_back_for_legacy_client(self):
+        """LoadedAgent.analyse() calls complete() when client lacks complete_with_tools."""
+        from revue.core.tools.read_file import ReadFileTool
+
+        defn = AgentDefinition(name="maya", display_name="Maya", role="quality",
+                               system_prompt="Review.")
+        tool = ReadFileTool(Path.cwd(), {"app.py"})
+
+        # Mock client without complete_with_tools
+        client = MagicMock(spec=["complete"])
+        client.complete.return_value = _cr(_findings_response([{
+            "file_path": "app.py", "line_number": 5,
+            "severity": "low", "issue": "test", "suggestion": "fix",
+            "confidence": 0.8,
+        }]))
+
+        agent = LoadedAgent(defn, client, 4096, read_file_tool=tool)
+        results = agent.analyse([_fc()])
+
+        # Should call complete, not complete_with_tools
+        assert client.complete.called
+        assert len(results) == 1
+
+    def test_loaded_agent_passes_tools_and_handlers_to_complete_with_tools(self):
+        """LoadedAgent.analyse() passes correct tools and tool_handlers to complete_with_tools."""
+        from revue.core.tools.read_file import ReadFileTool
+
+        defn = AgentDefinition(name="zara", display_name="Zara", role="security",
+                               system_prompt="Find security issues.")
+        tool = ReadFileTool(Path.cwd(), {"auth.py"})
+
+        client = MagicMock()
+        client.complete_with_tools.return_value = _cr(_findings_response([{
+            "file_path": "auth.py", "line_number": 42,
+            "severity": "high", "issue": "SQL injection",
+            "suggestion": "parameterize", "confidence": 0.95,
+        }]))
+
+        agent = LoadedAgent(defn, client, 4096, read_file_tool=tool)
+        agent.analyse([_fc("auth.py")])
+
+        # Verify complete_with_tools was called with correct params
+        client.complete_with_tools.assert_called_once()
+        call_kwargs = client.complete_with_tools.call_args[1]
+
+        assert "tools" in call_kwargs
+        assert "tool_handlers" in call_kwargs
+        assert call_kwargs["max_iterations"] == 5
+        assert "read_file" in call_kwargs["tool_handlers"]
+
+    def test_load_agents_from_dir_threads_read_file_tool(self):
+        """load_agents_from_dir() threads read_file_tool to each LoadedAgent."""
+        from revue.core.tools.read_file import ReadFileTool
+
+        tool = ReadFileTool(Path.cwd(), {"test.py"})
+        agents = load_agents_from_dir(
+            Path(__file__).resolve().parent.parent.parent / "agents",
+            _mock_client(),
+            max_tokens=4096,
+            read_file_tool=tool,
+        )
+
+        # At least one agent should have the tool
+        agents_with_tool = [a for a in agents if a._read_file_tool is tool]
+        assert len(agents_with_tool) > 0, "No agents received the read_file_tool"
+
+    def test_load_all_agents_threads_read_file_tool(self, tmp_path):
+        """load_all_agents() threads read_file_tool to both built-in and custom agents."""
+        from revue.core.tools.read_file import ReadFileTool
+
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        custom_dir = tmp_path / "custom"
+        custom_dir.mkdir()
+
+        (builtin_dir / "test.yaml").write_text(YAML_CONTENT)
+        (custom_dir / "custom.yaml").write_text(CUSTOM_YAML)
+
+        tool = ReadFileTool(Path.cwd(), {"file.py"})
+        config = _config(custom_agents_dir=str(custom_dir))
+
+        agents = load_all_agents(
+            config,
+            _mock_client(),
+            builtin_agents_dir=str(builtin_dir),
+            read_file_tool=tool,
+        )
+
+        # Every agent should have the tool
+        for agent in agents:
+            assert agent._read_file_tool is tool

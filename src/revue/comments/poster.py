@@ -33,15 +33,18 @@ from revue.comments.models import (
     Platform,
     SummaryComment,
 )
-from revue.comments.position_adapter import get_position_adapter
+from revue.comments.position_adapter import get_position_adapter, PositionStatus
 from revue.core.diff_position_resolver import DiffPositionResolver
 from revue.core.models import PRContext
 from revue.core.vcs_adapter import DiffPosition, compute_gitlab_line_code
 
+from revue.core.display import SEVERITY_EMOJI_ALT
 from revue.core.logging_channels import Log
 
-# Matches the severity badge in existing Revue comment bodies.
-_FINDING_SEV_RE = re.compile(r"\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(HIGH|MEDIUM|LOW|INFO)\]")
+# Matches the severity badge in existing Revue comment bodies. Emoji
+# alternation derived from core.display so renaming a severity icon
+# propagates everywhere automatically.
+_FINDING_SEV_RE = re.compile(rf"\*\*(?:{SEVERITY_EMOJI_ALT})\s*\[(HIGH|MEDIUM|LOW|INFO)\]")
 # Matches the fingerprint sentinel embedded in Revue comments.
 _FP_SENTINEL_RE = re.compile(r"\[//\]: # \(revue:fp:([a-f0-9]+)\)")
 # Matches the Revue summary header
@@ -379,13 +382,14 @@ class Poster:
                 _pp = _position_adapter.resolve(
                     line, diff_content, file_path, None, replacement_line_count
                 )
-                if _pp is None:
+                if _pp["status"] != PositionStatus.ANCHORED:
                     _unanchored = True
                     Log.position.info(
-                        "[pos]   resolve → None  UNANCHORED  %s:%d → summary_sink",
-                        file_path, line,
+                        "[pos]   resolve → %s  UNANCHORED  %s:%d → summary_sink",
+                        _pp["status"].value, file_path, line,
                     )
                 else:
+                    assert _pp["start_line"] is not None and _pp["end_line"] is not None
                     replacement_line_count = _pp["end_line"] - _pp["start_line"] + 1
                     _api_params = _position_adapter.to_api_params(_pp)
                     Log.position.info(
@@ -894,7 +898,7 @@ class Poster:
 # Fingerprint strategy helpers (migrated from cli.py)
 # ---------------------------------------------------------------------------
 
-_FINDING_HEADER_RE = re.compile(r"^\*\*(?:🔴|🟡|🔵|ℹ️)\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]")
+_FINDING_HEADER_RE = re.compile(rf"^\*\*(?:{SEVERITY_EMOJI_ALT})\s*\[(?:HIGH|MEDIUM|LOW|INFO)\]")
 
 
 _CANONICAL_FP_RE = re.compile(r'^[a-f0-9]{16}$')

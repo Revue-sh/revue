@@ -20,6 +20,8 @@ Usage:
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Protocol, TYPE_CHECKING, TypedDict
 
 from revue.core.logging_channels import Log
@@ -32,10 +34,18 @@ _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 class PlatformPosition(TypedDict):
-    """Anchored inline comment position, platform-agnostic."""
+    """Inline comment position with classification result, platform-agnostic.
+
+    resolve() always returns a PlatformPosition — status replaces the old None sentinel.
+    start_line and end_line are set only when status == ANCHORED; None otherwise.
+    Nova routes by status: anchored → post inline; context_line → post with note;
+    removed_line → flag stale; out_of_hunk → post to summary.
+    """
     file_path: str
-    start_line: int   # 1-indexed new-file line number of anchor start
-    end_line: int     # == start_line for single-line; start_line + rlc - 1 for multi-line
+    status: "PositionStatus"
+    reason: str
+    start_line: "int | None"  # 1-indexed new-file line; None when not ANCHORED
+    end_line: "int | None"    # start_line + rlc - 1; None when not ANCHORED
 
 
 class PositionAdapter(Protocol):
@@ -48,7 +58,7 @@ class PositionAdapter(Protocol):
         file_path: str,
         pr_context: "PRContext | None",
         replacement_line_count: int = 1,
-    ) -> "PlatformPosition | None": ...
+    ) -> "PlatformPosition": ...
 
     def to_api_params(self, position: "PlatformPosition") -> dict: ...
 
@@ -57,17 +67,29 @@ class PositionAdapter(Protocol):
 # Diff parser (promoted from scripts/positioning/calculator.py)
 # ---------------------------------------------------------------------------
 
-def _parse_diff(
-    diff_snippet: str,
-) -> tuple[set[int], set[int], set[int], list[tuple[int, int, int, int]]]:
-    """Parse unified diff into line-number sets and hunk ranges.
+@dataclass
+class ParsedDiff:
+    """Line-number sets and hunk ranges extracted from a unified diff snippet.
 
-    Returns:
-        plus_new    — new-file line numbers of '+' (added) lines
-        context_new — new-file line numbers of ' ' (context) lines
-        minus_old   — old-file line numbers of '-' (removed) lines
-        hunks       — [(old_start, old_count, new_start, new_count), ...]
+    Coordinate systems differ by field — mixing them is a positioning bug:
+      plus_new, context_new  → absolute new-file line numbers (post-patch)
+      minus_old              → absolute old-file line numbers (pre-patch)
+
+    Attributes:
+        plus_new:    New-file line numbers of '+' (added) lines.
+        context_new: New-file line numbers of ' ' (context/unchanged) lines.
+        minus_old:   Old-file line numbers of '-' (removed) lines.
+        hunks:       Parsed hunk headers as (old_start, old_count, new_start, new_count),
+                     matching @@ -old_start,old_count +new_start,new_count @@ syntax.
     """
+    plus_new: set[int]
+    context_new: set[int]
+    minus_old: set[int]
+    hunks: list[tuple[int, int, int, int]]
+
+
+def _parse_diff(diff_snippet: str) -> ParsedDiff:
+    """Parse unified diff into line-number sets and hunk ranges."""
     plus_new: set[int] = set()
     context_new: set[int] = set()
     minus_old: set[int] = set()
@@ -102,7 +124,85 @@ def _parse_diff(
             cur_old += 1
             cur_new += 1
 
-    return plus_new, context_new, minus_old, hunks
+    return ParsedDiff(plus_new=plus_new, context_new=context_new, minus_old=minus_old, hunks=hunks)
+
+
+# ---------------------------------------------------------------------------
+# Public classification API — pure, no logging
+# ---------------------------------------------------------------------------
+
+class PositionStatus(str, Enum):
+    """Classification of a reported line within a unified diff."""
+    ANCHORED = "anchored"
+    CONTEXT_LINE = "context_line"
+    REMOVED_LINE = "removed_line"
+    OUT_OF_HUNK = "out_of_hunk"
+
+
+@dataclass
+class PositionResult:
+    """Classification result from calculate(). Pure data — no platform specifics."""
+    file_path: str
+    start_line: int | None
+    end_line: int | None
+    status: PositionStatus
+    reason: str
+
+
+def calculate(
+    diff_snippet: str,
+    reported_line: int,
+    file_path: str,
+    replacement_line_count: int = 1,
+) -> PositionResult:
+    """Classify *reported_line* within *diff_snippet*. Pure function — no side effects.
+
+    Status values:
+      anchored      — '+' line (or inferred from pure-addition hunk header)
+      context_line  — space-prefixed, unchanged line
+      removed_line  — '-' line, no longer in the new file
+      out_of_hunk   — line not present in any hunk
+    """
+    parsed = _parse_diff(diff_snippet)
+
+    if reported_line in parsed.plus_new:
+        return PositionResult(
+            file_path=file_path,
+            start_line=reported_line,
+            end_line=reported_line + replacement_line_count - 1,
+            status=PositionStatus.ANCHORED,
+            reason=f"line {reported_line} is a '+' line in the diff",
+        )
+    if reported_line in parsed.context_new:
+        return PositionResult(
+            file_path=file_path, start_line=None, end_line=None,
+            status=PositionStatus.CONTEXT_LINE,
+            reason=f"line {reported_line} is a context (' ') line — not anchorable",
+        )
+    if reported_line in parsed.minus_old:
+        return PositionResult(
+            file_path=file_path, start_line=None, end_line=None,
+            status=PositionStatus.REMOVED_LINE,
+            reason=f"line {reported_line} is a removed ('-') line in the old file",
+        )
+    for old_start, old_count, new_start, new_count in parsed.hunks:
+        if old_count == 0 and new_start <= reported_line <= new_start + new_count - 1:
+            return PositionResult(
+                file_path=file_path,
+                start_line=reported_line,
+                end_line=reported_line + replacement_line_count - 1,
+                status=PositionStatus.ANCHORED,
+                reason=(
+                    f"line {reported_line} inferred as '+' from pure-addition hunk "
+                    f"@@ -{old_start},{old_count} +{new_start},{new_count} @@ "
+                    f"(snippet truncated before this line)"
+                ),
+            )
+    return PositionResult(
+        file_path=file_path, start_line=None, end_line=None,
+        status=PositionStatus.OUT_OF_HUNK,
+        reason=f"line {reported_line} does not appear in any diff hunk",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +219,7 @@ class _BasePositionAdapter:
         file_path: str,
         pr_context: "PRContext | None",
         replacement_line_count: int = 1,
-    ) -> "PlatformPosition | None":
+    ) -> "PlatformPosition":
         adapter_name = type(self).__name__
 
         Log.position.info(
@@ -132,121 +232,47 @@ class _BasePositionAdapter:
         )
         if not diff.strip():
             Log.position.info(
-                "[pos] ✗ UNANCHORED — diff is empty; reported_line=%d has no hunk to resolve against → summary_sink",
+                "[pos] ✗ UNANCHORED — diff is empty; reported_line=%d → summary_sink",
                 reported_line,
             )
-            return None
-
-        plus_new, context_new, minus_old, hunks = _parse_diff(diff)
-
-        Log.position.info(
-            "[pos] diff parse result:  %d hunk(s)  |  %d added line(s)  |  %d context line(s)  |  %d removed line(s)",
-            len(hunks), len(plus_new), len(context_new), len(minus_old),
-        )
-
-        if not hunks:
-            Log.position.info("[pos] ✗ UNANCHORED — no hunks parsed from diff → summary_sink")
-            return None
-
-        for i, (old_start, old_count, new_start, new_count) in enumerate(hunks):
-            new_end = new_start + new_count - 1
-            old_end = old_start + old_count - 1
-            Log.position.info(
-                "[pos] hunk[%d]  @@ -%d,%d +%d,%d @@  "
-                "old-file lines %d–%d  |  new-file lines %d–%d  |  pure-addition=%s",
-                i, old_start, old_count, new_start, new_count,
-                old_start, old_end, new_start, new_end,
-                old_count == 0,
+            return PlatformPosition(
+                file_path=file_path,
+                status=PositionStatus.OUT_OF_HUNK,
+                reason="diff is empty — no hunks to resolve against",
+                start_line=None,
+                end_line=None,
             )
 
-        Log.position.info(
-            "[pos] added (+) lines   : %s",
-            sorted(plus_new) if plus_new else "(none)",
-        )
-        Log.position.info(
-            "[pos] context ( ) lines : %s",
-            sorted(context_new) if context_new else "(none)",
-        )
-        Log.position.info(
-            "[pos] removed (-) lines : %s",
-            sorted(minus_old) if minus_old else "(none)",
-        )
+        result = calculate(diff, reported_line, file_path, replacement_line_count)
 
         Log.position.info(
-            "[pos] checking reported_line=%d  →  in plus_new=%s  in context_new=%s  in minus_old=%s",
-            reported_line,
-            reported_line in plus_new,
-            reported_line in context_new,
-            reported_line in minus_old,
+            "[pos] classify → status=%s  reason=%s",
+            result.status.value, result.reason,
         )
 
-        if reported_line in plus_new:
-            end_line = reported_line + replacement_line_count - 1
+        if result.status == PositionStatus.ANCHORED:
+            assert result.start_line is not None and result.end_line is not None
             pp = PlatformPosition(
                 file_path=file_path,
-                start_line=reported_line,
-                end_line=end_line,
+                status=PositionStatus.ANCHORED,
+                reason=result.reason,
+                start_line=result.start_line,
+                end_line=result.end_line,
             )
             Log.position.info(
-                "[pos] ✓ ANCHORED — line %d is a '+' (added) line  →  start=%d  end=%d  rlc=%d",
-                reported_line, pp["start_line"], pp["end_line"], replacement_line_count,
+                "[pos] ✓ ANCHORED  →  start=%d  end=%d  rlc=%d",
+                pp["start_line"], pp["end_line"], replacement_line_count,
             )
             return pp
 
-        if reported_line in context_new:
-            Log.position.info(
-                "[pos] ✗ UNANCHORED — line %d is a context (' ') line; "
-                "it exists in the new file but was not changed → summary_sink",
-                reported_line,
-            )
-            return None
-
-        if reported_line in minus_old:
-            Log.position.info(
-                "[pos] ✗ UNANCHORED — line %d is a removed ('-') line; "
-                "it no longer exists in the new file → summary_sink",
-                reported_line,
-            )
-            return None
-
-        # Truncation fallback: pure-addition hunk (@@ -0,0 +N,M @@) — infer anchor
-        # from hunk header when the diff body was truncated before this line.
-        Log.position.info(
-            "[pos] line %d not found in any parsed set — checking truncation fallback "
-            "(pure-addition hunks only)",
-            reported_line,
+        Log.position.info("[pos] ✗ UNANCHORED → summary_sink")
+        return PlatformPosition(
+            file_path=file_path,
+            status=result.status,
+            reason=result.reason,
+            start_line=None,
+            end_line=None,
         )
-        for i, (old_start, old_count, new_start, new_count) in enumerate(hunks):
-            is_pure_add = old_count == 0
-            new_end = new_start + new_count - 1
-            in_range = new_start <= reported_line <= new_end
-            Log.position.info(
-                "[pos] truncation check hunk[%d]  pure-addition=%s  "
-                "range=[%d–%d]  reported_line=%d  in_range=%s",
-                i, is_pure_add, new_start, new_end, reported_line, in_range,
-            )
-            if is_pure_add and in_range:
-                end_line = reported_line + replacement_line_count - 1
-                pp = PlatformPosition(
-                    file_path=file_path,
-                    start_line=reported_line,
-                    end_line=end_line,
-                )
-                Log.position.info(
-                    "[pos] ✓ ANCHORED (truncation fallback) — line %d inferred from "
-                    "@@ -0,0 +%d,%d @@ header  →  start=%d  end=%d  rlc=%d",
-                    reported_line, new_start, new_count,
-                    pp["start_line"], pp["end_line"], replacement_line_count,
-                )
-                return pp
-
-        Log.position.info(
-            "[pos] ✗ UNANCHORED — line %d not in any hunk (plus/context/minus/truncation); "
-            "diff covers new-file lines %s → summary_sink",
-            reported_line,
-            sorted(plus_new | context_new) if (plus_new | context_new) else "(none)",
-        )
-        return None
 
     def to_api_params(self, position: "PlatformPosition") -> dict:  # pragma: no cover
         raise NotImplementedError
@@ -264,6 +290,7 @@ class GitHubPositionAdapter(_BasePositionAdapter):
     """
 
     def to_api_params(self, position: "PlatformPosition") -> dict:
+        assert position["start_line"] is not None and position["end_line"] is not None
         params: dict[str, Any] = {
             "path": position["file_path"],
             "side": "RIGHT",
@@ -289,6 +316,7 @@ class GitLabPositionAdapter(_BasePositionAdapter):
         self._start_sha = start_sha
 
     def to_api_params(self, position: "PlatformPosition") -> dict:
+        assert position["start_line"] is not None
         return {
             "position_type": "text",
             "base_sha": self._base_sha,

@@ -614,6 +614,117 @@ class TestSizeHeuristicAC:
         assert FULL_REVIEW_THRESHOLD_LINES == 500
 
 
+class TestInfrastructureAgentsInEveryPreset:
+    """Guard: Nova (consolidator) and Vex (verifier) must appear in every team
+    preset, both in the in-code TEAM_PRESETS table and the YAML team registry.
+
+    Why: any team preset that omits these silently disables consolidation or
+    semantic verification for that diff class — the production bug on PR #25
+    was Vex missing from every preset, so it never made it into routed_agents.
+    The `_INFRASTRUCTURE_AGENTS` frozenset declares them as plumbing; these
+    tests enforce that every preset surface agrees.
+
+    Cleo is intentionally excluded — it's the orchestrator and runs in
+    shared_analysis, not as a per-diff routed agent in every preset.
+    """
+
+    def test_nova_in_every_code_preset(self):
+        from revue.core.cleo_router import TEAM_PRESETS
+
+        for team_name, members in TEAM_PRESETS.items():
+            assert "nova" in members, f"Team preset '{team_name}' missing nova (consolidator)"
+
+    def test_vex_in_every_code_preset(self):
+        from revue.core.cleo_router import TEAM_PRESETS
+
+        for team_name, members in TEAM_PRESETS.items():
+            assert "vex" in members, f"Team preset '{team_name}' missing vex (verifier)"
+
+    def test_nova_and_vex_in_every_team_yaml(self):
+        """Every team-*.yml in src/revue/teams/ must list nova and vex.
+
+        The YAML registry overrides TEAM_PRESETS at runtime, so a code-side
+        preset that includes nova/vex but a YAML that doesn't will still
+        ship a broken team.
+        """
+        from revue.core.team_loader import load_all_teams
+
+        teams = load_all_teams()
+        assert teams, "No team YAMLs loaded — teams/ directory may be missing."
+
+        for team_id, config in teams.items():
+            assert "nova" in config.agents, (
+                f"Team YAML '{team_id}' missing nova (consolidator) — every team must consolidate."
+            )
+            assert "vex" in config.agents, (
+                f"Team YAML '{team_id}' missing vex (verifier) — every team must verify suggestions."
+            )
+
+
+class TestAgentTeamRegistrationInvariant:
+    """Bidirectional guard between agent YAMLs and team registry.
+
+    Forward: every reviewer agent name referenced in TEAM_PRESETS or a
+    team-*.yml must correspond to a loadable agent file in src/revue/agents/.
+    Catches typos and removed agents that still appear in team lists.
+
+    Reverse: every loaded non-infra agent should appear in at least one team
+    preset. Otherwise the agent is dead code — it'll never be routed.
+
+    Why: adds a fast unit-test feedback loop for the failure mode that hit
+    PR #25 (vex.yaml shipped but no preset referenced it → silent fallback).
+    """
+
+    @staticmethod
+    def _all_agent_names_in_team_registry() -> set[str]:
+        from revue.core.cleo_router import TEAM_PRESETS
+        from revue.core.team_loader import load_all_teams
+
+        names: set[str] = set()
+        for members in TEAM_PRESETS.values():
+            names.update(members)
+        for config in load_all_teams().values():
+            names.update(config.agents)
+        return names
+
+    @staticmethod
+    def _loaded_agent_names() -> set[str]:
+        from unittest.mock import MagicMock
+        from pathlib import Path
+        from revue.core.agent_loader import load_agents_from_dir
+
+        builtin_dir = Path(__file__).resolve().parent.parent.parent / "agents"
+        loaded = load_agents_from_dir(str(builtin_dir), MagicMock(), max_tokens=1024)
+        return {a.name for a in loaded}
+
+    def test_every_team_referenced_agent_has_an_agent_file(self):
+        """Forward: TEAM_PRESETS + team YAMLs ⊆ loaded agents."""
+        referenced = self._all_agent_names_in_team_registry()
+        loaded = self._loaded_agent_names()
+        missing = referenced - loaded
+        assert not missing, (
+            f"Agents referenced in team registry but no agent file loaded: {sorted(missing)}. "
+            f"Either add the YAML in src/revue/agents/ or remove the name from "
+            f"TEAM_PRESETS / src/revue/teams/*.yml."
+        )
+
+    def test_every_loaded_agent_is_referenced_in_at_least_one_team(self):
+        """Reverse: loaded agents ⊆ TEAM_PRESETS + team YAMLs.
+
+        Otherwise the agent is dead code — load_agents() finds it but the
+        router never picks it. Forces a deliberate decision when adding a
+        new agent: which team(s) does it belong to?
+        """
+        referenced = self._all_agent_names_in_team_registry()
+        loaded = self._loaded_agent_names()
+        orphans = loaded - referenced
+        assert not orphans, (
+            f"Loaded agents not referenced in any team: {sorted(orphans)}. "
+            f"Add them to TEAM_PRESETS in cleo_router.py and/or a team-*.yml "
+            f"so the router can route to them."
+        )
+
+
 # ---------------------------------------------------------------------------
 # REVUE-117: assign_files_to_agents — round-robin file distribution
 # ---------------------------------------------------------------------------

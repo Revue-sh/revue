@@ -30,7 +30,7 @@ SKILL_DIR="/Volumes/LexarSSD/Projects/revue.io/.claude/skills/dogfood"
 
 ## Prerequisites
 
-Only `ANTHROPIC_API_KEY` is required (sourced from `~/.zshenv`). No Bitbucket credentials needed.
+Only `REVUE_ANTHROPIC_API_KEY` is required (sourced from `~/.zshenv`). No Bitbucket credentials needed.
 
 ## Output format
 

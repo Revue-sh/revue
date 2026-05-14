@@ -51,3 +51,8 @@ context/ai-code-review-service
 # Bitbucket Pipelines runner (machine-specific, contains credentials)
 atlassian-bitbucket-pipelines-runner.tar.gz
 atlassian-bitbucket-pipelines-runner/
+.env.revue
+.envrc
+
+# Per-session Claude Code runtime state (sessionId/pid lock file)
+.claude/scheduled_tasks.lock

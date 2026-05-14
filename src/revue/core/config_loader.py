@@ -93,6 +93,8 @@ noise_filters:
 
 _VALID_PROVIDERS = {"anthropic", "openai", "azure", "openrouter", "custom"}
 
+MAX_DIFF_LINES_HARD_CAP = 20000
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -278,7 +280,7 @@ def validate_config(config: AIConfig) -> list[str]:
     Checks:
     - provider is one of the 5 known values
     - If provider == "azure": azure_endpoint and azure_deployment must be set
-    - max_diff_lines must be > 0 and <= 10000
+    - max_diff_lines must be > 0 and <= MAX_DIFF_LINES_HARD_CAP
     - min_confidence must be 0-100
     - temperature must be 0.0-2.0
     """
@@ -296,9 +298,10 @@ def validate_config(config: AIConfig) -> list[str]:
         if not config.azure_deployment:
             errors.append("azure_deployment is required when provider is 'azure'.")
 
-    if config.max_diff_lines <= 0 or config.max_diff_lines > 10000:
+    if config.max_diff_lines <= 0 or config.max_diff_lines > MAX_DIFF_LINES_HARD_CAP:
         errors.append(
-            f"max_diff_lines must be between 1 and 10000, got {config.max_diff_lines}."
+            f"max_diff_lines must be between 1 and {MAX_DIFF_LINES_HARD_CAP}, "
+            f"got {config.max_diff_lines}."
         )
 
     if config.min_confidence < 0 or config.min_confidence > 100:

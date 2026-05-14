@@ -940,3 +940,263 @@ def test_all_call_sites_extract_text() -> None:
     assert isinstance(result.text, str)
     assert result.text == "# Findings\nCode review comment"
     assert isinstance(result.usage, TokenUsage)
+
+
+# ---------------------------------------------------------------------------
+# REVUE-241 P1: complete_with_tools must use _with_retry on the rate-limit path
+# ---------------------------------------------------------------------------
+
+@patch("revue.core.ai_client.time.sleep", return_value=None)
+def test_anthropic_complete_with_tools_retries_on_rate_limit(mock_sleep: MagicMock) -> None:
+    """complete_with_tools must wrap the tool loop in _with_retry so a single
+    transient 429 does not collapse a reviewer agent that previously got 3 attempts."""
+    import anthropic as _anthropic
+    from revue.core.tool_loop import DEFAULT_MAX_TOOL_ITERATIONS  # noqa: F401
+
+    config = _make_config(provider="anthropic", retry_on_rate_limit=True)
+    client = AnthropicClient(config)
+
+    call_count = 0
+
+    def _fake_loop(*args: Any, **kwargs: Any) -> CompletionResult:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            mock_response = MagicMock(status_code=429)
+            mock_response.headers.get.return_value = None
+            raise _anthropic.RateLimitError(
+                message="rate limited",
+                response=mock_response,
+                body=None,
+            )
+        return CompletionResult(text="ok", usage=TokenUsage())
+
+    with patch("revue.core.tool_loop.anthropic_tool_loop", side_effect=_fake_loop):
+        result = client.complete_with_tools(
+            [{"role": "user", "content": "x"}],
+            tools=[],
+            tool_handlers={},
+        )
+
+    assert result.text == "ok"
+    assert call_count == 2, "complete_with_tools should retry on 429"
+
+
+@patch("revue.core.ai_client.time.sleep", return_value=None)
+def test_openai_complete_with_tools_retries_on_rate_limit(mock_sleep: MagicMock) -> None:
+    """OpenAIClient.complete_with_tools must also retry — same contract as Anthropic path."""
+    config = _make_config(provider="openai", retry_on_rate_limit=True)
+    client = OpenAIClient(config)
+
+    call_count = 0
+
+    def _fake_loop(*args: Any, **kwargs: Any) -> CompletionResult:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            mock_response = MagicMock(status_code=429)
+            mock_response.headers.get.return_value = None
+            raise openai.RateLimitError(
+                message="rate limited",
+                response=mock_response,
+                body=None,
+            )
+        return CompletionResult(text="ok", usage=TokenUsage())
+
+    with patch("revue.core.tool_loop.openai_tool_loop", side_effect=_fake_loop):
+        result = client.complete_with_tools(
+            [{"role": "user", "content": "x"}],
+            tools=[],
+            tool_handlers={},
+        )
+
+    assert result.text == "ok"
+    assert call_count == 2, "complete_with_tools should retry on 429"
+
+
+def test_complete_with_tools_fail_fast_when_retry_disabled() -> None:
+    """When retry_on_rate_limit=False, complete_with_tools fails fast on the first 429."""
+    import anthropic as _anthropic
+
+    config = _make_config(provider="anthropic", retry_on_rate_limit=False)
+    client = AnthropicClient(config)
+
+    def _fake_loop(*args: Any, **kwargs: Any) -> CompletionResult:
+        mock_response = MagicMock(status_code=429)
+        mock_response.headers.get.return_value = None
+        raise _anthropic.RateLimitError(
+            message="rate limited", response=mock_response, body=None,
+        )
+
+    with patch("revue.core.tool_loop.anthropic_tool_loop", side_effect=_fake_loop):
+        with pytest.raises(_anthropic.RateLimitError):
+            client.complete_with_tools(
+                [{"role": "user", "content": "x"}],
+                tools=[],
+                tool_handlers={},
+            )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-241 P2: anthropic_tool_loop must record MetricsEvent for per-agent telemetry
+# ---------------------------------------------------------------------------
+
+def test_anthropic_complete_with_tools_records_metrics_event() -> None:
+    """When AnthropicClient.complete_with_tools is invoked, a MetricsEvent must
+    be recorded — without this, reviewer-agent token usage vanishes from
+    metrics.jsonl whenever the tool-use path is active."""
+    from revue.core.metrics import CapturingMetricsCollector
+    from types import SimpleNamespace
+
+    collector = CapturingMetricsCollector()
+    config = _make_config(provider="anthropic", retry_on_rate_limit=False)
+    client = AnthropicClient(config, metrics=collector)
+
+    # Patch the underlying SDK so the loop runs end-to-end without HTTP.
+    fake_text_block = SimpleNamespace(type="text", text="done")
+    fake_usage = SimpleNamespace(
+        input_tokens=100,
+        output_tokens=20,
+        cache_creation_input_tokens=50,
+        cache_read_input_tokens=30,
+    )
+    fake_resp = SimpleNamespace(
+        content=[fake_text_block],
+        stop_reason="end_turn",
+        usage=fake_usage,
+    )
+
+    with patch.object(client._client.messages, "create", return_value=fake_resp):
+        client.complete_with_tools(
+            [{"role": "user", "content": "review"}],
+            tools=[],
+            tool_handlers={},
+            agent_name="maya",
+        )
+
+    assert len(collector.events) == 1, "MetricsEvent should be recorded for tool-use call"
+    event = collector.events[0]
+    assert event.event_type == "agent_call"
+    assert event.agent_name == "maya"
+    assert event.provider == "anthropic"
+    assert event.input_tokens == 100
+    assert event.output_tokens == 20
+    assert event.cache_creation_tokens == 50
+    assert event.cache_read_tokens == 30
+
+
+# ---------------------------------------------------------------------------
+# REVUE-241 P2 (OpenAI path): MetricsEvent recording on the tool-use path
+# ---------------------------------------------------------------------------
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openai_complete_with_tools_records_metrics_event(mock_openai_cls: MagicMock) -> None:
+    """OpenAIClient.complete_with_tools must record a MetricsEvent — without
+    this, every tool-use review on the OpenAI path leaves no trace in
+    metrics.jsonl while the Anthropic path persists usage correctly.
+
+    Asserts provider=="openai" so OpenAI / Azure / OpenRouter / Custom remain
+    distinguishable in metrics rather than collapsing under a shared tag.
+    """
+    from revue.core.metrics import CapturingMetricsCollector
+    from types import SimpleNamespace
+
+    collector = CapturingMetricsCollector()
+    config = _make_config(provider="openai", retry_on_rate_limit=False)
+    client = OpenAIClient(config, metrics=collector)
+
+    fake_resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="done", tool_calls=[]))],
+        usage=SimpleNamespace(
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=30),
+        ),
+    )
+
+    with patch.object(client._client.chat.completions, "create", return_value=fake_resp):
+        client.complete_with_tools(
+            [{"role": "user", "content": "review"}],
+            tools=[],
+            tool_handlers={},
+            agent_name="maya",
+        )
+
+    assert len(collector.events) == 1, (
+        "OpenAIClient.complete_with_tools must record a MetricsEvent — "
+        "reviewer-agent token usage vanishes from metrics.jsonl otherwise"
+    )
+    event = collector.events[0]
+    assert event.event_type == "agent_call"
+    assert event.agent_name == "maya"
+    assert event.provider == "openai"
+    assert event.input_tokens == 100
+    assert event.output_tokens == 20
+    assert event.cache_read_tokens == 30
+
+
+@patch("revue.core.ai_client.openai.OpenAI")
+def test_openrouter_complete_with_tools_records_provider_label(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """OpenRouterClient must tag MetricsEvent with provider="openrouter" so
+    cost analytics can distinguish OpenRouter spend from direct-OpenAI spend
+    on the same underlying SDK."""
+    from revue.core.metrics import CapturingMetricsCollector
+    from types import SimpleNamespace
+
+    collector = CapturingMetricsCollector()
+    config = _make_config(provider="openrouter", retry_on_rate_limit=False)
+    client = OpenRouterClient(config, metrics=collector)
+
+    fake_resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="done", tool_calls=[]))],
+        usage=SimpleNamespace(
+            prompt_tokens=42, completion_tokens=17, total_tokens=59,
+            prompt_tokens_details=None,
+        ),
+    )
+
+    with patch.object(client._client.chat.completions, "create", return_value=fake_resp):
+        client.complete_with_tools(
+            [{"role": "user", "content": "review"}],
+            tools=[],
+            tool_handlers={},
+            agent_name="leo",
+        )
+
+    assert len(collector.events) == 1
+    assert collector.events[0].provider == "openrouter"
+    assert collector.events[0].agent_name == "leo"
+
+
+def test_create_ai_client_forwards_metrics_to_openai_compatible_providers() -> None:
+    """``create_ai_client`` must forward the metrics collector to every
+    OpenAI-compatible provider — not only Anthropic. The factory is the only
+    place that knows whether the caller supplied a collector; downstream
+    classes can't bootstrap one themselves.
+    """
+    from revue.core.ai_client import (
+        _METRICS_AWARE_PROVIDERS,
+        create_ai_client,
+    )
+    from revue.core.metrics import CapturingMetricsCollector
+
+    # The frozenset is the contract — if a provider is missing here, the
+    # factory will silently drop the collector at construction time.
+    for required in ("openai", "azure", "openrouter", "custom", "anthropic"):
+        assert required in _METRICS_AWARE_PROVIDERS, (
+            f"provider {required!r} missing from _METRICS_AWARE_PROVIDERS — "
+            f"create_ai_client will drop the metrics collector for this provider"
+        )
+
+    # Spot-check: the OpenAI client actually receives the collector through
+    # the factory. Patch the SDK so no live HTTP happens during construction.
+    collector = CapturingMetricsCollector()
+    config = _make_config(provider="openai", retry_on_rate_limit=False)
+    with patch("revue.core.ai_client.openai.OpenAI"):
+        client = create_ai_client(config, metrics=collector)
+    assert client._metrics is collector, (  # type: ignore[attr-defined]
+        "create_ai_client did not forward the metrics collector to OpenAIClient"
+    )

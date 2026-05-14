@@ -10,11 +10,14 @@ import json
 from revue.comments.body_builder import BodyBuilder
 
 # ---------------------------------------------------------------------------
-# Display constants
+# Display constants — canonical maps live in core/display.py; re-exported
+# here under the legacy names so existing imports keep working.
 # ---------------------------------------------------------------------------
 
-SEVERITY_EMOJI: dict[str, str] = {"high": "🔴", "medium": "🟡", "low": "🔵", "info": "ℹ️"}
-SEVERITY_ORDER: list[str] = ["high", "medium", "low", "info"]
+from revue.core.display import (
+    SEVERITY_EMOJIS as SEVERITY_EMOJI,
+    SEVERITY_ORDER,
+)
 
 _CATEGORY_MAP: dict[str, str] = {
     "architecture": "Architecture",
@@ -28,20 +31,14 @@ _CATEGORY_CLEAN_LABELS: dict[str, str] = {
     "Performance": "No blocking issues",
     "Code Quality": "All patterns followed",
 }
-_AGENT_DISPLAY_NAMES: dict[str, str] = {
-    "leo": "Leo",
-    "zara": "Zara",
-    "kai": "Kai",
-    "maya": "Maya",
-    "nova": "Nova",
-}
-_AGENT_EMOJIS: dict[str, str] = {
-    "leo": "🏗️",
-    "zara": "🔒",
-    "kai": "⚡️",
-    "maya": "✨",
-    "nova": "🌟",
-}
+# Display maps live in ._agent_display so body_builder.py can read them
+# without creating an import cycle (summary_builder imports BodyBuilder).
+# Re-exported under the legacy underscore-prefixed names so cli.py and
+# pipeline.py keep working without churn.
+from ._agent_display import (
+    AGENT_DISPLAY_NAMES as _AGENT_DISPLAY_NAMES,
+    AGENT_EMOJIS as _AGENT_EMOJIS,
+)
 
 
 # ---------------------------------------------------------------------------

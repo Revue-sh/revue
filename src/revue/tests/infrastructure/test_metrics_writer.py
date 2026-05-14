@@ -363,3 +363,180 @@ def test_no_synthesis_data_flush_has_no_findings_key() -> None:
         data = json.loads(metrics_file.read_text().strip())
 
         assert "findings" not in data
+
+
+# ---------------------------------------------------------------------------
+# REVUE-241 — Vex verdict / failure counts in flush record
+# ---------------------------------------------------------------------------
+
+def test_vex_counts_in_flush_record() -> None:
+    """flush() includes a 'vex' key with verdict_counts and failure_counts when
+    record_vex() has been called. Surfaces Vex observability into the persisted
+    metrics so the run cost of verification (and which findings were rejected)
+    can be audited without parsing terminal output."""
+    from revue.core.metrics import MetricsEvent, VexMetricsData
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        collector.record(MetricsEvent(
+            event_type="agent_call",
+            timestamp="2026-05-12T10:00:00Z",
+            agent_name="vex",
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            input_tokens=400,
+            output_tokens=120,
+        ))
+        collector.record_vex(VexMetricsData(
+            verdict_counts={"apply": 1, "drop_cr_keep_prose": 0, "reject_finding": 7},
+            failure_counts={"no_code_replacement": 15, "read_error": 0, "verifier_exception": 0},
+        ))
+        collector.flush("run-vex")
+
+        metrics_file = Path(tmpdir) / ".revue" / "metrics.jsonl"
+        data = json.loads(metrics_file.read_text().strip())
+
+        assert "vex" in data, "flush record must contain 'vex' key"
+        vex = data["vex"]
+        assert vex["verdict_counts"] == {
+            "apply": 1, "drop_cr_keep_prose": 0, "reject_finding": 7,
+        }
+        assert vex["failure_counts"] == {
+            "no_code_replacement": 15, "read_error": 0, "verifier_exception": 0,
+        }
+
+
+def test_no_vex_data_flush_has_no_vex_key() -> None:
+    """When record_vex() is not called, flush record has no 'vex' key."""
+    from revue.core.metrics import MetricsEvent
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        collector.record(MetricsEvent(
+            event_type="agent_call",
+            timestamp="2026-05-12T10:00:00Z",
+            agent_name="maya",
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            input_tokens=100,
+            output_tokens=50,
+        ))
+        collector.flush("run-no-vex")
+
+        metrics_file = Path(tmpdir) / ".revue" / "metrics.jsonl"
+        data = json.loads(metrics_file.read_text().strip())
+
+        assert "vex" not in data
+
+
+def test_vex_cleared_after_flush() -> None:
+    """Stale Vex data must not bleed into the next run's flush record."""
+    from revue.core.metrics import MetricsEvent, VexMetricsData
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        collector.record(MetricsEvent(
+            event_type="agent_call", timestamp="2026-05-12T10:00:00Z",
+            agent_name="vex", provider="anthropic", model="claude-sonnet-4-6",
+            input_tokens=400, output_tokens=120,
+        ))
+        collector.record_vex(VexMetricsData(
+            verdict_counts={"apply": 2, "drop_cr_keep_prose": 1, "reject_finding": 3},
+            failure_counts={"no_code_replacement": 5, "read_error": 1, "verifier_exception": 0},
+        ))
+        collector.flush("run-1")
+
+        # Second run — no record_vex this time
+        collector.record(MetricsEvent(
+            event_type="agent_call", timestamp="2026-05-12T11:00:00Z",
+            agent_name="maya", provider="anthropic", model="claude-sonnet-4-6",
+            input_tokens=200, output_tokens=80,
+        ))
+        collector.flush("run-2")
+
+        metrics_file = Path(tmpdir) / ".revue" / "metrics.jsonl"
+        lines = metrics_file.read_text().strip().splitlines()
+        assert len(lines) == 2
+        run2 = json.loads(lines[1])
+        assert "vex" not in run2, "stale Vex data must clear between runs"
+
+
+# ---------------------------------------------------------------------------
+# REVUE-246 AC7 — run-level verdict + per-status counts in metrics.jsonl
+# ---------------------------------------------------------------------------
+
+
+def test_jsonl_writer_persists_run_verdict_and_counts() -> None:
+    """AC7: each run record must carry the four-state verdict plus
+    ``clean_count`` / ``finding_count`` / ``error_count`` fields, with errors
+    further split out by code so operators can grep for runs that bailed
+    on a specific failure mode."""
+    # Arrange
+    from revue.core.metrics import MetricsEvent, RunVerdictMetricsData
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        collector.record(MetricsEvent(
+            event_type="agent_call", timestamp="2026-05-13T12:00:00Z",
+            agent_name="maya", provider="anthropic", model="claude-sonnet-4-6",
+            input_tokens=100, output_tokens=20,
+        ))
+        collector.record_run_verdict(RunVerdictMetricsData(
+            verdict="degraded",
+            clean_count=1, finding_count=1, error_count=2,
+            errors_by_code={"invalid_response_schema": 2},
+        ))
+
+        # Act
+        collector.flush("run-1")
+
+        # Assert — run_verdict block is persisted with all counts intact
+        line = (Path(tmpdir) / ".revue" / "metrics.jsonl").read_text().strip()
+        record = json.loads(line)
+        assert record["run_verdict"]["verdict"] == "degraded"
+        assert record["run_verdict"]["clean_count"] == 1
+        assert record["run_verdict"]["finding_count"] == 1
+        assert record["run_verdict"]["error_count"] == 2
+        assert record["run_verdict"]["errors_by_code"] == {
+            "invalid_response_schema": 2
+        }
+
+
+def test_jsonl_writer_run_verdict_clears_between_runs() -> None:
+    """Like the existing routing / synthesis / vex fields, run_verdict is
+    one-shot — a second run that doesn't call record_run_verdict must not
+    inherit the previous run's verdict."""
+    # Arrange
+    from revue.core.metrics import MetricsEvent, RunVerdictMetricsData
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        collector.record(MetricsEvent(
+            event_type="agent_call", timestamp="2026-05-13T12:00:00Z",
+            agent_name="leo", provider="anthropic", model="claude-sonnet-4-6",
+            input_tokens=10, output_tokens=2,
+        ))
+        collector.record_run_verdict(RunVerdictMetricsData(
+            verdict="clean", clean_count=4, finding_count=0, error_count=0,
+        ))
+        collector.flush("run-1")
+
+        # Act — second run records an event but does NOT call record_run_verdict
+        collector.record(MetricsEvent(
+            event_type="agent_call", timestamp="2026-05-13T12:05:00Z",
+            agent_name="leo", provider="anthropic", model="claude-sonnet-4-6",
+            input_tokens=10, output_tokens=2,
+        ))
+        collector.flush("run-2")
+
+        # Assert — stale verdict from run-1 must not bleed into run-2
+        lines = (Path(tmpdir) / ".revue" / "metrics.jsonl").read_text().strip().splitlines()
+        run2 = json.loads(lines[1])
+        assert "run_verdict" not in run2, (
+            "stale run_verdict must clear between runs (one-shot field)"
+        )
