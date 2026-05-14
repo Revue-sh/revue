@@ -355,5 +355,6 @@ This is deterministic and testable. It does not require Nova to inspect the diff
 
 - [Comment Posting Architecture](comment-posting.md) — Consolidator, BodyBuilder, Poster contracts
 - [Consolidation Architecture](consolidation.md) — Nova batch prompt format, SynthesisStrategy
+- [Anchor Correction Authority](anchor-correction-authority.md) — Proposed ADR (2026-05-14) extending this design: Vex becomes the single owner of anchor correction (post-REVUE-247 lessons); PositionAdapter remains a pure classifier
 - REVUE-236 — per-platform PositionAdapter implementation ticket
 - REVUE-239 — inline comment positioning bug; Gaps 1–2 above
