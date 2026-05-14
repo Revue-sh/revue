@@ -287,10 +287,12 @@ def test_apply_with_corrected_anchor_repositions_line_and_rlc(tmp_path: Path) ->
         reason="Content sound, span moved",
         corrected_anchor=CorrectedAnchor(line=91, replacement_line_count=4),
     )
+    # Diff covers reported line 86 AND corrected line 91 so re-validation accepts.
+    diff = "@@ -0,0 +86,10 @@\n" + "".join(f"+line {86 + i}\n" for i in range(10))
     pp = VexVerifyPostProcessor(
         verifier=verifier,
         repo_root=tmp_path,
-        diff_by_file={file_rel: "@@ -0,0 +1,1 @@\n+placeholder\n"},
+        diff_by_file={file_rel: diff},
     )
 
     # Act
@@ -342,11 +344,11 @@ def test_counters_track_each_verdict_type_and_each_failure_mode(tmp_path: Path) 
     assert pp.verdict_counts == {"apply": 1, "drop_cr_keep_prose": 1, "reject_finding": 1}
     assert pp.failure_counts["read_error"] == 1
     assert pp.failure_counts["no_code_replacement"] == 0
-    assert pp.failure_counts["verifier_exception"] == 0
+    assert pp.failure_counts["other"] == 0
 
 
 def test_counters_track_verifier_exception_under_fail_open(tmp_path: Path) -> None:
-    """When the verifier itself raises (rate limit, network), bump verifier_exception and keep finding."""
+    """When the verifier raises a generic exception (no special class), bump 'other' and keep finding."""
     # Arrange
     file_rel = "src/example.py"
     (tmp_path / file_rel).parent.mkdir(parents=True)
@@ -364,9 +366,9 @@ def test_counters_track_verifier_exception_under_fail_open(tmp_path: Path) -> No
     # Act
     out = pp.process(finding)
 
-    # Assert — finding preserved unchanged AND counter incremented
+    # Assert — finding preserved unchanged AND 'other' counter incremented
     assert out is finding
-    assert pp.failure_counts["verifier_exception"] == 1
+    assert pp.failure_counts["other"] == 1
     assert pp.verdict_counts == {"apply": 0, "drop_cr_keep_prose": 0, "reject_finding": 0}
 
 
@@ -414,6 +416,817 @@ def test_process_all_runs_findings_in_parallel_up_to_max_workers(tmp_path: Path)
     )
 
 
+# ---------------------------------------------------------------------------
+# REVUE-248 — D1 INFO log [vex-anchor-fix] when correction lands
+# ---------------------------------------------------------------------------
+
+
+def test_vex_anchor_fix_info_log_fires_when_correction_changes_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a corrected anchor is accepted and the posted line actually moves,
+    emit an INFO log line on the nova channel so dogfood greps surface it.
+    """
+    # Arrange
+    captured_infos = _capture_nova_infos(monkeypatch)
+    from revue.comments._verifier import CorrectedAnchor, VexVerdict
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    diff = "@@ -1,2 +1,5 @@\n line 1\n line 2\n+line 3\n+line 4\n+line 5\n"
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=4,
+        code_replacement=["x"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="moved",
+        corrected_anchor=CorrectedAnchor(line=5, replacement_line_count=1),
+    )
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: diff},
+    )
+
+    # Act
+    pp.process(finding)
+
+    # Assert
+    assert any(
+        "[vex-anchor-fix]" in m and "4" in m and "5" in m for m in captured_infos
+    ), f"expected [vex-anchor-fix] info log, captured: {captured_infos}"
+
+
+def test_vex_anchor_fix_does_not_fire_when_line_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pure apply (no correction) → no [vex-anchor-fix] log."""
+    # Arrange
+    captured_infos = _capture_nova_infos(monkeypatch)
+    from revue.comments._verifier import VexVerdict
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=4,
+        code_replacement=["x"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(verdict="apply", reason="safe")
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: "@@ -1,1 +1,2 @@\n line 1\n+line 2\n"},
+    )
+
+    # Act
+    pp.process(finding)
+
+    # Assert — no anchor-fix log
+    assert not any("[vex-anchor-fix]" in m for m in captured_infos)
+
+
+# ---------------------------------------------------------------------------
+# REVUE-248 — D1.e Feature flag REVUE_VEX_CORRECTION_ENABLED
+# ---------------------------------------------------------------------------
+
+
+def test_feature_flag_default_true_applies_corrections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unset REVUE_VEX_CORRECTION_ENABLED → default true → correction is applied."""
+    # Arrange
+    monkeypatch.delenv("REVUE_VEX_CORRECTION_ENABLED", raising=False)
+    from revue.comments._verifier import CorrectedAnchor, VexVerdict
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    diff = "@@ -1,2 +1,5 @@\n line 1\n line 2\n+line 3\n+line 4\n+line 5\n"
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=4,
+        code_replacement=["x"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="moved",
+        corrected_anchor=CorrectedAnchor(line=5, replacement_line_count=1),
+    )
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: diff},
+    )
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert — correction applied (default behaviour)
+    assert out is not None
+    assert out.line_number == 5
+
+
+def test_feature_flag_false_short_circuits_correction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REVUE_VEX_CORRECTION_ENABLED=false → corrected_anchor is silently discarded.
+
+    Behaviour must be bit-identical to pre-D1: the finding line_number stays at
+    the agent's reported line; no [vex-correction-*] log lines fire.
+    """
+    # Arrange
+    monkeypatch.setenv("REVUE_VEX_CORRECTION_ENABLED", "false")
+    captured_warnings = _capture_nova_warnings(monkeypatch)
+    captured_infos = _capture_nova_infos(monkeypatch)
+    from revue.comments._verifier import CorrectedAnchor, VexVerdict
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    diff = "@@ -1,2 +1,5 @@\n line 1\n line 2\n+line 3\n+line 4\n+line 5\n"
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=4,
+        code_replacement=["x"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="moved",
+        corrected_anchor=CorrectedAnchor(line=5, replacement_line_count=1),
+    )
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: diff},
+    )
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert — correction ignored
+    assert out is not None
+    assert out.line_number == 4
+    # No correction-channel log lines should fire
+    correction_logs = [
+        m
+        for m in captured_warnings + captured_infos
+        if "[vex-correction-" in m or "[vex-anchor-" in m
+    ]
+    assert correction_logs == []
+
+
+def test_feature_flag_value_is_read_once_at_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Changing the env var after __init__ must not affect already-constructed post-processors.
+
+    Reading the flag per-finding would be both expensive and surprising — a
+    deploy-time toggle should be deploy-time, not per-call.
+    """
+    # Arrange — construct with flag=false
+    monkeypatch.setenv("REVUE_VEX_CORRECTION_ENABLED", "false")
+    from revue.comments._verifier import CorrectedAnchor, VexVerdict
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    diff = "@@ -1,2 +1,5 @@\n line 1\n line 2\n+line 3\n+line 4\n+line 5\n"
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="moved",
+        corrected_anchor=CorrectedAnchor(line=5, replacement_line_count=1),
+    )
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: diff},
+    )
+
+    # Now flip the flag — should NOT affect pp
+    monkeypatch.setenv("REVUE_VEX_CORRECTION_ENABLED", "true")
+    finding = _consolidated(file_path=file_rel, line_number=4, code_replacement=["x"])
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert — still using the flag from __init__ (false)
+    assert out is not None
+    assert out.line_number == 4
+
+
+# ---------------------------------------------------------------------------
+# REVUE-248 — D1.d Vex-failure classification (extends failure_counts)
+# ---------------------------------------------------------------------------
+
+
+class _FakeHTTPError(Exception):
+    """Stand-in for an SDK HTTPStatusError that exposes ``status_code``."""
+
+    def __init__(self, status_code: int, message: str = "http") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def test_vex_failure_classified_as_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TimeoutError from verifier → failure_counts['timeout'] += 1 and WARN logs error_type=timeout."""
+    # Arrange
+    captured_warnings = _capture_nova_warnings(monkeypatch)
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    verifier = MagicMock()
+    verifier.verify.side_effect = TimeoutError("connection timed out")
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: "@@ -0,0 +1,1 @@\n+placeholder\n"},
+    )
+    finding = _consolidated(file_path=file_rel, line_number=1, code_replacement=["x"])
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert — finding preserved, counter and log routed
+    assert out is finding
+    assert pp.failure_counts["timeout"] == 1
+    assert any("[vex-failure]" in w and "error_type=timeout" in w for w in captured_warnings)
+
+
+def test_vex_failure_classified_as_malformed_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """json.JSONDecodeError from verifier → failure_counts['malformed_json'] += 1."""
+    import json as _json
+
+    captured_warnings = _capture_nova_warnings(monkeypatch)
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    verifier = MagicMock()
+    verifier.verify.side_effect = _json.JSONDecodeError("expected value", "doc", 0)
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: "@@ -0,0 +1,1 @@\n+placeholder\n"},
+    )
+    finding = _consolidated(file_path=file_rel, line_number=1, code_replacement=["x"])
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert
+    assert out is finding
+    assert pp.failure_counts["malformed_json"] == 1
+    assert any("error_type=malformed_json" in w for w in captured_warnings)
+
+
+def test_vex_failure_classified_as_http_5xx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exception with status_code in 500–599 → failure_counts['http_5xx'] += 1."""
+    captured_warnings = _capture_nova_warnings(monkeypatch)
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    verifier = MagicMock()
+    verifier.verify.side_effect = _FakeHTTPError(status_code=503, message="service unavailable")
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: "@@ -0,0 +1,1 @@\n+placeholder\n"},
+    )
+    finding = _consolidated(file_path=file_rel, line_number=1, code_replacement=["x"])
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert
+    assert out is finding
+    assert pp.failure_counts["http_5xx"] == 1
+    assert any("error_type=http_5xx" in w for w in captured_warnings)
+
+
+def test_vex_failure_classified_as_http_4xx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exception with status_code in 400–499 → failure_counts['http_4xx'] += 1."""
+    captured_warnings = _capture_nova_warnings(monkeypatch)
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    verifier = MagicMock()
+    verifier.verify.side_effect = _FakeHTTPError(status_code=429, message="rate limited")
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: "@@ -0,0 +1,1 @@\n+placeholder\n"},
+    )
+    finding = _consolidated(file_path=file_rel, line_number=1, code_replacement=["x"])
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert
+    assert out is finding
+    assert pp.failure_counts["http_4xx"] == 1
+    assert any("error_type=http_4xx" in w for w in captured_warnings)
+
+
+def test_vex_failure_message_truncated_to_120_chars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WARN log truncates very long exception messages so log lines stay scannable."""
+    captured_warnings = _capture_nova_warnings(monkeypatch)
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    long_msg = "x" * 500
+    verifier = MagicMock()
+    verifier.verify.side_effect = RuntimeError(long_msg)
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: "@@ -0,0 +1,1 @@\n+placeholder\n"},
+    )
+    finding = _consolidated(file_path=file_rel, line_number=1, code_replacement=["x"])
+
+    # Act
+    pp.process(finding)
+
+    # Assert — at least one warning contains a truncated message
+    vex_failures = [w for w in captured_warnings if "[vex-failure]" in w]
+    assert vex_failures, "expected a [vex-failure] WARN log"
+    # Truncation cap is 120 chars on the *exception message*, not on the whole log line
+    # so the substring "xxx...xxx" (the message portion) must be ≤ 120 'x' chars.
+    for w in vex_failures:
+        # Count xs after "message="
+        if "message=" in w:
+            tail = w.split("message=", 1)[1]
+            x_run = tail.lstrip("x")
+            x_count = len(tail) - len(x_run)
+            assert x_count <= 120, f"expected ≤120 'x' chars after message=, got {x_count}"
+
+
+# ---------------------------------------------------------------------------
+# REVUE-248 — D1.b composition protocol (PositionAdapter re-validation)
+# ---------------------------------------------------------------------------
+
+
+def _capture_nova_warnings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Capture Log.nova.warning messages dispatched during the test.
+
+    Returns a list that the test code reads after the act phase. Uses the
+    formatted % args to mirror what production logs would show.
+    """
+    from revue.comments import _verifier as verifier_mod
+
+    captured: list[str] = []
+    monkeypatch.setattr(
+        verifier_mod.Log.nova,
+        "warning",
+        lambda msg, *args, **kwargs: captured.append(msg % args if args else msg),
+    )
+    return captured
+
+
+def _capture_nova_infos(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Capture Log.nova.info messages dispatched during the test."""
+    from revue.comments import _verifier as verifier_mod
+
+    captured: list[str] = []
+    monkeypatch.setattr(
+        verifier_mod.Log.nova,
+        "info",
+        lambda msg, *args, **kwargs: captured.append(msg % args if args else msg),
+    )
+    return captured
+
+
+def test_correction_accepted_when_revalidation_status_is_anchored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Corrected line lands on a '+' line → re-validation passes → apply correction.
+
+    ADR §D1.b: the corrected line goes through the same strict binary classifier
+    that PositionAdapter uses so Vex's correction can't end up on a context or
+    removed line.
+    """
+    # Arrange
+    from revue.comments._verifier import CorrectedAnchor, VexVerdict
+
+    captured_infos = _capture_nova_infos(monkeypatch)
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    # Diff covers lines 4 and 5 as '+' lines; corrected anchor → 5
+    diff = "@@ -1,2 +1,5 @@\n line 1\n line 2\n+line 3\n+line 4\n+line 5\n"
+
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=4,  # reported on blank line
+        code_replacement=["fixed value"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="anchor moved one line down",
+        corrected_anchor=CorrectedAnchor(line=5, replacement_line_count=1),
+    )
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: diff},
+    )
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert — correction applied; success INFO logged
+    assert out is not None
+    assert out.line_number == 5
+    assert any("[vex-correction-revalidated]" in m and "ANCHORED" in m for m in captured_infos)
+
+
+def test_correction_rejected_when_revalidation_status_is_context_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Corrected line lands on a context (' ') line → re-validation rejects → keep reported line."""
+    # Arrange
+    from revue.comments._verifier import CorrectedAnchor, VexVerdict
+
+    captured_warnings = _capture_nova_warnings(monkeypatch)
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    # Diff: line 5 is a context line, line 4 is a '+' line
+    diff = "@@ -3,3 +3,4 @@\n line 3\n+line 4\n line 5\n line 6\n"
+
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=4,
+        code_replacement=["x = 1"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="moved",
+        corrected_anchor=CorrectedAnchor(line=5, replacement_line_count=1),
+    )
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: diff},
+    )
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert — correction reverted, original reported line preserved
+    assert out is not None
+    assert out.line_number == 4
+    assert any(
+        "[vex-correction-rejected]" in w and "CONTEXT_LINE" in w
+        for w in captured_warnings
+    )
+
+
+def test_correction_rejected_when_revalidation_status_is_out_of_hunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Corrected line outside any hunk → revert to reported line."""
+    # Arrange
+    from revue.comments._verifier import CorrectedAnchor, VexVerdict
+
+    captured_warnings = _capture_nova_warnings(monkeypatch)
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    # Diff only covers line 4; corrected anchor at line 8 is outside.
+    diff = "@@ -3,1 +3,2 @@\n line 3\n+line 4\n"
+
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=4,
+        code_replacement=["x = 1"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="moved",
+        corrected_anchor=CorrectedAnchor(line=8, replacement_line_count=1),
+    )
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: diff},
+    )
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert
+    assert out is not None
+    assert out.line_number == 4
+    assert any(
+        "[vex-correction-rejected]" in w and "OUT_OF_HUNK" in w
+        for w in captured_warnings
+    )
+
+
+def test_correction_rejected_when_diff_for_file_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If diff_by_file has no entry for the finding's file, fail CLOSED:
+    revert to the agent's reported line + WARN with status=NO_DIFF.
+
+    Pre-patch behaviour was fail-open (silently accept). The composition gate
+    must not be bypassed by a missing-diff edge case — that defeats AC3.
+    """
+    # Arrange
+    from revue.comments._verifier import CorrectedAnchor, VexVerdict
+
+    captured_warnings = _capture_nova_warnings(monkeypatch)
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=4,
+        code_replacement=["x"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="moved",
+        corrected_anchor=CorrectedAnchor(line=5, replacement_line_count=1),
+    )
+    # diff_by_file maps the *file* but with an empty/whitespace diff →
+    # _diff_for returns None → composition gate must reject.
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: "   \n"},  # whitespace-only → no diff
+    )
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert
+    assert out is not None
+    assert out.line_number == 4
+    assert any(
+        "[vex-correction-rejected]" in w and "NO_DIFF" in w for w in captured_warnings
+    )
+
+
+def test_correction_rejected_when_corrected_line_strictly_in_minus_old(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Corrected line falls only in minus_old (no matching plus_new) → REMOVED_LINE → revert."""
+    # Arrange
+    from revue.comments._verifier import CorrectedAnchor, VexVerdict
+
+    captured_warnings = _capture_nova_warnings(monkeypatch)
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    # Diff: lines 5,6,7 in the old file are removed; no '+' lines around them.
+    # corrected_anchor.line=6 → minus_old contains 6 → REMOVED_LINE.
+    diff = "@@ -5,3 +5,0 @@\n-old 5\n-old 6\n-old 7\n"
+
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=5,
+        code_replacement=["x"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="moved",
+        corrected_anchor=CorrectedAnchor(line=6, replacement_line_count=1),
+    )
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: diff},
+    )
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert
+    assert out is not None
+    assert out.line_number == 5
+    assert any(
+        "[vex-correction-rejected]" in w and "REMOVED_LINE" in w
+        for w in captured_warnings
+    )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-248 — D1.a hallucination-clamp window (K=10)
+# ---------------------------------------------------------------------------
+
+
+def test_correction_within_clamp_window_is_applied(tmp_path: Path) -> None:
+    """Correction delta ≤ VEX_CORRECTION_MAX_DELTA is accepted (subject to AC3 re-validation).
+
+    Tests the lower-bound boundary of the clamp: |corrected - reported| == K is
+    allowed; only delta > K is rejected.
+    """
+    # Arrange
+    from revue.comments._verifier import (
+        CorrectedAnchor,
+        VEX_CORRECTION_MAX_DELTA,
+        VexVerdict,
+    )
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    reported_line = 10
+    corrected_line = reported_line + VEX_CORRECTION_MAX_DELTA  # boundary
+
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=reported_line,
+        code_replacement=["x = 1"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="ok",
+        corrected_anchor=CorrectedAnchor(line=corrected_line, replacement_line_count=1),
+    )
+
+    # Diff covers the corrected line so re-validation passes.
+    diff = f"@@ -0,0 +{reported_line},{VEX_CORRECTION_MAX_DELTA + 1} @@\n" + "".join(
+        f"+line {reported_line + i}\n" for i in range(VEX_CORRECTION_MAX_DELTA + 1)
+    )
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: diff},
+    )
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert
+    assert out is not None
+    assert out.line_number == corrected_line
+
+
+def test_correction_beyond_clamp_window_is_rejected_and_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Correction delta > K is dropped — the finding keeps its reported line.
+
+    ADR §D1.a: a hallucinated correction must not be able to place a comment
+    at an arbitrary wrong line. The clamp is the upper bound on Vex's blast
+    radius.
+    """
+    # Arrange
+    from revue.comments import _verifier as verifier_mod
+    from revue.comments._verifier import (
+        CorrectedAnchor,
+        VEX_CORRECTION_MAX_DELTA,
+        VexVerdict,
+    )
+
+    captured_warnings: list[str] = []
+    monkeypatch.setattr(
+        verifier_mod.Log.nova,
+        "warning",
+        lambda msg, *args, **kwargs: captured_warnings.append(msg % args if args else msg),
+    )
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    reported_line = 10
+    out_of_bounds_line = reported_line + VEX_CORRECTION_MAX_DELTA + 1
+
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=reported_line,
+        code_replacement=["x = 1"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="ok",
+        corrected_anchor=CorrectedAnchor(line=out_of_bounds_line, replacement_line_count=1),
+    )
+    # Diff covers only the original reported line; Vex's hallucinated line is
+    # arbitrarily far away. The clamp should reject before re-validation runs.
+    diff = "@@ -0,0 +10,1 @@\n+line 10\n"
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: diff},
+    )
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert — finding posts at the original line, not at the hallucination
+    assert out is not None
+    assert out.line_number == reported_line
+    # WARN log fired with the documented prefix
+    assert any(
+        "[vex-anchor-out-of-bounds]" in w and "window_exceeded" in w
+        for w in captured_warnings
+    )
+
+
+def test_correction_below_clamp_window_is_rejected(tmp_path: Path) -> None:
+    """Clamp is symmetric: corrections delta below -K are also rejected."""
+    # Arrange
+    from revue.comments._verifier import (
+        CorrectedAnchor,
+        VEX_CORRECTION_MAX_DELTA,
+        VexVerdict,
+    )
+
+    file_rel = "src/example.py"
+    (tmp_path / file_rel).parent.mkdir(parents=True)
+    (tmp_path / file_rel).write_text("placeholder\n")
+
+    reported_line = 50
+    out_of_bounds_line = reported_line - VEX_CORRECTION_MAX_DELTA - 1
+
+    finding = _consolidated(
+        file_path=file_rel,
+        line_number=reported_line,
+        code_replacement=["x = 1"],
+        replacement_line_count=1,
+    )
+    verifier = MagicMock()
+    verifier.verify.return_value = VexVerdict(
+        verdict="apply",
+        reason="ok",
+        corrected_anchor=CorrectedAnchor(line=out_of_bounds_line, replacement_line_count=1),
+    )
+    pp = VexVerifyPostProcessor(
+        verifier=verifier,
+        repo_root=tmp_path,
+        diff_by_file={file_rel: "@@ -0,0 +50,1 @@\n+line 50\n"},
+    )
+
+    # Act
+    out = pp.process(finding)
+
+    # Assert — finding posts at original line; correction discarded
+    assert out is not None
+    assert out.line_number == reported_line
+
+
 def test_drop_cr_keep_prose_with_corrected_anchor_repositions_prose_to_correct_line(
     tmp_path: Path,
 ) -> None:
@@ -436,10 +1249,12 @@ def test_drop_cr_keep_prose_with_corrected_anchor_repositions_prose_to_correct_l
         reason="Wrong anchor; the real concern is on line 91",
         corrected_anchor=CorrectedAnchor(line=91, replacement_line_count=1),
     )
+    # Diff covers both reported (86) and corrected (91) so re-validation accepts.
+    diff = "@@ -0,0 +86,10 @@\n" + "".join(f"+line {86 + i}\n" for i in range(10))
     pp = VexVerifyPostProcessor(
         verifier=verifier,
         repo_root=tmp_path,
-        diff_by_file={file_rel: "@@ -0,0 +1,1 @@\n+placeholder\n"},
+        diff_by_file={file_rel: diff},
     )
 
     # Act

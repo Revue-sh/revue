@@ -65,7 +65,8 @@ class VexMetricsData:
     """Vex verification observability — verdict and failure tallies for one run.
 
     verdict_counts keys: apply, drop_cr_keep_prose, reject_finding.
-    failure_counts keys: no_code_replacement, read_error, verifier_exception.
+    failure_counts keys: no_code_replacement, read_error, and the REVUE-248
+    error-type buckets (timeout, malformed_json, http_5xx, http_4xx, other).
     Persisted alongside agent token usage so the cost and outcome of semantic
     verification can be audited without parsing terminal output (REVUE-241).
     """

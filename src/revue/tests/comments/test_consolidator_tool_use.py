@@ -313,8 +313,18 @@ def _security_finding(*, agent: str, line: int, confidence: float) -> AgentFindi
     )
 
 
-def test_nova_chosen_line_overrides_group_first_line_when_present(tmp_path: Path) -> None:
-    """Reproducer for PR #24 Finding 1: Nova's `line` must win over group.line_range[0]."""
+def test_nova_chosen_line_overridden_by_majority_vote_reconciler(tmp_path: Path) -> None:
+    """REVUE-248 §D3: when all agents agree on a line, the deterministic majority
+    overrides Nova — even if Nova reads the file and proposes a different line.
+
+    Architecture shift from REVUE-240/241: Nova used to act as both consolidator
+    AND anchor-corrector. Under the ADR (anchor-correction-authority.md), anchor
+    correction is Vex's job (D1). Nova consolidates; the majority-vote rule (D3)
+    enforces the per-agent agreement signal. When agents disagree, Vex moves
+    the comment to the right line via its corrected_anchor contract.
+
+    Original PR #24 Finding 1 fix is preserved — just by a different layer.
+    """
     # Arrange — three agents all reported line 86 (the wrong anchor — inside an f-string)
     findings = [
         _security_finding(agent="maya", line=86, confidence=0.85),
@@ -328,7 +338,7 @@ def test_nova_chosen_line_overrides_group_first_line_when_present(tmp_path: Path
         group_type="same_line",
     )
 
-    # Nova reads the file and corrects the anchor to line 91 (where resolve() actually lives)
+    # Nova reads the file and proposes line 91 — but D3 will override.
     import json
     nova_json = json.dumps([{
         "file": "src/revue/core/tools/read_file.py",
@@ -356,10 +366,10 @@ def test_nova_chosen_line_overrides_group_first_line_when_present(tmp_path: Path
     # Act
     result = strategy.synthesise(group)
 
-    # Assert — Nova's anchor (91), not the group's (86), is on the ConsolidatedFinding
-    assert result.line_number == 91, (
-        f"Expected Nova's chosen line (91) to win; got {result.line_number}. "
-        f"Consolidator is still overriding Nova's anchor with group.line_range[0]."
+    # Assert — D3 majority-vote anchors at 86 (all agents agree). The eventual
+    # move to line 91 is now Vex's responsibility via corrected_anchor (D1).
+    assert result.line_number == 86, (
+        f"Expected D3 majority-vote line (86) to win; got {result.line_number}."
     )
     assert result.replacement_line_count == 4
     # code_replacement preserved verbatim — no deterministic validator drops it

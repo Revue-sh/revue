@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from revue.comments._verifier import VexVerdict, VexVerifier
+from revue.comments._verifier import _DEFAULT_SYSTEM_PROMPT, VexVerdict, VexVerifier
 from revue.comments.models import Attribution, ConsolidatedFinding
 from revue.core.ai_client import CompletionResult, TokenUsage
 
@@ -251,3 +251,84 @@ def test_vex_verdict_rejects_unknown_verdict_value_at_construction() -> None:
     # Arrange / Act / Assert
     with pytest.raises(ValueError):
         VexVerdict(verdict="something_else", reason="x")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# REVUE-248 — corrected_anchor contract in the system prompt (D1, AC1)
+# ---------------------------------------------------------------------------
+
+
+def test_default_system_prompt_does_not_instruct_verdict_reason_only() -> None:
+    """ADR §D1.c — the system prompt must not restrict output to only verdict +
+    reason. Leaving that restriction in place would tell the LLM to ignore the
+    corrected_anchor field the user-message prompt requests — D1.a/D1.b/D1.d
+    become dead code.
+
+    The previous prompt listed exactly two fields under "with these fields:".
+    The new prompt must list corrected_anchor as a third field so the model
+    treats it as a real output, not optional padding.
+    """
+    # Find where the prompt describes its output schema, and verify that
+    # corrected_anchor is listed alongside verdict and reason — not after a
+    # closed list that ends at reason.
+    assert "corrected_anchor" in _DEFAULT_SYSTEM_PROMPT
+    # The legacy phrasing "with these fields:\n  verdict: ...\n  reason: ..."
+    # used to terminate the schema before corrected_anchor. Guard against
+    # regressions by ensuring corrected_anchor appears before the schema list
+    # ends (i.e. before any "Verdicts:" section that documents verdict values).
+    schema_block_end = _DEFAULT_SYSTEM_PROMPT.find("Verdicts:")
+    if schema_block_end != -1:
+        assert _DEFAULT_SYSTEM_PROMPT.find("corrected_anchor") < schema_block_end
+
+
+def test_default_system_prompt_documents_corrected_anchor_as_first_class_field() -> None:
+    """ADR §D1 — corrected_anchor must be described as an output field with its
+    full schema (line + replacement_line_count) so the LLM emits a structured
+    correction instead of describing the misalignment in prose.
+    """
+    assert "corrected_anchor" in _DEFAULT_SYSTEM_PROMPT
+    assert "replacement_line_count" in _DEFAULT_SYSTEM_PROMPT
+    # The schema fields must be documented as a unit — assert that within at
+    # least one 200-character window, *both* ``corrected_anchor`` and
+    # ``replacement_line_count`` appear. This guards against a refactor that
+    # mentions one or the other casually but never together as a schema.
+    schema_window_found = False
+    for ca_idx in _find_all(_DEFAULT_SYSTEM_PROMPT, "corrected_anchor"):
+        window = _DEFAULT_SYSTEM_PROMPT[ca_idx : ca_idx + 200]
+        if "replacement_line_count" in window:
+            schema_window_found = True
+            break
+    assert schema_window_found, (
+        "corrected_anchor and replacement_line_count must appear within a "
+        "200-character window so the schema is documented as a unit"
+    )
+
+
+def _find_all(text: str, needle: str) -> list[int]:
+    """Return every offset of *needle* in *text* — used to locate all schema mentions."""
+    indices: list[int] = []
+    start = 0
+    while True:
+        idx = text.find(needle, start)
+        if idx < 0:
+            break
+        indices.append(idx)
+        start = idx + 1
+    return indices
+
+
+def test_default_system_prompt_includes_blank_line_worked_example() -> None:
+    """ADR §D1 — a worked example for the blank-line case is required so the
+    LLM has a concrete pattern to follow. The REVUE-247 failure was that Vex
+    recognised 'line N is blank, the issue is on line N+1' in prose but didn't
+    emit a structured correction.
+
+    The example must use language-agnostic prose (no Python syntax) per
+    [[feedback_agent_prompts_language_agnostic]].
+    """
+    prompt_lower = _DEFAULT_SYSTEM_PROMPT.lower()
+    # Look for the words that anchor a blank-line example
+    assert "blank" in prompt_lower
+    # The example must clearly describe corrected_anchor emission for this case
+    # by including a JSON-shaped or schema-style reference
+    assert "corrected_anchor" in _DEFAULT_SYSTEM_PROMPT

@@ -25,13 +25,16 @@ Vex must not have a wider blast radius than the bug it was added to catch.
 from __future__ import annotations
 
 import json
+import os
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
 from .models import ConsolidatedFinding
+from .position_adapter import PositionStatus, calculate as _classify_position
 from ..core.logging_channels import Log
 from ..core.tools import ReadFileTool
 
@@ -72,6 +75,28 @@ def _number_lines(text: str, *, start: int = 1) -> str:
 _VALID_VERDICTS: frozenset[str] = frozenset({"apply", "drop_cr_keep_prose", "reject_finding"})
 
 VerdictLiteral = Literal["apply", "drop_cr_keep_prose", "reject_finding"]
+
+
+# REVUE-248 — ADR §D1.a hallucination-clamp window.
+# corrected_anchor.line is constrained to [reported_line - K, reported_line + K].
+# Initial K=10 (≈3× the observed off-by-3 max in REVUE-247 evidence; tune from
+# production data if rejection rate exceeds 5% or accepted-correction deltas
+# cluster beyond ±3 lines).
+VEX_CORRECTION_MAX_DELTA: int = 10
+
+
+# REVUE-248 — ADR §D1.e feature flag.
+# Setting REVUE_VEX_CORRECTION_ENABLED to any of {"0","false","no","off",""} disables
+# the D1 correction logic and reverts Vex to binary-judge mode (no clamp, no
+# re-validation, no correction logs). Read once at VexVerifyPostProcessor.__init__.
+_FLAG_FALSY: frozenset[str] = frozenset({"0", "false", "no", "off", ""})
+
+
+def _correction_enabled_from_env() -> bool:
+    raw = os.environ.get("REVUE_VEX_CORRECTION_ENABLED")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in _FLAG_FALSY
 
 
 @dataclass(frozen=True)
@@ -129,11 +154,13 @@ class VexVerdict:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_SYSTEM_PROMPT = """\
-You are Vex, the semantic verifier for Revue.io.
+You are Vex, the semantic judge-and-corrector for Revue.io.
 
-Given a proposed code change, answer ONE question:
-"If a developer clicks 'Commit suggestion' to apply this patch, will the
-resulting code be safe?"
+Given a proposed code change, answer TWO questions:
+  1. "If a developer clicks 'Commit suggestion' to apply this patch, will the
+     resulting code be safe?" → emit a verdict.
+  2. "If the anchor or replacement span is wrong but the issue is real, what
+     are the correct values?" → emit a corrected_anchor.
 
 You are language-agnostic. The file may be Python, JavaScript, Go, Rust,
 TypeScript, anything. Use semantic reasoning — not per-language tooling.
@@ -150,13 +177,50 @@ Verify ALL of the following. If any fail, the patch is NOT safe.
 4. Semantic coherence: the patch actually addresses the stated issue.
 
 Return JSON ONLY (no prose, no markdown) with these fields:
-  verdict: "apply" | "drop_cr_keep_prose" | "reject_finding"
-  reason: one sentence explaining the decision
+  verdict:          "apply" | "drop_cr_keep_prose" | "reject_finding"
+  reason:           one sentence explaining the decision
+  corrected_anchor: null | {"line": <int ≥ 1>, "replacement_line_count": <int ≥ 1>}
 
 Verdicts:
-  - apply: patch is safe
-  - drop_cr_keep_prose: patch is unsafe but prose suggestion is still useful
-  - reject_finding: the finding itself is wrong (e.g. issue already addressed)
+  - apply              — patch is safe
+  - drop_cr_keep_prose — patch is unsafe but prose suggestion is still useful
+  - reject_finding     — the finding itself is wrong (e.g. issue already addressed)
+
+## Corrected anchor — blank-line / context-line case
+
+Emit corrected_anchor whenever the reported anchor line does NOT contain the
+issue the finding describes. The two most common situations:
+
+  • the anchor lands on a blank line that precedes the real defect, or
+  • the anchor lands on a context line (e.g. an import, comment, or
+    declaration) that is unrelated to the issue prose.
+
+Procedure:
+  1. Locate the first non-blank line at or below the reported anchor whose
+     content matches the issue prose ("the API_KEY assignment", "the
+     hardcoded password", etc.).
+  2. Set corrected_anchor.line to that line number.
+  3. Set corrected_anchor.replacement_line_count to the number of lines the
+     code_replacement should overwrite (1 for a single-line fix; otherwise
+     the full syntactic span being replaced).
+  4. Keep the verdict you already chose — corrected_anchor is independent.
+     "apply" + corrected_anchor means "the content is right, the span was
+     wrong"; "drop_cr_keep_prose" + corrected_anchor means "drop the patch,
+     but anchor the prose comment at the corrected line".
+
+Worked example (prose only — language-agnostic):
+  Reported anchor: line 4 (a blank line).
+  File context:
+    line 2: an import / require / use statement
+    line 3: <blank>
+    line 4: <blank>          ← reported anchor; not the issue
+    line 5: a hardcoded API-key assignment   ← the actual issue
+  Expected output:
+    { "verdict": "drop_cr_keep_prose",
+      "reason":  "Reported anchor on a blank line; the secret is on line 5.",
+      "corrected_anchor": {"line": 5, "replacement_line_count": 1} }
+
+If the anchor IS correct, set corrected_anchor to null.
 """
 
 
@@ -328,6 +392,41 @@ def _parse_verdict(text: str) -> VexVerdict:
     return VexVerdict(verdict=verdict_str, reason=reason, corrected_anchor=corrected)  # type: ignore[arg-type]
 
 
+_VexFailureType = Literal["timeout", "malformed_json", "http_5xx", "http_4xx", "other"]
+
+
+def _classify_vex_exception(exc: BaseException) -> _VexFailureType:
+    """Classify a Vex-call exception into one of five buckets for telemetry.
+
+    Resolution order (most specific first):
+      1. status_code in 5xx/4xx → http_5xx / http_4xx. SDK errors carry the
+         response status; check before class-name heuristics so a 504 doesn't
+         become a "timeout" just because its class is named ReadTimeoutError.
+      2. ``isinstance(TimeoutError)`` — Python's stdlib timeout marker.
+      3. ``isinstance(json.JSONDecodeError)`` — strict JSON parse failure.
+      4. Anything else → ``other``.
+
+    Earlier revisions used substring matching on the class name (e.g.
+    ``"timeout" in type(exc).__name__.lower()``) and caught ``ValueError`` as
+    malformed_json. Both produced false positives — a user-defined
+    ``BillingTimeoutPolicyError`` would land in ``timeout``; a
+    ``VexVerdict(verdict="bad")`` constructor ``ValueError`` would land in
+    ``malformed_json``. The current strict-isinstance approach trades a
+    little recall for high precision in the telemetry signal.
+    """
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        if 500 <= status_code < 600:
+            return "http_5xx"
+        if 400 <= status_code < 500:
+            return "http_4xx"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, json.JSONDecodeError):
+        return "malformed_json"
+    return "other"
+
+
 # ---------------------------------------------------------------------------
 # VexVerifyPostProcessor — wires Vex into the Consolidator's chain
 # ---------------------------------------------------------------------------
@@ -340,13 +439,13 @@ class VexVerifyPostProcessor:
     (parallel batch). The Consolidator prefers ``process_all`` when present
     so Vex's LLM calls run concurrently up to ``max_workers``.
 
-    Observability (P8): every invocation increments either ``verdict_counts``
-    (one of apply / drop_cr_keep_prose / reject_finding) or
-    ``failure_counts`` (read_error / verifier_exception / no_code_replacement).
-    Counters are accessible via the read-only properties of the same names
-    and are also written to ``Log.nova`` at INFO level with a structured
-    ``[vex-verdict]`` / ``[vex-failure]`` prefix so they can be grepped from
-    pipeline logs.
+    Observability (P8 + REVUE-248): every invocation increments either
+    ``verdict_counts`` (one of apply / drop_cr_keep_prose / reject_finding) or
+    ``failure_counts`` (no_code_replacement / read_error /
+    timeout / malformed_json / http_5xx / http_4xx / other). Counters are
+    accessible via the read-only properties of the same names and are also
+    written to ``Log.nova`` with a structured ``[vex-verdict]`` /
+    ``[vex-failure]`` prefix so they can be grepped from pipeline logs.
     """
 
     def __init__(
@@ -358,6 +457,8 @@ class VexVerifyPostProcessor:
         max_workers: int = 1,
     ) -> None:
         self._verifier = verifier
+        self._diff_by_file = dict(diff_by_file)
+        self._correction_enabled = _correction_enabled_from_env()
         self._read_tool = ReadFileTool(
             repo_root=repo_root,
             allowed_paths=set(diff_by_file.keys()),
@@ -366,6 +467,11 @@ class VexVerifyPostProcessor:
         # same TPM budget the user already set for reviewer agents.
         self._max_workers = max(1, int(max_workers))
         # P8 — observability counters.
+        # _counters_lock guards both dicts: process_all runs up to max_workers
+        # concurrent threads, each doing a read-modify-write on a shared dict.
+        # Without a lock the two-op .get(k, 0) + 1 writeback has a race window
+        # that silently drops increments (Sonnet 4.6 dogfood finding M2).
+        self._counters_lock = threading.Lock()
         self._verdict_counts: dict[str, int] = {
             "apply": 0,
             "drop_cr_keep_prose": 0,
@@ -374,16 +480,23 @@ class VexVerifyPostProcessor:
         self._failure_counts: dict[str, int] = {
             "no_code_replacement": 0,
             "read_error": 0,
-            "verifier_exception": 0,
+            # REVUE-248 §D1.d — classified Vex-call failures.
+            "timeout": 0,
+            "malformed_json": 0,
+            "http_5xx": 0,
+            "http_4xx": 0,
+            "other": 0,
         }
 
     @property
     def verdict_counts(self) -> dict[str, int]:
-        return dict(self._verdict_counts)
+        with self._counters_lock:
+            return dict(self._verdict_counts)
 
     @property
     def failure_counts(self) -> dict[str, int]:
-        return dict(self._failure_counts)
+        with self._counters_lock:
+            return dict(self._failure_counts)
 
     def process_all(
         self,
@@ -420,14 +533,16 @@ class VexVerifyPostProcessor:
     def process(self, finding: ConsolidatedFinding) -> ConsolidatedFinding | None:
         # Prose-only finding — nothing for Vex to verify.
         if finding.code_replacement is None:
-            self._failure_counts["no_code_replacement"] += 1
+            with self._counters_lock:
+                self._failure_counts["no_code_replacement"] += 1
             return finding
 
         read_result = self._read_tool.execute(path=finding.file_path)
         if read_result.is_error:
             # Can't read the file — fail open and keep the finding unchanged.
             # Vex's blast radius must not exceed the bug it was added to catch.
-            self._failure_counts["read_error"] += 1
+            with self._counters_lock:
+                self._failure_counts["read_error"] += 1
             Log.nova.info(
                 "[vex-failure] read_error %s: %s — keeping finding as-is.",
                 finding.file_path,
@@ -440,19 +555,25 @@ class VexVerifyPostProcessor:
                 file_content=read_result.content,
                 finding=finding,
             )
-        except Exception:
-            # Verifier crashed (rate limit, network, parse) — fail open and
-            # bump the counter so the failure is observable even when fail-open
-            # makes it invisible at the verdict level.
-            self._failure_counts["verifier_exception"] += 1
-            Log.nova.exception(
-                "[vex-failure] verifier_exception %s:%s — keeping finding as-is.",
+        except Exception as exc:
+            # Verifier crashed (rate limit, network, parse). Fail open and
+            # classify by error_type so dogfood log greps can see *why* Vex
+            # failed without having to scrape stack traces.
+            error_type = _classify_vex_exception(exc)
+            with self._counters_lock:
+                self._failure_counts[error_type] = self._failure_counts.get(error_type, 0) + 1
+            truncated = str(exc)[:120]
+            Log.nova.warning(
+                "[vex-failure] %s:%s error_type=%s message=%s",
                 finding.file_path,
                 finding.line_number,
+                error_type,
+                truncated,
             )
             return finding
 
-        self._verdict_counts[verdict.verdict] = self._verdict_counts.get(verdict.verdict, 0) + 1
+        with self._counters_lock:
+            self._verdict_counts[verdict.verdict] = self._verdict_counts.get(verdict.verdict, 0) + 1
         Log.nova.info(
             "[vex-verdict] %s %s:%s — %s",
             verdict.verdict,
@@ -460,7 +581,104 @@ class VexVerifyPostProcessor:
             finding.line_number,
             verdict.reason,
         )
-        return self._apply_verdict(finding, verdict)
+
+        verdict = self._sanitize_correction(finding, verdict)
+        result = self._apply_verdict(finding, verdict)
+        if result is not None and result.line_number != finding.line_number:
+            Log.nova.info(
+                "[vex-anchor-fix] %s:%d → %d",
+                finding.file_path,
+                finding.line_number,
+                result.line_number,
+            )
+        return result
+
+    def _sanitize_correction(
+        self, finding: ConsolidatedFinding, verdict: VexVerdict
+    ) -> VexVerdict:
+        """Sanitize ``verdict.corrected_anchor`` before ``_apply_verdict`` consumes it.
+
+        Two gates run in order (ADR §D1.a then §D1.b):
+
+          1. Clamp: drop corrections whose delta from the agent's reported line
+             exceeds ``VEX_CORRECTION_MAX_DELTA``. Bounds Vex's blast radius —
+             a hallucinated line can shift a comment by at most K rows.
+          2. Re-validate: feed the corrected line back through ``PositionAdapter
+             .calculate()`` (strict binary classifier). Only ``ANCHORED`` is
+             accepted; CONTEXT_LINE / REMOVED_LINE / OUT_OF_HUNK revert to the
+             agent's reported line (i.e. ``corrected_anchor`` is set to None,
+             and ``_apply_verdict`` mutates nothing).
+
+        Both rejections log on ``Log.nova`` so dogfood greps surface them.
+        """
+        anchor = verdict.corrected_anchor
+        if anchor is None:
+            return verdict
+
+        # Gate 0 — feature flag (D1.e): silently strip corrections when disabled
+        # so behaviour is bit-identical to pre-D1 (no clamp/revalidate logs).
+        if not self._correction_enabled:
+            return replace(verdict, corrected_anchor=None)
+
+        # Gate 1 — clamp
+        delta = abs(anchor.line - finding.line_number)
+        if delta > VEX_CORRECTION_MAX_DELTA:
+            Log.nova.warning(
+                "[vex-anchor-out-of-bounds] %s:%d corrected=%d reason=window_exceeded",
+                finding.file_path,
+                finding.line_number,
+                anchor.line,
+            )
+            return replace(verdict, corrected_anchor=None)
+
+        # Gate 2 — composition re-validation. Fail CLOSED: if no diff is
+        # available for the file (unexpected — diff_by_file should always
+        # cover the finding's file), revert to the agent's reported line
+        # rather than accept an unvalidated correction. This bounds Vex's
+        # blast radius even when the post-processor wiring is incomplete.
+        diff = self._diff_for(finding.file_path)
+        if diff is None:
+            Log.nova.warning(
+                "[vex-correction-rejected] %s:%d corrected=%d status=NO_DIFF",
+                finding.file_path,
+                finding.line_number,
+                anchor.line,
+            )
+            return replace(verdict, corrected_anchor=None)
+
+        result = _classify_position(
+            diff,
+            anchor.line,
+            finding.file_path,
+            anchor.replacement_line_count,
+        )
+
+        if result.status is PositionStatus.ANCHORED:
+            Log.nova.info(
+                "[vex-correction-revalidated] %s:%d → %d status=%s",
+                finding.file_path,
+                finding.line_number,
+                anchor.line,
+                result.status.value.upper(),
+            )
+            return verdict
+
+        # Any non-ANCHORED status → revert to agent's reported line.
+        Log.nova.warning(
+            "[vex-correction-rejected] %s:%d corrected=%d status=%s",
+            finding.file_path,
+            finding.line_number,
+            anchor.line,
+            result.status.value.upper(),
+        )
+        return replace(verdict, corrected_anchor=None)
+
+    def _diff_for(self, file_path: str) -> "str | None":
+        """Return the diff snippet ``calculate()`` needs for re-validation."""
+        diff = self._diff_by_file.get(file_path)
+        if diff is None or not diff.strip():
+            return None
+        return diff
 
     @staticmethod
     def _apply_verdict(

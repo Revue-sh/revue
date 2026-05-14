@@ -1189,16 +1189,24 @@ class ReviewPipeline:
         v_counts = vex_post_processor.verdict_counts
         f_counts = vex_post_processor.failure_counts
         if any(v_counts.values()) or any(f_counts.values()):
+            # REVUE-248 — verifier_exception was split into five error_type buckets.
+            # Surface them individually so dogfood can see *why* Vex failed without
+            # scraping log files.
             _log.info(
                 "[revue]   %s Vex: apply=%d drop_cr=%d reject=%d | "
-                "no_cr=%d read_err=%d exc=%d",
+                "no_cr=%d read_err=%d "
+                "timeout=%d bad_json=%d 5xx=%d 4xx=%d other=%d",
                 _AGENT_EMOJIS[VEX],
                 v_counts.get("apply", 0),
                 v_counts.get("drop_cr_keep_prose", 0),
                 v_counts.get("reject_finding", 0),
                 f_counts.get("no_code_replacement", 0),
                 f_counts.get("read_error", 0),
-                f_counts.get("verifier_exception", 0),
+                f_counts.get("timeout", 0),
+                f_counts.get("malformed_json", 0),
+                f_counts.get("http_5xx", 0),
+                f_counts.get("http_4xx", 0),
+                f_counts.get("other", 0),
             )
             # Persist Vex tallies to metrics.jsonl so a later audit can see
             # rejection rate / failure mix without re-parsing terminal output.

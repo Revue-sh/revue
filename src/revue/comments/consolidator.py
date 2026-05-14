@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -158,6 +159,66 @@ class Consolidator:
 
 
 # ---------------------------------------------------------------------------
+# REVUE-248 §D3 — Majority-vote line reconciler
+# ---------------------------------------------------------------------------
+
+
+def _majority_vote_line(group: SynthesisGroup) -> int | None:
+    """Return the line that ≥ N-1 of N agents in *group* report — else None.
+
+    Thresholds:
+      • N = 1 (singleton): the only line trivially wins.
+      • N = 2:             both agents must agree (intentional deviation from
+                           the literal "≥ N-1" rule — a 1-1 split is not a
+                           majority, so D3 falls back to the consolidator's
+                           tentative line. The system prompt is aligned with
+                           this stricter rule.).
+      • N ≥ 3:             ≥ N-1 agents must agree on the same line.
+
+    Returns the majority line for the caller to use as the consolidated
+    anchor. Returns None when no majority emerges (caller falls back to
+    today's behaviour — Nova's chosen line, or ``group.line_range[0]``).
+    """
+    n = len(group.findings)
+    if n == 0:
+        return None
+    if n == 1:
+        return group.findings[0].line_number
+
+    counts = Counter(f.line_number for f in group.findings)
+    line, votes = counts.most_common(1)[0]
+    # N=2 is intentionally stricter than the general N-1 formula: a 1-1 split
+    # is not a majority, so both agents must agree. Using `n` (=2) rather than
+    # `n - 1` (=1) enforces unanimity and avoids promoting either agent's line
+    # over the other when there is genuine disagreement.
+    threshold = n if n == 2 else n - 1
+    return line if votes >= threshold else None
+
+
+def _reconcile_anchor_line(
+    group: SynthesisGroup, tentative_line: int, file_path: str
+) -> int:
+    """Apply the majority-vote rule and log the reconciliation.
+
+    Returns the line to use as the consolidated anchor. When the majority
+    differs from *tentative_line*, emits an INFO log on the nova channel so
+    dogfood greps surface the reconciliation event.
+    """
+    majority = _majority_vote_line(group)
+    if majority is None or majority == tentative_line:
+        return tentative_line
+
+    minority = sorted({f.line_number for f in group.findings if f.line_number != majority})
+    Log.nova.info(
+        "[nova-reconcile] %s:%d minority=%s",
+        file_path,
+        majority,
+        ",".join(str(ln) for ln in minority),
+    )
+    return majority
+
+
+# ---------------------------------------------------------------------------
 # Pass A — ProximityAndCountGroupingStrategy
 # ---------------------------------------------------------------------------
 
@@ -237,11 +298,20 @@ For each group below, produce ONE unified finding that synthesises all agent per
 Groups may contain findings on the same line (conflict groups) or on nearby lines (proximity groups).
 
 For same-line conflicts: synthesise into a single coherent finding that captures the highest-severity concern.
-For proximity groups: produce a unified finding anchored to the first line, summarising all concerns.
+For proximity groups: produce a unified finding summarising all concerns.
+
+Line selection rule (REVUE-248 §D3):
+  • For N=1 (singleton): use that agent's line.
+  • For N=2: use the line only when BOTH agents agree; otherwise use the first
+    line of the group.
+  • For N≥3: use the line when ≥ N-1 agents agree on it; otherwise use the
+    first line of the group.
+  The consolidator deterministically enforces this rule after your output —
+  pick the line that matches it. A 1-1 tie at N=2 is not a majority.
 
 Return ONLY a JSON array. Each element must have these fields:
   file        (string — copy from group)
-  line        (integer — use first line of group)
+  line        (integer — the majority agent line, or the first line of the group if no majority)
   issue       (string — synthesised issue prose, no agent names, no line references)
   suggestion  (string — unified recommendation)
   severity    (string — highest severity among group members: high/medium/low/info)
@@ -417,6 +487,9 @@ class NovaSingleShotStrategy:
             rlc_fallback = len(code_replacement)
 
         anchor_line = _coerce_positive_int(syn.get("line"), default=group.line_range[0])
+        # REVUE-248 §D3 — deterministic majority-vote overrides Nova's choice.
+        anchor_line = _reconcile_anchor_line(group, anchor_line, group.file_path)
+
         replacement_line_count = _coerce_positive_int(
             syn.get("replacement_line_count"), default=rlc_fallback
         )
@@ -483,9 +556,13 @@ class NovaSingleShotStrategy:
         if not attribution:
             attribution = [Attribution(agent_name=_NOVA, category=group.findings[0].category)]
 
+        # REVUE-248 §D3 — apply majority-vote reconciliation on the fallback
+        # path too so the deterministic vs LLM-synthesis split doesn't change
+        # the anchored line.
+        anchor_line = _reconcile_anchor_line(group, group.line_range[0], group.file_path)
         return ConsolidatedFinding(
             file_path=group.file_path,
-            line_number=group.line_range[0],
+            line_number=anchor_line,
             severity=best_sev,
             issue=issues,
             suggestion=suggestions,

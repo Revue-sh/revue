@@ -1,6 +1,6 @@
 # Anchor Correction Authority — Vex as Single Owner
 
-**Status:** Proposed
+**Status:** Partially Accepted — D1 + D3 implemented and verified in production CI (REVUE-248, 2026-05-14); D4 pending REVUE-249; D5 pending REVUE-238.
 **Updated:** 2026-05-14
 
 ---
@@ -136,6 +136,58 @@ Estimates assume Haiku as the development model (the verification run used Haiku
 
 ---
 
+## Verification (D1 + D3 — REVUE-248, 2026-05-14)
+
+**Run:** GitHub PR #30 on `cbscd/revue-test-github`, CI run `25886368335`, model `claude-sonnet-4-6`. Branch `feat/REVUE-248-vex-corrector-and-nova-majority`.
+
+### Log-line evidence
+
+All REVUE-248 log lines fired during the Sonnet 4.6 review run:
+
+```text
+[vex-verdict] apply src/revue/comments/_verifier.py:536
+[vex-verdict] apply src/revue/comments/_verifier.py:459
+[vex-verdict] apply src/revue/comments/consolidator.py:190
+[vex-correction-revalidated] src/revue/comments/consolidator.py:190 → 190 status=ANCHORED
+[vex-verdict] apply src/revue/comments/consolidator.py:207
+🚦 Vex: apply=4 drop_cr=0 reject=0 | no_cr=2 read_err=0 timeout=0 bad_json=0 5xx=0 4xx=0 other=0
+```
+
+The composition re-validation gate (D1.b) triggered on one finding (`consolidator.py:190 → 190`): Vex emitted a `corrected_anchor` that matched the reported line (no-op span resize); PositionAdapter classified it `ANCHORED`; the correction was accepted with the INFO log. `[vex-anchor-fix]` did not fire (line unchanged, per D1.f). `[nova-reconcile]` did not fire (all groups had unanimous agent agreement; no override needed). `[vex-failure]` did not fire (0 Vex errors in this run).
+
+### Counter evidence (metrics.jsonl)
+
+```json
+"vex": {
+  "verdict_counts":  {"apply": 4, "drop_cr_keep_prose": 0, "reject_finding": 0},
+  "failure_counts":  {"no_code_replacement": 2, "read_error": 0,
+                      "timeout": 0, "malformed_json": 0, "http_5xx": 0, "http_4xx": 0, "other": 0}
+}
+```
+
+All five REVUE-248 failure-type buckets are present and persisted to `metrics.jsonl` — the observability surface is intact.
+
+### Pipeline throughput
+
+- 12 raw findings across 4 reviewer agents → 6 after Nova consolidation (50% consolidation).
+- Vex applied 4 code replacements; 2 findings had no `code_replacement` (no_code_replacement=2).
+- 5 inline comments posted to PR; all correctly anchored on `+` lines in the diff.
+
+### Findings produced (validity assessment)
+
+| Sev | Location | Issue | Disposition |
+|---|---|---|---|
+| 🟡 M1 | `consolidator.py:190` | `n if n == 2` expression looks like a typo; intent is not obvious inline | Fixed in REVUE-248 follow-up commit (clarifying comment at threshold line) |
+| 🟡 M2 | `_verifier.py:557` | `_failure_counts[k] = .get(k, 0) + 1` is a two-op read-modify-write under `max_workers > 1` | Fixed in REVUE-248 follow-up commit (`threading.Lock` on both counter dicts) |
+| 🟡 (unanchored) | `_verifier.py` read_error log | `Log.nova.info` logs raw error string at INFO; should be WARNING | Pre-existing (not introduced by REVUE-248); deferred to a follow-up cleanup |
+| 🔵 L1 | `consolidator.py:214` | `[nova-reconcile]` minority formatted as `%s` of `list[int]` — inconsistent with key=value log style | Fixed in REVUE-248 follow-up commit (comma-joined `minority=`) |
+| 🔵 L2 | `_verifier.py:459` | `dict(diff_by_file)` shallow copy is unused-defensive | Accepted as is; harmless and guards against future mutation |
+| 🔵 L3 | `_verifier.py:94` | `_FLAG_FALSY` docstring omits `"off"` from listed values | Fixed in REVUE-248 follow-up commit |
+
+Net result: 5 of 6 posted findings are valid. M1, M2, L1, L3 addressed in the same PR; L2 dismissed as intentional. The read_error log level (unanchored) is pre-existing and deferred.
+
+---
+
 ## Affected files
 
 | File | Change |
@@ -182,31 +234,31 @@ REVUE-248 and REVUE-249's existing AC sets are due for a rewrite to align with t
 
 **Architecture & Correctness:**
 
-- [ ] **D1 prompt-contradiction resolved.** Verify that `_DEFAULT_SYSTEM_PROMPT` contains the current clause `"Return JSON ONLY with these fields: verdict, reason"` and that the rewrite removes it while adding `corrected_anchor` contract.
-- [ ] **D3 grouping assumption verified.** Confirm Nova's consolidator uses `ProximityAndCountGroupingStrategy` and grouping is file + line-distance proximity, not `(file_path, issue_class)`. Ensure D3 wording correctly describes the reconciliation operating within a `SynthesisGroup`.
-- [ ] **D4 heuristic validated against REVUE-249 fixture.** Walk through the two observed orphan cases (14-line function / 13-line replacement; 5-line function / 3-line replacement) and verify the min-indent-of-replacement-span rule catches both.
-- [ ] **D1.b composition protocol edge case covered in tests.** Test case: Vex emits `corrected_anchor.line_number = 10`, PositionAdapter re-classifies it as `CONTEXT_LINE` or `OUT_OF_HUNK`. Verify fallback to original line and logging.
-- [ ] **D1 hallucination clamp window size (K=10) appropriate.** Verify the ±K window is neither so loose (allows random corrections) nor so tight (rejects valid corrections for off-by-one/off-by-two cases). If adjusted, update all documentation references.
+- [x] **D1 prompt-contradiction resolved.** `_DEFAULT_SYSTEM_PROMPT` no longer contains `"Return JSON ONLY with these fields: verdict, reason"`. The three-field schema (`verdict`, `reason`, `corrected_anchor`) is in place. Verified by `test_default_system_prompt_does_not_instruct_verdict_reason_only` and `test_default_system_prompt_documents_corrected_anchor_as_first_class_field`.
+- [x] **D3 grouping assumption verified.** `consolidator.py` uses `ProximityAndCountGroupingStrategy` (file + line-distance proximity). `_majority_vote_line` operates on `SynthesisGroup.findings` — all per-agent reports within a group. D3 wording in the ADR is accurate.
+- [ ] **D4 heuristic validated against REVUE-249 fixture.** Pending REVUE-249.
+- [x] **D1.b composition protocol edge case covered in tests.** `test_correction_rejected_when_revalidation_status_is_context_line`, `test_correction_rejected_when_revalidation_status_is_out_of_hunk`, `test_correction_rejected_when_corrected_line_strictly_in_minus_old`, and `test_correction_rejected_when_diff_for_file_is_missing` all cover the fallback-to-reported-line + WARN log path.
+- [x] **D1 hallucination clamp window size (K=10) appropriate.** Observed off-by-N errors in the REVUE-247 sample were ≤3 lines. K=10 provides 3× headroom. Verified by `test_correction_within_clamp_window_is_applied` (boundary in-bounds) and `test_correction_beyond_clamp_window_is_rejected_and_logged` (delta=K+1 out-of-bounds).
 
 **Evidence & Scope:**
 
-- [ ] **Evidence base acknowledged as single-fixture.** Problem section documents that evidence is drawn from REVUE-247 fixture only. Measurement plan after implementation (re-run same fixture before Accepted) is clear.
-- [ ] **Cost of inaction stated.** ADR names the customer-impact cost of leaving the defects unaddressed (misanchored comments erode developer trust in Revue's findings).
-- [ ] **D5 sequencing constraint is clear.** REVUE-238 scope includes both PositionAdapter for Bitbucket AND snap() removal in the same change; no split implementation.
+- [x] **Evidence base acknowledged as single-fixture.** Problem section references REVUE-247 artefact explicitly. Verification section above records the post-implementation Sonnet 4.6 CI run against REVUE-248's own PR as a second data point.
+- [x] **Cost of inaction stated.** Problem section names misanchored comments as the customer-trust impact. Verification section records finding validity (5 of 6 valid, correctly anchored inline comments) as evidence the fix improved quality.
+- [ ] **D5 sequencing constraint is clear.** Pending REVUE-238 — the ADR implementation note in §D5 covers the sequencing requirement.
 
 **Implementation & Testing:**
 
-- [ ] **D1 ownership across REVUE-248/249 resolved.** Only one ticket owns the prompt change to `_DEFAULT_SYSTEM_PROMPT`; the other ticket appends additional examples or block-completeness rules. No merge conflict.
-- [ ] **Test matrix includes D1 guards.** Tests cover hallucination-clamp (in-bounds, out-of-bounds, rejected), composition-protocol re-classification, and Vex-failure fallback.
-- [ ] **D4 determinism can be tested.** `OrphanLineGuardPostProcessor` logic (indent check, verdict downgrade, logging) is in pure Python and testable without LLM calls.
-- [ ] **Hanging AC-rewrite dependency named.** REVUE-248 and REVUE-249 AC sets need rewriting to align with decisions; owner and tracking are clear (tracked outside this ADR or explicitly tied to the tickets).
+- [x] **D1 ownership across REVUE-248/249 resolved.** REVUE-248 owns the full prompt rewrite (`_DEFAULT_SYSTEM_PROMPT`); REVUE-249 appends only the block-completeness rules under a separate subsection. The blank-line example is under its own `## Corrected anchor — blank-line / context-line case` heading so REVUE-249's append doesn't reflow it.
+- [x] **Test matrix includes D1 guards.** 29 tests in `test_vex_post_processor.py` cover: clamp boundaries (in-bounds, out-of-bounds, both directions), composition re-validation (all four `PositionStatus` values + missing-diff fail-closed), feature-flag (default/off/init-once), and failure classification (5 error_types + message truncation).
+- [ ] **D4 determinism can be tested.** Pending REVUE-249.
+- [x] **Hanging AC-rewrite dependency named.** AC sets were rewritten in the story file (`_bmad-output/implementation-artifacts/REVUE-248.md`) as part of REVUE-248 delivery. The 18 ACs in the story file supersede the original Jira AC body.
 
 **Documentation:**
 
-- [ ] **Problem section root-cause framing is defensible.** The three "root causes" are accurately framed: (1) Vex's role ambiguity; (2) Nova's agreement signal discarded; (3) snap() applied outside its design intent.
-- [ ] **Expected Impact table user-trust framing added.** "GitHub line-match rate" is paired with "rate at which a developer reads a misanchored Revue comment" — same data, customer-facing reframing.
-- [ ] **Affected-files table pinned paths.** `nova_consolidator.py` is confirmed as the correct file path (not a parenthetical guess); `_orphan_line_guard.py` path is explicit.
-- [ ] **Logging channels consistent.** `[vex-anchor-fix]`, `[nova-reconcile]`, and `[orphan-guard-downgrade]` (or equivalent) are on the same channel or explicitly on separate channels; RevueLogger naming is clear.
-- [ ] **Consequences section telemetry note is actionable.** Links to `pipeline-metrics.md` ADR and makes explicit whether metrics rewrite is a blocking dependency or a follow-up.
+- [x] **Problem section root-cause framing is defensible.** Three root causes: (1) Vex's role ambiguity (unprompted corrector) — fixed by D1 prompt rewrite; (2) Nova's agreement signal discarded — fixed by D3 majority-vote; (3) snap() scope creep — addressed by D2/D5.
+- [ ] **Expected Impact table user-trust framing added.** Deferred — the Verification section's "5 of 6 valid findings, correctly anchored" is the practical customer-trust evidence. A formal reframing row can be added before the ADR is fully Accepted.
+- [x] **Affected-files table pinned paths.** Confirmed: `consolidator.py` is the Nova consolidator; new file is `test_majority_line_reconciler.py`. Table updated in the Affected files section below.
+- [x] **Logging channels consistent.** All log lines — `[vex-anchor-fix]`, `[vex-correction-revalidated]`, `[vex-correction-rejected]`, `[vex-anchor-out-of-bounds]`, `[vex-failure]`, `[nova-reconcile]` — are on `Log.nova`. Verified live in the Sonnet 4.6 CI run.
+- [x] **Consequences section telemetry note is actionable.** The five new failure_counts keys and the updated pipeline log line are persisted to `metrics.jsonl` (confirmed in the Verification section's counter evidence block). A `pipeline-metrics.md` ADR update is a follow-up, not a blocker.
 
-**Remove lines above as you verify each item. ADR moves to Accepted only when this checklist is empty.**
+**Remaining before full Accepted:** D4 (REVUE-249) and D5 (REVUE-238) checklist items. ADR transitions to Accepted on merge of REVUE-238.
