@@ -221,6 +221,57 @@ Worked example (prose only — language-agnostic):
       "corrected_anchor": {"line": 5, "replacement_line_count": 1} }
 
 If the anchor IS correct, set corrected_anchor to null.
+
+## Replacement-span completeness — does the range cover the whole block?
+
+When code_replacement spans multiple lines (replacement_line_count > 1) AND
+the original range begins with a block-introducing construct (function
+declaration, conditional, loop, try, switch, class body, etc.), verify that
+the range extends to the natural terminator of that block before emitting
+"apply".
+
+A semantically equivalent rewrite that stops one line short of the block's
+end is NOT safe: the trailing lines (a final return, a post-loop statement,
+a terminal else-branch) are left in place at their original indent and
+become orphaned siblings of the replacement. The resulting code may parse,
+but the control flow is broken.
+
+Procedure when the range begins inside a block:
+  1. Look at the line at end-of-range + 1 (skip blank lines while probing).
+  2. If that line is still at or deeper than the outermost (shallowest)
+     indent inside the range, the block continues — the range is incomplete.
+     "Outermost" means the indent of the first/least-nested statement in the
+     range: the block must close past that level to be considered complete.
+  3. If that line is strictly outdented from the range's outermost indent (or
+     end-of-file is reached), the block terminated cleanly and the range is
+     complete.
+
+When the range is incomplete you have two valid outputs:
+  • Widen the range: emit corrected_anchor with replacement_line_count set
+    to the count that reaches the true block terminator. Keep verdict
+    "apply" only if the replacement content is still semantically equivalent
+    once the wider span is considered.
+  • Drop the patch: emit verdict "drop_cr_keep_prose". The prose finding
+    still posts; only the destructive code_replacement is dropped.
+
+Worked example (prose only — language-agnostic):
+  Reported anchor: line 38 (start of a loop-bearing function body).
+  Reported replacement_line_count: 3 (covers lines 38–40).
+  File context:
+    line 37: function header                          ← unchanged
+    line 38: a variable initialised to empty          ← start of range
+    line 39: a loop header                            ← inside range
+    line 40: first statement of loop body             ← end of range
+    line 41: second statement of loop body            ← orphaned (same indent as line 40)
+    line 42: a final return at outer indent           ← orphaned (post-loop terminator)
+  The next line after the range (line 41) is at the same indent as the
+  loop body inside the range — strictly deeper than the range's outermost
+  indent — so the block continues past the range and the range does NOT
+  cover the whole block.
+  Expected output:
+    { "verdict": "drop_cr_keep_prose",
+      "reason":  "Replacement covers lines 38–40 but the loop body continues on line 41 and the final return is on line 42; the range under-reaches the block terminator.",
+      "corrected_anchor": null }
 """
 
 

@@ -67,12 +67,17 @@ class VexMetricsData:
     verdict_counts keys: apply, drop_cr_keep_prose, reject_finding.
     failure_counts keys: no_code_replacement, read_error, and the REVUE-248
     error-type buckets (timeout, malformed_json, http_5xx, http_4xx, other).
+    guard_downgrade (REVUE-249 §D4): count of findings the deterministic
+    OrphanLineGuard downgraded to prose-only after Vex emitted ``apply`` —
+    a separate counter from verdict_counts so the LLM-vs-guard contribution
+    is observable in metrics.jsonl.
     Persisted alongside agent token usage so the cost and outcome of semantic
     verification can be audited without parsing terminal output (REVUE-241).
     """
 
     verdict_counts: dict[str, int] = field(default_factory=dict)
     failure_counts: dict[str, int] = field(default_factory=dict)
+    guard_downgrade: int = 0
 
 
 class MetricsCollector(Protocol):

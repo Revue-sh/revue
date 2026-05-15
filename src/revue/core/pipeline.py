@@ -51,6 +51,7 @@ from .metrics import (
     NullMetricsCollector,
     RoutingMetricsData,
     SynthesisMetricsData,
+    VexMetricsData,
 )
 from .diff_parser import parse_diff_file, filter_changes
 from .diff_limit import check_diff_limit, DiffLimitResult
@@ -1170,7 +1171,7 @@ class ReviewPipeline:
         # summary_sink accumulates unanchored findings for the PR-level summary comment.
         # BodyBuilder reads it when building the summary block (wired in REVUE-poster, next story).
         summary_sink: list = []
-        consolidator, vex_post_processor = self._build_consolidator(
+        consolidator, vex_post_processor, orphan_guard_post_processor = self._build_consolidator(
             nova_system_prompt=nova_system_prompt,
             vex_system_prompt=vex_system_prompt,
             diff_by_file=diff_by_file,
@@ -1186,35 +1187,7 @@ class ReviewPipeline:
             len(consolidated),
         )
 
-        v_counts = vex_post_processor.verdict_counts
-        f_counts = vex_post_processor.failure_counts
-        if any(v_counts.values()) or any(f_counts.values()):
-            # REVUE-248 — verifier_exception was split into five error_type buckets.
-            # Surface them individually so dogfood can see *why* Vex failed without
-            # scraping log files.
-            _log.info(
-                "[revue]   %s Vex: apply=%d drop_cr=%d reject=%d | "
-                "no_cr=%d read_err=%d "
-                "timeout=%d bad_json=%d 5xx=%d 4xx=%d other=%d",
-                _AGENT_EMOJIS[VEX],
-                v_counts.get("apply", 0),
-                v_counts.get("drop_cr_keep_prose", 0),
-                v_counts.get("reject_finding", 0),
-                f_counts.get("no_code_replacement", 0),
-                f_counts.get("read_error", 0),
-                f_counts.get("timeout", 0),
-                f_counts.get("malformed_json", 0),
-                f_counts.get("http_5xx", 0),
-                f_counts.get("http_4xx", 0),
-                f_counts.get("other", 0),
-            )
-            # Persist Vex tallies to metrics.jsonl so a later audit can see
-            # rejection rate / failure mix without re-parsing terminal output.
-            from revue.core.metrics import VexMetricsData
-            self._metrics.record_vex(VexMetricsData(
-                verdict_counts=dict(v_counts),
-                failure_counts=dict(f_counts),
-            ))
+        self._log_vex_summary(vex_post_processor, orphan_guard_post_processor)
 
         # Record synthesis metrics (REVUE-179 AC4)
         synthesised_count = sum(1 for f in consolidated if f.group_type != "singleton")
@@ -1236,6 +1209,56 @@ class ReviewPipeline:
 
         failed_agent_names = [f.agent_name for f in failed]
         return results, agents_used, failed_agent_names
+
+    # ------------------------------------------------------------------
+    # Vex / OrphanLineGuard summary log + metrics persistence
+    # ------------------------------------------------------------------
+
+    def _log_vex_summary(self, vex_post_processor, orphan_guard_post_processor) -> None:
+        """Emit the per-review Vex + OrphanLineGuard tally line and persist
+        the same counters to ``metrics.jsonl``.
+
+        The log fires when *any* of Vex's verdict/failure counters OR the
+        guard's downgrade counter is non-zero — REVUE-249 widened the gate
+        so a review where the guard fired but Vex itself was idle still
+        produces a visible summary line.
+        """
+        v_counts = vex_post_processor.verdict_counts
+        f_counts = vex_post_processor.failure_counts
+        guard_downgrade = orphan_guard_post_processor.guard_downgrade
+
+        if not (any(v_counts.values()) or any(f_counts.values()) or guard_downgrade):
+            return
+
+        # REVUE-248 — verifier_exception was split into five error_type buckets.
+        # Surface them individually so dogfood can see *why* Vex failed without
+        # scraping log files. REVUE-249 appended orphan_guard=N to the same
+        # line so the LLM-vs-guard contribution is grep-able in one place.
+        _log.info(
+            "[revue]   %s Vex: apply=%d drop_cr=%d reject=%d | "
+            "no_cr=%d read_err=%d "
+            "timeout=%d bad_json=%d 5xx=%d 4xx=%d other=%d | "
+            "orphan_guard=%d",
+            _AGENT_EMOJIS[VEX],
+            v_counts.get("apply", 0),
+            v_counts.get("drop_cr_keep_prose", 0),
+            v_counts.get("reject_finding", 0),
+            f_counts.get("no_code_replacement", 0),
+            f_counts.get("read_error", 0),
+            f_counts.get("timeout", 0),
+            f_counts.get("malformed_json", 0),
+            f_counts.get("http_5xx", 0),
+            f_counts.get("http_4xx", 0),
+            f_counts.get("other", 0),
+            guard_downgrade,
+        )
+        # Persist Vex tallies to metrics.jsonl so a later audit can see
+        # rejection rate / failure mix without re-parsing terminal output.
+        self._metrics.record_vex(VexMetricsData(
+            verdict_counts=dict(v_counts),
+            failure_counts=dict(f_counts),
+            guard_downgrade=guard_downgrade,
+        ))
 
     # ------------------------------------------------------------------
     # Consolidator construction (REVUE-240 — reasoning-tier invariant)
@@ -1266,6 +1289,7 @@ class ReviewPipeline:
             UnanchoredFindingExtractor,
         )
         from revue.comments._verifier import VexVerifier, VexVerifyPostProcessor
+        from revue.comments._orphan_line_guard import OrphanLineGuardPostProcessor
 
         reasoning_client = self.synthesis_client  # shared by Nova + Vex (REVUE-240)
 
@@ -1280,11 +1304,19 @@ class ReviewPipeline:
             diff_by_file=diff_by_file,
             max_workers=self.config.max_parallel_agents,
         )
+        # REVUE-249 §D4 — deterministic backstop for block-completeness. Runs
+        # AFTER Vex so it inspects the surviving ``apply`` verdicts; wiring it
+        # before Vex would gate the wrong verdict.
+        orphan_guard_post_processor = OrphanLineGuardPostProcessor(
+            repo_root=repo_root,
+            diff_by_file=diff_by_file,
+        )
 
         # P3: NoOpSuggestionDropper runs FIRST so trivial no-ops are filtered
         # before they burn Vex LLM calls. Vex then verifies the remaining
-        # real candidates. UnanchoredFindingExtractor runs last because it
-        # observes the post-verification outcome.
+        # real candidates. OrphanLineGuard sweeps Vex's ``apply`` survivors
+        # for block-completeness regressions. UnanchoredFindingExtractor runs
+        # last because it observes the post-verification outcome.
         consolidator = Consolidator(
             grouping=ProximityAndCountGroupingStrategy(
                 n=self.config.consolidation_proximity_lines,
@@ -1299,6 +1331,7 @@ class ReviewPipeline:
             post_processors=[
                 NoOpSuggestionDropper(),
                 vex_post_processor,
+                orphan_guard_post_processor,
                 UnanchoredFindingExtractor(summary_sink),
             ],
         )
@@ -1316,4 +1349,4 @@ class ReviewPipeline:
             % (nova_client, vex_client)
         )
 
-        return consolidator, vex_post_processor
+        return consolidator, vex_post_processor, orphan_guard_post_processor

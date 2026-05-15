@@ -332,3 +332,114 @@ def test_default_system_prompt_includes_blank_line_worked_example() -> None:
     # The example must clearly describe corrected_anchor emission for this case
     # by including a JSON-shaped or schema-style reference
     assert "corrected_anchor" in _DEFAULT_SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# REVUE-249 — block-completeness subsection in the system prompt (D1, AC1–AC3)
+# ---------------------------------------------------------------------------
+
+
+def test_default_system_prompt_retains_blank_line_subsection_heading() -> None:
+    """ADR §D1 (REVUE-248) — the blank-line subsection heading must remain
+    intact. REVUE-249 appends a peer subsection; it must NEVER rewrite or
+    remove REVUE-248's content. This guard fires if a future append accidentally
+    edits the existing heading.
+    """
+    assert "## Corrected anchor — blank-line / context-line case" in _DEFAULT_SYSTEM_PROMPT
+
+
+def test_default_system_prompt_includes_block_completeness_subsection() -> None:
+    """ADR §D1 (REVUE-249) — a new subsection covering replacement-span
+    completeness must be appended. It lives as a peer to the blank-line
+    subsection (own heading) so future appends compose cleanly without
+    reflowing previous content.
+    """
+    # Heading anchor — match on the load-bearing words so the exact wording
+    # can drift slightly without breaking the test.
+    prompt_lower = _DEFAULT_SYSTEM_PROMPT.lower()
+    assert "## replacement-span completeness" in prompt_lower
+
+
+def test_blank_line_and_block_completeness_subsections_are_distinct() -> None:
+    """The two subsections must be distinct sections in the prompt — not merged,
+    not nested. Guards against an accidental rewrite that folds REVUE-249's
+    guidance into REVUE-248's subsection (which would re-open the
+    'D1 ownership across REVUE-248/249' ambiguity the ADR Review-Notes resolved).
+    """
+    blank_idx = _DEFAULT_SYSTEM_PROMPT.find("## Corrected anchor — blank-line / context-line case")
+    block_idx = _DEFAULT_SYSTEM_PROMPT.lower().find("## replacement-span completeness")
+    assert blank_idx >= 0
+    assert block_idx >= 0
+    assert block_idx > blank_idx, (
+        "block-completeness subsection must be APPENDED after the blank-line "
+        "subsection — not inserted before it"
+    )
+
+
+def test_block_completeness_subsection_explains_widen_or_downgrade_options() -> None:
+    """AC3 — the subsection must tell Vex its two valid outputs when the range
+    under-reaches: widen the range via corrected_anchor, OR downgrade verdict
+    to drop_cr_keep_prose. Both paths must be described so the LLM knows it has
+    options.
+    """
+    prompt_lower = _DEFAULT_SYSTEM_PROMPT.lower()
+    block_idx = prompt_lower.find("## replacement-span completeness")
+    assert block_idx >= 0
+    subsection = prompt_lower[block_idx:]
+    # Both remediation paths must be documented within the subsection.
+    assert "corrected_anchor" in subsection
+    assert "drop_cr_keep_prose" in subsection
+
+
+def test_block_completeness_subsection_has_language_agnostic_worked_example() -> None:
+    """AC2 — the subsection must include a worked example, but the example must
+    NOT use Python/JavaScript/Go-specific keywords. Per
+    [[feedback_agent_prompts_language_agnostic]], reviewer prompts must use
+    prose / abstract block descriptions, not concrete language syntax.
+
+    Allowed: words like "function", "loop", "conditional", "return". Forbidden:
+    syntax tokens that pin the example to one language (def, function(, =>,
+    fn, func).
+    """
+    prompt_lower = _DEFAULT_SYSTEM_PROMPT.lower()
+    block_idx = prompt_lower.find("## replacement-span completeness")
+    assert block_idx >= 0
+    # Subsection bounds: from this heading to either the next "##" heading or EOF.
+    next_heading_idx = _DEFAULT_SYSTEM_PROMPT.find("\n##", block_idx + 2)
+    subsection = (
+        _DEFAULT_SYSTEM_PROMPT[block_idx:next_heading_idx]
+        if next_heading_idx > 0
+        else _DEFAULT_SYSTEM_PROMPT[block_idx:]
+    )
+    # Worked-example marker — match the style used in REVUE-248's blank-line
+    # subsection ("Worked example") so both subsections share visual vocabulary.
+    assert "worked example" in subsection.lower()
+    # Language-specific syntax tokens that would violate the language-agnostic
+    # rule. Any of these in the subsection is a failure.
+    forbidden_tokens = ["def ", "function(", "=>", "fn ", "func "]
+    for token in forbidden_tokens:
+        assert token not in subsection.lower(), (
+            f"block-completeness subsection contains language-specific token {token!r}; "
+            "use language-agnostic prose per feedback_agent_prompts_language_agnostic"
+        )
+
+
+def test_block_completeness_subsection_directs_vex_to_check_natural_terminators() -> None:
+    """AC3 — the subsection must direct Vex to verify the range extends to the
+    natural block terminator (final return, post-loop statement, terminal
+    else-branch). This is the core heuristic that catches the PR #29 case.
+    """
+    prompt_lower = _DEFAULT_SYSTEM_PROMPT.lower()
+    block_idx = prompt_lower.find("## replacement-span completeness")
+    assert block_idx >= 0
+    subsection = prompt_lower[block_idx:]
+    # Heuristic vocabulary — match the conceptual words, not exact phrasing.
+    assert "block" in subsection
+    # The fix must hint at end-of-block reasoning: terminator, return, end of
+    # the function/loop. Any of these is acceptable.
+    terminator_hints = ["terminator", "final return", "post-loop", "end of", "whole block"]
+    assert any(hint in subsection for hint in terminator_hints), (
+        "block-completeness subsection must direct Vex to inspect the natural "
+        "block terminator (final return, post-loop statement, end-of-block); "
+        f"none of {terminator_hints} found in the subsection"
+    )

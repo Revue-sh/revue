@@ -1,7 +1,7 @@
 # Anchor Correction Authority — Vex as Single Owner
 
-**Status:** Partially Accepted — D1 + D3 implemented and verified in production CI (REVUE-248, 2026-05-14); D4 pending REVUE-249; D5 pending REVUE-238.
-**Updated:** 2026-05-14
+**Status:** Partially Accepted — D1 + D3 + D4 implemented and verified, D4 additionally cleared Sonnet 4.6 pre-ship review (REVUE-248, 2026-05-14; REVUE-249, 2026-05-15); D5 pending REVUE-238.
+**Updated:** 2026-05-15
 
 ---
 
@@ -188,6 +188,84 @@ Net result: 5 of 6 posted findings are valid. M1, M2, L1, L3 addressed in the sa
 
 ---
 
+## Verification (D4 — REVUE-249, 2026-05-15)
+
+**Scope:** Vex prompt extension (`## Replacement-span completeness — does the range cover the whole block?`) and `OrphanLineGuardPostProcessor` (`src/revue/comments/_orphan_line_guard.py`).
+
+### Test evidence
+
+- 18 unit tests for the guard in `src/revue/tests/comments/test_orphan_line_guard.py`:
+  - PR #29 Case 1 (nested-conditional under-reach by 1 line, function spans lines 20–34) — downgrade.
+  - PR #29 Case 2 (string-concat loop under-reach by 2 lines, function spans lines 37–42) — downgrade.
+  - Full-block coverage (next line strictly outdented) — accept.
+  - Prose-only, Vex-already-downgraded, single-line replacement — skip.
+  - EOF reached during probe — accept.
+  - Blank trailing line followed by outdented line — accept.
+  - Blank trailing line followed by orphan — downgrade.
+  - Read-error fail-open with `[orphan-guard-failure]` INFO log.
+  - Multi-finding batch and 40-finding `ThreadPoolExecutor` concurrency stress — counter consistency under the `_counters_lock`.
+  - File-content cache contract: N findings on one file → 1 `ReadFileTool.execute` call (`test_guard_caches_file_content_across_findings_on_same_file`).
+  - Negative-cache contract: read errors logged + read once per failing file (`test_guard_caches_read_errors_so_a_failing_file_logs_and_reads_once`).
+  - TOCTOU lock invariant under thread contention: a delayed underlying read widens the race window; concurrent first-touches on the same file still see exactly one underlying read (`test_guard_holds_lock_across_read_to_prevent_toctou_double_read`).
+- 6 Vex prompt-contract tests in `test_vex_verifier.py`:
+  - REVUE-248 blank-line subsection regression-guard (heading intact).
+  - REVUE-249 block-completeness subsection appended.
+  - Two subsections are distinct and ordered (block-completeness comes after blank-line).
+  - Worked example present and language-agnostic (forbidden tokens: `def `, `function(`, `=>`, `fn `, `func `).
+  - Both remediation paths documented: widen via `corrected_anchor` or downgrade to `drop_cr_keep_prose`.
+  - Heuristic directs Vex to inspect natural block terminators (final return, post-loop statement, end-of-block).
+- 4 wiring + observability tests in `test_pipeline.py`:
+  - `OrphanLineGuardPostProcessor` runs after `VexVerifyPostProcessor` in the post-processor chain.
+  - Summary log includes `orphan_guard=N`.
+  - Summary log fires when only the guard registered a downgrade (Vex idle).
+  - Summary log silent when every counter is zero.
+- 1 metrics-persistence test in `test_metrics_writer.py`:
+  - `VexMetricsData.guard_downgrade` is written to `metrics.jsonl` under `vex.guard_downgrade`.
+
+All pre-existing tests pass (1699 total) with no regressions.
+
+### Log-line and counter shape
+
+When the guard fires the WARN log emits:
+
+```text
+[orphan-guard-downgrade] <file>:<end_line+1> trailing_indent=<n> outermost_indent=<m>
+```
+
+`outermost_indent` is the *minimum* leading-indent across the replacement range (the level of the range's first/least-nested statement). The block terminates cleanly only when the trailing line outdents past that level. Pre-ship Sonnet 4.6 review surfaced that the original `min_indent` label was misleading paired with the guard's docstring wording of "deepest indent"; both have been aligned to "outermost indent" in code, prompt, and ADR.
+
+When read fails open the INFO log emits:
+
+```text
+[orphan-guard-failure] read_error <file>:<line>: <message> — keeping finding as-is.
+```
+
+The `<line>` is the finding's `line_number`, included so dogfood greps can tie the failure back to the specific finding that triggered the read. Read errors are negative-cached (see "Concurrency and caching" below) so a file whose read fails emits exactly one INFO line per review run, not one per finding on that file.
+
+The pipeline summary line now ends with `| orphan_guard=N`:
+
+```text
+🚦 Vex: apply=N drop_cr=N reject=N | no_cr=N read_err=N timeout=N bad_json=N 5xx=N 4xx=N other=N | orphan_guard=N
+```
+
+`metrics.jsonl` carries the same counter in `data["vex"]["guard_downgrade"]`, independent of `verdict_counts` and `failure_counts` so the LLM-vs-guard contribution is auditable.
+
+### Concurrency and caching
+
+The guard maintains a per-instance file-content cache scoped to a single review run. The cache stores pre-split `list[str]` so the `splitlines()` cost is paid once per file, and uses `None` as a negative-cache sentinel so a file whose read fails emits exactly one INFO log line for the run (regardless of how many findings target that file). A single `_content_cache_lock` is held across the entire check-read-write block to keep the one-read-per-file invariant under concurrent first-touches; the lock window is bounded by file size and the guard is instantiated per pipeline invocation, so the simple-lock design was chosen over per-file lock sharding. The `_counters_lock` remains separate from the content-cache lock so a slow read on one file cannot block counter updates from another thread.
+
+### Pre-ship review (Sonnet 4.6 dogfood × 3)
+
+Before opening the Bitbucket PR, the branch was put through three rounds of the Sonnet 4.6 pre-ship E2E gate (`.revue.yml` flipped to `claude-sonnet-4-6`, then reverted before push). Each round's converged findings landed as dedicated follow-up commits:
+
+- **Round 1** — `min_indent`/"deepest indent" docstring vs `min(range_indents)` code contradiction (renamed to `outermost_indent` throughout); `self._diff_by_file` stored but never read (dropped); `VexMetricsData` imported locally inside `_log_vex_summary` (hoisted to module top); `ReadFileTool.execute` called once per finding even on the same file (per-instance file-content cache added).
+- **Round 2** — cache TOCTOU race between miss-check and write (lock now held across the full check-read-write block); read errors not deduplicated (negative-cache sentinel added); `splitlines()` paid per-finding (cache now stores `list[str]` directly); Vex prompt prose still said "deepest indent" while the guard uses outermost (prompt aligned).
+- **Round 3** — the guard fired on its own diff (`[orphan-guard-downgrade] _orphan_line_guard.py:94 trailing_indent=8 outermost_indent=8`) and Vex's verdict mix was healthy (apply=1, drop_cr=1, reject=1, orphan_guard=1), confirming the end-to-end path. Remaining suggestions (per-file lock sharding, defensive `start_line` rename + non-positive guard, test-fixture polish) declined as over-engineering for a workload where each review touches ≤10 files and the lock window is bounded by file size.
+
+The pre-ship pass is recorded here because Sonnet's three rounds reshaped the guard's caching architecture (cache → TOCTOU-safe cache → cache-with-error-dedup-and-pre-split-storage) and the Vex prompt's exact wording — those decisions belong in the ADR, not just in the commit history.
+
+---
+
 ## Affected files
 
 | File | Change |
@@ -236,7 +314,7 @@ REVUE-248 and REVUE-249's existing AC sets are due for a rewrite to align with t
 
 - [x] **D1 prompt-contradiction resolved.** `_DEFAULT_SYSTEM_PROMPT` no longer contains `"Return JSON ONLY with these fields: verdict, reason"`. The three-field schema (`verdict`, `reason`, `corrected_anchor`) is in place. Verified by `test_default_system_prompt_does_not_instruct_verdict_reason_only` and `test_default_system_prompt_documents_corrected_anchor_as_first_class_field`.
 - [x] **D3 grouping assumption verified.** `consolidator.py` uses `ProximityAndCountGroupingStrategy` (file + line-distance proximity). `_majority_vote_line` operates on `SynthesisGroup.findings` — all per-agent reports within a group. D3 wording in the ADR is accurate.
-- [ ] **D4 heuristic validated against REVUE-249 fixture.** Pending REVUE-249.
+- [x] **D4 heuristic validated against REVUE-249 fixture.** `OrphanLineGuardPostProcessor` lands in `src/revue/comments/_orphan_line_guard.py` and is wired after `VexVerifyPostProcessor` in the consolidator chain (`pipeline.py:_build_consolidator`). The two PR #29 cases (nested-conditional under-reach by one line, loop under-reach by two lines) are deterministic fixtures in `test_orphan_line_guard.py::test_guard_downgrades_pr29_case_1_nested_conditional` / `test_guard_downgrades_pr29_case_2_loop_under_reach`.
 - [x] **D1.b composition protocol edge case covered in tests.** `test_correction_rejected_when_revalidation_status_is_context_line`, `test_correction_rejected_when_revalidation_status_is_out_of_hunk`, `test_correction_rejected_when_corrected_line_strictly_in_minus_old`, and `test_correction_rejected_when_diff_for_file_is_missing` all cover the fallback-to-reported-line + WARN log path.
 - [x] **D1 hallucination clamp window size (K=10) appropriate.** Observed off-by-N errors in the REVUE-247 sample were ≤3 lines. K=10 provides 3× headroom. Verified by `test_correction_within_clamp_window_is_applied` (boundary in-bounds) and `test_correction_beyond_clamp_window_is_rejected_and_logged` (delta=K+1 out-of-bounds).
 
@@ -250,7 +328,7 @@ REVUE-248 and REVUE-249's existing AC sets are due for a rewrite to align with t
 
 - [x] **D1 ownership across REVUE-248/249 resolved.** REVUE-248 owns the full prompt rewrite (`_DEFAULT_SYSTEM_PROMPT`); REVUE-249 appends only the block-completeness rules under a separate subsection. The blank-line example is under its own `## Corrected anchor — blank-line / context-line case` heading so REVUE-249's append doesn't reflow it.
 - [x] **Test matrix includes D1 guards.** 29 tests in `test_vex_post_processor.py` cover: clamp boundaries (in-bounds, out-of-bounds, both directions), composition re-validation (all four `PositionStatus` values + missing-diff fail-closed), feature-flag (default/off/init-once), and failure classification (5 error_types + message truncation).
-- [ ] **D4 determinism can be tested.** Pending REVUE-249.
+- [x] **D4 determinism can be tested.** 18 tests in `test_orphan_line_guard.py` exercise: PR #29 Case 1 + Case 2 fixtures, full-block coverage (accept), prose-only and Vex-already-downgraded (skip), single-line replacement (skip), EOF and blank-trailing edge cases (accept + downgrade variants), read-error fail-open, a 40-finding `ThreadPoolExecutor` test that locks the `_counters_lock` contract in place, and three cache contracts (one-read-per-file, error-dedup, TOCTOU lock invariant under thread contention). Three pipeline tests (`test_orphan_line_guard_runs_after_vex_in_post_processor_chain`, the two `_log_vex_summary` tests, and the metrics-persistence test in `test_metrics_writer.py`) close the wiring side.
 - [x] **Hanging AC-rewrite dependency named.** AC sets were rewritten in the story file (`_bmad-output/implementation-artifacts/REVUE-248.md`) as part of REVUE-248 delivery. The 18 ACs in the story file supersede the original Jira AC body.
 
 **Documentation:**
@@ -261,4 +339,4 @@ REVUE-248 and REVUE-249's existing AC sets are due for a rewrite to align with t
 - [x] **Logging channels consistent.** All log lines — `[vex-anchor-fix]`, `[vex-correction-revalidated]`, `[vex-correction-rejected]`, `[vex-anchor-out-of-bounds]`, `[vex-failure]`, `[nova-reconcile]` — are on `Log.nova`. Verified live in the Sonnet 4.6 CI run.
 - [x] **Consequences section telemetry note is actionable.** The five new failure_counts keys and the updated pipeline log line are persisted to `metrics.jsonl` (confirmed in the Verification section's counter evidence block). A `pipeline-metrics.md` ADR update is a follow-up, not a blocker.
 
-**Remaining before full Accepted:** D4 (REVUE-249) and D5 (REVUE-238) checklist items. ADR transitions to Accepted on merge of REVUE-238.
+**Remaining before full Accepted:** D5 (REVUE-238) checklist items only. D4 is verified live (REVUE-249, 2026-05-15). ADR transitions to Accepted on merge of REVUE-238.

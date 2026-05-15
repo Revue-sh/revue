@@ -405,6 +405,47 @@ def test_vex_counts_in_flush_record() -> None:
         assert vex["failure_counts"] == {
             "no_code_replacement": 15, "read_error": 0, "verifier_exception": 0,
         }
+        # REVUE-249 §D4 — guard_downgrade defaults to 0 when not supplied; it
+        # is always present in the persisted record so a single jq filter can
+        # parse it without an existence check.
+        assert vex["guard_downgrade"] == 0
+
+
+def test_record_vex_persists_orphan_guard_downgrade_counter() -> None:
+    """REVUE-249 AC13 — when ``VexMetricsData.guard_downgrade`` is non-zero,
+    the persisted metrics record carries it through. The counter is
+    independent of verdict_counts / failure_counts so a guard-only run still
+    shows up in metrics.jsonl.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    from revue.core.metrics import MetricsEvent, VexMetricsData
+    from revue.infrastructure.metrics_writer import JsonlMetricsCollector
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        collector = JsonlMetricsCollector(base_dir=tmpdir)
+        collector.record(MetricsEvent(
+            event_type="agent_call",
+            timestamp="2026-05-15T10:00:00Z",
+            agent_name="vex",
+            provider="anthropic",
+            model="claude-sonnet-4-6",
+            input_tokens=200,
+            output_tokens=80,
+        ))
+        collector.record_vex(VexMetricsData(
+            verdict_counts={"apply": 2, "drop_cr_keep_prose": 0, "reject_finding": 0},
+            failure_counts={},
+            guard_downgrade=3,
+        ))
+        collector.flush("run-guard")
+
+        metrics_file = Path(tmpdir) / ".revue" / "metrics.jsonl"
+        data = json.loads(metrics_file.read_text().strip())
+
+        assert data["vex"]["guard_downgrade"] == 3
 
 
 def test_no_vex_data_flush_has_no_vex_key() -> None:

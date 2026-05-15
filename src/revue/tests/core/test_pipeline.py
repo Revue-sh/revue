@@ -1921,7 +1921,7 @@ def test_vex_and_nova_share_the_reasoning_tier_client():
     )
 
     # Act
-    consolidator, vex_post_processor = pipeline._build_consolidator(
+    consolidator, vex_post_processor, _orphan_guard = pipeline._build_consolidator(
         nova_system_prompt=None,
         vex_system_prompt=None,
         diff_by_file={},
@@ -1934,6 +1934,197 @@ def test_vex_and_nova_share_the_reasoning_tier_client():
     vex_client = vex_post_processor._verifier._client
     assert vex_client is nova_client
     assert vex_client is synthesis_client
+
+
+def test_orphan_line_guard_runs_after_vex_in_post_processor_chain():
+    """REVUE-249 AC11 — OrphanLineGuardPostProcessor must be wired AFTER
+    VexVerifyPostProcessor in the consolidator's post-processor chain.
+
+    Order matters: the guard inspects the *result* of Vex's verdict (only
+    findings that survived Vex's ``apply`` verdict still carry a multi-line
+    ``code_replacement``). Wiring it before Vex would gate the wrong verdict.
+    """
+    # Arrange
+    from pathlib import Path
+
+    from revue.comments._orphan_line_guard import OrphanLineGuardPostProcessor
+    from revue.comments._verifier import VexVerifyPostProcessor
+
+    main_client = MagicMock(name="main_client")
+    main_client.complete.return_value = _cr("ok")
+    synthesis_client = MagicMock(name="synthesis_client")
+    pipeline = ReviewPipeline(
+        _config(),
+        client=main_client,
+        synthesis_client=synthesis_client,
+        license_info=_license_info(),
+    )
+
+    # Act
+    consolidator, vex_post_processor, orphan_guard = pipeline._build_consolidator(
+        nova_system_prompt=None,
+        vex_system_prompt=None,
+        diff_by_file={"src/example.py": "@@ -0,0 +1,1 @@\n+x = 1\n"},
+        repo_root=Path("."),
+        summary_sink=[],
+    )
+
+    # Assert — both processors are present, in the right relative order.
+    chain = consolidator._post_processors
+    vex_index = next(
+        (i for i, p in enumerate(chain) if isinstance(p, VexVerifyPostProcessor)),
+        None,
+    )
+    guard_index = next(
+        (i for i, p in enumerate(chain) if isinstance(p, OrphanLineGuardPostProcessor)),
+        None,
+    )
+    assert vex_index is not None, "VexVerifyPostProcessor missing from chain"
+    assert guard_index is not None, "OrphanLineGuardPostProcessor missing from chain"
+    assert guard_index > vex_index, (
+        f"OrphanLineGuardPostProcessor must run AFTER VexVerifyPostProcessor; "
+        f"got guard_index={guard_index} vex_index={vex_index}"
+    )
+    # Returned reference matches the one installed in the chain.
+    assert chain[guard_index] is orphan_guard
+
+
+# ---------------------------------------------------------------------------
+# REVUE-249 — summary log + metrics persistence (AC12, AC13, AC25)
+# ---------------------------------------------------------------------------
+
+
+class _StubVex:
+    """Minimal stand-in for VexVerifyPostProcessor — only the counters
+    properties accessed by _log_vex_summary need to exist.
+    """
+
+    def __init__(
+        self,
+        *,
+        verdict_counts: dict[str, int] | None = None,
+        failure_counts: dict[str, int] | None = None,
+    ) -> None:
+        self._verdict = verdict_counts or {}
+        self._failure = failure_counts or {}
+
+    @property
+    def verdict_counts(self) -> dict[str, int]:
+        return dict(self._verdict)
+
+    @property
+    def failure_counts(self) -> dict[str, int]:
+        return dict(self._failure)
+
+
+class _StubGuard:
+    """Minimal stand-in for OrphanLineGuardPostProcessor."""
+
+    def __init__(self, *, guard_downgrade: int = 0) -> None:
+        self._guard_downgrade = guard_downgrade
+
+    @property
+    def guard_downgrade(self) -> int:
+        return self._guard_downgrade
+
+
+def _pipeline_for_summary_log() -> ReviewPipeline:
+    main_client = MagicMock(name="main_client")
+    main_client.complete.return_value = _cr("ok")
+    synthesis_client = MagicMock(name="synthesis_client")
+    return ReviewPipeline(
+        _config(),
+        client=main_client,
+        synthesis_client=synthesis_client,
+        license_info=_license_info(),
+    )
+
+
+def test_vex_summary_log_includes_orphan_guard_field(caplog) -> None:
+    """AC12 — the [revue] Vex: ... summary log line includes ``orphan_guard=N``
+    so dogfood log greps see how often the deterministic guard fired.
+    """
+    # Arrange
+    pipeline = _pipeline_for_summary_log()
+    vex = _StubVex(
+        verdict_counts={"apply": 3, "drop_cr_keep_prose": 1, "reject_finding": 0},
+        failure_counts={},
+    )
+    guard = _StubGuard(guard_downgrade=2)
+    caplog.set_level("INFO", logger="revue.core.pipeline")
+
+    # Act
+    pipeline._log_vex_summary(vex, guard)
+
+    # Assert
+    summary_lines = [r.getMessage() for r in caplog.records if "Vex:" in r.getMessage()]
+    assert len(summary_lines) == 1, summary_lines
+    assert "orphan_guard=2" in summary_lines[0]
+    assert "apply=3" in summary_lines[0]
+
+
+def test_vex_summary_log_fires_when_only_orphan_guard_fired(caplog) -> None:
+    """AC25 — the summary log fires even when Vex itself is idle, provided the
+    deterministic guard registered a downgrade. The pre-REVUE-249 gate only
+    looked at Vex's counters; the wider gate is required so a guard-only run
+    is still visible.
+    """
+    # Arrange
+    pipeline = _pipeline_for_summary_log()
+    vex = _StubVex(verdict_counts={}, failure_counts={})  # all zero
+    guard = _StubGuard(guard_downgrade=1)
+    caplog.set_level("INFO", logger="revue.core.pipeline")
+
+    # Act
+    pipeline._log_vex_summary(vex, guard)
+
+    # Assert
+    summary_lines = [r.getMessage() for r in caplog.records if "Vex:" in r.getMessage()]
+    assert len(summary_lines) == 1, summary_lines
+    assert "orphan_guard=1" in summary_lines[0]
+
+
+def test_vex_summary_log_silent_when_every_counter_is_zero(caplog) -> None:
+    """The summary log is conditional — when nothing fired, nothing is logged.
+    Guards against a noisy log line on reviews that emit no findings.
+    """
+    # Arrange
+    pipeline = _pipeline_for_summary_log()
+    vex = _StubVex(verdict_counts={}, failure_counts={})
+    guard = _StubGuard(guard_downgrade=0)
+    caplog.set_level("INFO", logger="revue.core.pipeline")
+
+    # Act
+    pipeline._log_vex_summary(vex, guard)
+
+    # Assert
+    summary_lines = [r.getMessage() for r in caplog.records if "Vex:" in r.getMessage()]
+    assert summary_lines == []
+
+
+def test_vex_summary_log_persists_guard_downgrade_into_metrics(monkeypatch) -> None:
+    """AC13 — the per-run ``record_vex`` call propagates the guard counter
+    into ``VexMetricsData.guard_downgrade`` so metrics.jsonl carries it.
+    """
+    # Arrange
+    pipeline = _pipeline_for_summary_log()
+    vex = _StubVex(
+        verdict_counts={"apply": 2},
+        failure_counts={},
+    )
+    guard = _StubGuard(guard_downgrade=5)
+    captured: list = []
+    monkeypatch.setattr(
+        pipeline._metrics, "record_vex", lambda data: captured.append(data)
+    )
+
+    # Act
+    pipeline._log_vex_summary(vex, guard)
+
+    # Assert
+    assert len(captured) == 1
+    assert captured[0].guard_downgrade == 5
+    assert captured[0].verdict_counts == {"apply": 2}
 
 
 def test_infrastructure_agents_survive_license_filter_when_absent_from_agents_allowed():

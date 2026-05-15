@@ -152,10 +152,14 @@ class JsonlMetricsCollector(MetricsCollector):
             }
 
         # Include Vex verdict/failure tallies if recorded (REVUE-241).
+        # guard_downgrade (REVUE-249 §D4) is persisted alongside Vex's tallies
+        # but stays a distinct counter so the LLM-vs-guard contribution is
+        # auditable without conflating verdicts with deterministic downgrades.
         if vex is not None:
             run_record["vex"] = {
                 "verdict_counts": dict(vex.verdict_counts),
                 "failure_counts": dict(vex.failure_counts),
+                "guard_downgrade": vex.guard_downgrade,
             }
 
         # REVUE-246 AC7: include the four-state run verdict + per-status
