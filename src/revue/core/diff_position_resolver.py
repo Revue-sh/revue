@@ -25,6 +25,12 @@ class DiffPositionResolver:
     ) -> int:
         """Snap reported_line to a valid position using 3-tier strategy.
 
+        **DEPRECATED (REVUE-238):** This method is retained for R&D and testing purposes
+        but is no longer called from production code. All platforms (GitHub, GitLab,
+        Bitbucket) now use the strict changed-line rule via PositionAdapter, which
+        does not snap — it classifies lines as ANCHORED, CONTEXT_LINE, REMOVED_LINE,
+        or OUT_OF_HUNK, then routes unanchored findings to summary_sink.
+
         Args:
             reported_line: Agent-reported line number (1-indexed).
             diff_content: Unified diff bytes as string.

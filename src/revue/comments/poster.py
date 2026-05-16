@@ -1,7 +1,7 @@
 """Poster: I/O layer for review comment posting (REVUE-211).
 
 Responsibilities:
-- Position resolution (DiffPositionResolver.snap before posting)
+- Position resolution via PositionAdapter (strict changed-line rule)
 - Per-finding fingerprint dedup (against PerPRCommentStore + live API)
 - VCSAdapter call (_post_or_evict_and_retry)
 - Summary comment post/update with platform-aware ordering
@@ -34,7 +34,6 @@ from revue.comments.models import (
     SummaryComment,
 )
 from revue.comments.position_adapter import get_position_adapter, PositionStatus
-from revue.core.diff_position_resolver import DiffPositionResolver
 from revue.core.models import PRContext
 from revue.core.vcs_adapter import DiffPosition, compute_gitlab_line_code
 
@@ -56,13 +55,10 @@ _REVISION_RE = re.compile(r"Review #(\d+)")
 # Adding a new platform requires only a new registry entry, not code changes.
 # ---------------------------------------------------------------------------
 
-# Platforms where position==0 means "outside diff" (unanchored → summary_sink).
-# Only used by the Bitbucket legacy path; GitHub/GitLab use PositionAdapter (AC7).
-_UNANCHORED_PLATFORMS: frozenset[str] = frozenset({"bitbucket"})
 # Platforms where summary is posted AFTER inline comments (newest-first display).
 _NEWEST_FIRST_PLATFORMS: frozenset[str] = frozenset({"gitlab", "bitbucket"})
-# Platforms using the new PositionAdapter (AC7); Bitbucket deferred to REVUE-238.
-_POSITION_ADAPTER_PLATFORMS: frozenset[str] = frozenset({"github", "gitlab"})
+# Platforms using the new PositionAdapter (AC7); all platforms migrated (REVUE-236, REVUE-238).
+_POSITION_ADAPTER_PLATFORMS: frozenset[str] = frozenset({"github", "gitlab", "bitbucket"})
 
 
 def _gitlab_position_resolver(adapter, file_path: str, line_number: int, diff_content: str) -> DiffPosition:
@@ -367,9 +363,8 @@ class Poster:
                 replacement_line_count, len(body),
             )
 
-            # --- Position resolution (AC7) ---
-            # GitHub/GitLab: strict changed-line rule via PositionAdapter — no snapping.
-            # Bitbucket: legacy snap() path (REVUE-238 will migrate it).
+            # --- Position resolution (AC7, REVUE-238) ---
+            # All platforms use strict changed-line rule via PositionAdapter.
             position = DiffPosition(file_path=file_path, line_number=line)
             _api_params: dict | None = None
             _unanchored = False
@@ -397,37 +392,16 @@ class Poster:
                         _pp["start_line"], _pp["end_line"], replacement_line_count, _api_params,
                     )
             else:
-                snapped_line = DiffPositionResolver.snap(line, diff_content)
-                Log.position.info(
-                    "[pos]   snap()  reported_line=%d → snapped_line=%d  "
-                    "changed=%s  platform=%s",
-                    line, snapped_line, snapped_line != line, self._platform_str,
+                # PositionAdapter init failed (rare post-REVUE-238). Route to summary_sink
+                # rather than post via the legacy resolver — the strict changed-line rule
+                # is the architectural commitment; posting at a possibly-wrong line is worse
+                # than surfacing the finding in the summary.
+                Log.position.warning(
+                    "[pos] ✗ FALLBACK: position adapter not initialized for %s platform "
+                    "— routing %s:%d to summary_sink",
+                    self._platform_str, file_path, line,
                 )
-                if snapped_line != line:
-                    replacement_line_count = 1
-                elif replacement_line_count > 1:
-                    end_line = snapped_line + replacement_line_count - 1
-                    if not DiffPositionResolver.line_in_diff(end_line, diff_content):
-                        Log.position.info(
-                            "[pos]   snap() rlc trimmed: end_line=%d not in diff → rlc=1",
-                            end_line,
-                        )
-                        replacement_line_count = 1
-                position = self._resolve_position(file_path, snapped_line, diff_content)
-                Log.position.info(
-                    "[pos]   _resolve_position → DiffPosition(file=%s  line_number=%d  "
-                    "position=%s  line_code=%s  new_line=%s)",
-                    position.file_path, position.line_number,
-                    getattr(position, "position", "n/a"),
-                    getattr(position, "line_code", "n/a"),
-                    getattr(position, "new_line", "n/a"),
-                )
-                if self._platform_str in _UNANCHORED_PLATFORMS and position.position == 0:
-                    _unanchored = True
-                    Log.position.info(
-                        "[pos]   position.position==0 on %s platform → UNANCHORED → summary_sink",
-                        self._platform_str,
-                    )
+                _unanchored = True
 
             if _unanchored:
                 from revue.core.agent_loader import filter_code_replacement

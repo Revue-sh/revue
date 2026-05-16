@@ -25,6 +25,7 @@ def _make_adapter(
 ) -> MagicMock:
     adapter = MagicMock()
     adapter.post_review_comment.return_value = review_comment_id
+    adapter.post_review_comment_with_params.return_value = review_comment_id
     adapter.post_summary_comment.return_value = summary_comment_id
     adapter.update_comment.return_value = True
     adapter.get_existing_comments.return_value = []
@@ -83,13 +84,15 @@ def _make_poster(
     if hunk_tracker is None:
         hunk_tracker = MagicMock()
         hunk_tracker.build_prior.return_value = {}
+    # Default diff includes line 10 as a newly added line (for position resolution testing)
+    default_diff = "@@ -8,5 +8,6 @@\n context\n-old\n+new\n+ new line 10\n context\n"
     return Poster(
         adapter=adapter,
         platform_str=platform_str,
         platform_enum=platform_enum,
         dedup_store=dedup_store,
         summary_store=summary_store,
-        diff_by_file=diff_by_file or {"a.py": "@@ -8,5 +8,5 @@\n-old\n+new\n"},
+        diff_by_file=diff_by_file or {"a.py": default_diff},
         hunk_tracker=hunk_tracker,
     )
 
@@ -100,7 +103,7 @@ def _make_poster(
 
 
 def test_post_new_finding_calls_adapter_post_review_comment():
-    """New finding → adapter.post_review_comment() is called with resolved position."""
+    """New finding → adapter.post_review_comment_with_params() is called (PositionAdapter path)."""
     adapter = _make_adapter()
     poster = _make_poster(adapter=adapter)
 
@@ -114,7 +117,7 @@ def test_post_new_finding_calls_adapter_post_review_comment():
     )
 
     assert posted >= 1
-    adapter.post_review_comment.assert_called()
+    adapter.post_review_comment_with_params.assert_called()
     assert failed == 0
 
 
@@ -205,7 +208,7 @@ def test_post_evicts_on_comment_limit_then_retries():
     """Bitbucket 200-comment limit hit → evict resolved, retry once, subsequent skip."""
     adapter = _make_adapter()
     # First post attempt returns None (limit hit), second returns id after eviction
-    adapter.post_review_comment.side_effect = [None, "c-2"]
+    adapter.post_review_comment_with_params.side_effect = [None, "c-2"]
     adapter.comment_limit_reached = True
     adapter.evict_resolved_revue_comments = MagicMock(return_value=3)
 

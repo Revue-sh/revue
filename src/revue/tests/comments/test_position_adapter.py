@@ -1,6 +1,6 @@
 """Tests for position_adapter.py — TC1-TC16 from REVUE-236.
 
-Bitbucket (TC9, TC10, TC13) is deferred to a follow-up ticket.
+Bitbucket (TC9, TC10, TC13) added by REVUE-238.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from revue.comments.position_adapter import (
+    BitbucketPositionAdapter,
     GitHubPositionAdapter,
     GitLabPositionAdapter,
     PlatformPosition,
@@ -296,6 +297,67 @@ def test_tc8_gitlab_produces_all_sha_fields_and_new_line():
 
 
 # ---------------------------------------------------------------------------
+# TC9, TC10 — Bitbucket to_api_params (REVUE-238)
+# ---------------------------------------------------------------------------
+
+def test_tc9_bitbucket_single_line_no_from_field():
+    """Single-line comment: inline.path + inline.to only; no inline.from."""
+    adapter = BitbucketPositionAdapter()
+    params = adapter.to_api_params(_anchored_pp("a.py", 10, 10))
+    assert params == {"inline": {"path": "a.py", "to": 10}}
+    assert "from" not in params["inline"]
+
+
+def test_tc10_bitbucket_multi_line_includes_from_field():
+    """Multi-line comment: inline.path + inline.to + inline.from."""
+    adapter = BitbucketPositionAdapter()
+    params = adapter.to_api_params(_anchored_pp("a.py", 10, 12))
+    assert params == {"inline": {"path": "a.py", "to": 12, "from": 10}}
+
+
+# ---------------------------------------------------------------------------
+# Centralised preconditions — all adapters must reject malformed PlatformPosition
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("adapter_factory", [
+    lambda: GitHubPositionAdapter(),
+    lambda: GitLabPositionAdapter(base_sha="b", head_sha="h", start_sha="s"),
+    lambda: BitbucketPositionAdapter(),
+], ids=["github", "gitlab", "bitbucket"])
+def test_to_api_params_rejects_end_line_less_than_start_line(adapter_factory):
+    """All adapters must reject PlatformPosition where end_line < start_line."""
+    adapter = adapter_factory()
+    bad_position = PlatformPosition(
+        file_path="a.py",
+        status=PositionStatus.ANCHORED,
+        reason="test",
+        start_line=10,
+        end_line=5,  # invalid: end before start
+    )
+    with pytest.raises(AssertionError, match="end_line"):
+        adapter.to_api_params(bad_position)
+
+
+@pytest.mark.parametrize("adapter_factory", [
+    lambda: GitHubPositionAdapter(),
+    lambda: GitLabPositionAdapter(base_sha="b", head_sha="h", start_sha="s"),
+    lambda: BitbucketPositionAdapter(),
+], ids=["github", "gitlab", "bitbucket"])
+def test_to_api_params_rejects_none_lines(adapter_factory):
+    """All adapters must reject PlatformPosition where start_line or end_line is None."""
+    adapter = adapter_factory()
+    bad_position = PlatformPosition(
+        file_path="a.py",
+        status=PositionStatus.ANCHORED,
+        reason="test",
+        start_line=None,
+        end_line=None,
+    )
+    with pytest.raises(AssertionError):
+        adapter.to_api_params(bad_position)
+
+
+# ---------------------------------------------------------------------------
 # TC11 — GitHub fixture-driven tests
 # ---------------------------------------------------------------------------
 
@@ -372,6 +434,40 @@ def test_tc12_gitlab_fixture(fixture_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# TC13 — Bitbucket fixture-driven tests (REVUE-238)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("fixture_path", _load_fixtures("bitbucket"), ids=lambda p: p.name)
+def test_tc13_bitbucket_fixture(fixture_path: Path) -> None:
+    f = json.loads(fixture_path.read_text())
+    adapter = BitbucketPositionAdapter()
+    pp = adapter.resolve(
+        f["reported_line"],
+        f["diff_snippet"],
+        f["file_path"],
+        None,
+        f.get("replacement_line_count", 1),
+    )
+
+    exp_pos = f.get("expected_position")
+    if exp_pos is None:
+        assert pp["status"] != PositionStatus.ANCHORED, (
+            f"Expected unanchored fixture {fixture_path.name} but got ANCHORED"
+        )
+        return
+
+    assert pp["status"] == PositionStatus.ANCHORED, (
+        f"Expected ANCHORED for {fixture_path.name}, got {pp['status']}"
+    )
+    assert pp["start_line"] == exp_pos["start_line"]
+    assert pp["end_line"] == exp_pos["end_line"]
+
+    exp_params = f.get("expected_api_params")
+    if exp_params:
+        assert adapter.to_api_params(pp) == exp_params
+
+
+# ---------------------------------------------------------------------------
 # TC15 — Registry: correct types, no elif chain
 # ---------------------------------------------------------------------------
 
@@ -391,9 +487,27 @@ def test_tc15_registry_gitlab_returns_gitlab_adapter():
     assert isinstance(adapter, GitLabPositionAdapter)
 
 
+def test_tc15_registry_bitbucket_returns_bitbucket_adapter():
+    adapter = get_position_adapter("bitbucket", _make_ctx("bitbucket"))
+    assert isinstance(adapter, BitbucketPositionAdapter)
+
+
 def test_tc15_registry_unknown_platform_raises():
     with pytest.raises((KeyError, ValueError)):
         get_position_adapter("unknown", _make_ctx("unknown"))
+
+
+def test_stateless_factory_returns_correct_adapter_type():
+    """The _stateless_factory helper wraps a stateless adapter class as a factory."""
+    from revue.comments.position_adapter import _stateless_factory
+
+    factory = _stateless_factory(GitHubPositionAdapter)
+    adapter = factory(_make_ctx("github"), None)
+    assert isinstance(adapter, GitHubPositionAdapter)
+
+    factory = _stateless_factory(BitbucketPositionAdapter)
+    adapter = factory(_make_ctx("bitbucket"), None)
+    assert isinstance(adapter, BitbucketPositionAdapter)
 
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from revue.core.logging_channels import Log
+from revue.core.logging_channels import Log, log_comment_posted
 
 from revue.core.models import FileChange, CodeFix
 from revue.core.vcs_adapter import (
@@ -195,6 +195,10 @@ class GitHubAdapter:
             )
             comments = resp.get("comments", []) if isinstance(resp, dict) else []
             comment_id = comments[0].get("id") if comments else resp.get("id")
+            log_comment_posted(
+                platform="github", pr_id=pr_id, comment_id=str(comment_id) if comment_id is not None else None,
+                api_params=api_params,
+            )
             return str(comment_id) if comment_id is not None else None
         except Exception as exc:
             Log.cli.error("post_review_comment_with_params failed for PR %d: %s", pr_id, exc)

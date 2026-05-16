@@ -212,6 +212,24 @@ def calculate(
 class _BasePositionAdapter:
     """Implements the shared changed-line rule; subclasses override to_api_params()."""
 
+    @staticmethod
+    def _validate_anchored(position: "PlatformPosition") -> None:
+        """Precondition shared by all to_api_params() implementations.
+
+        A PlatformPosition passed to to_api_params() must be ANCHORED with a
+        non-None, non-inverted line range. Each subclass calls this first.
+        """
+        assert position["status"] == PositionStatus.ANCHORED, (
+            f"to_api_params requires ANCHORED status, got {position['status']}"
+        )
+        assert position["start_line"] is not None and position["end_line"] is not None, (
+            f"start_line and end_line must be non-None when ANCHORED, got "
+            f"start={position['start_line']} end={position['end_line']}"
+        )
+        assert position["end_line"] >= position["start_line"], (
+            f"Invalid range: end_line={position['end_line']} < start_line={position['start_line']}"
+        )
+
     def resolve(
         self,
         reported_line: int,
@@ -290,7 +308,7 @@ class GitHubPositionAdapter(_BasePositionAdapter):
     """
 
     def to_api_params(self, position: "PlatformPosition") -> dict:
-        assert position["start_line"] is not None and position["end_line"] is not None
+        self._validate_anchored(position)
         params: dict[str, Any] = {
             "path": position["file_path"],
             "side": "RIGHT",
@@ -316,7 +334,7 @@ class GitLabPositionAdapter(_BasePositionAdapter):
         self._start_sha = start_sha
 
     def to_api_params(self, position: "PlatformPosition") -> dict:
-        assert position["start_line"] is not None
+        self._validate_anchored(position)
         return {
             "position_type": "text",
             "base_sha": self._base_sha,
@@ -328,12 +346,32 @@ class GitLabPositionAdapter(_BasePositionAdapter):
         }
 
 
+class BitbucketPositionAdapter(_BasePositionAdapter):
+    """Bitbucket pull request inline comment params.
+
+    Single-line: {"inline": {"path": ..., "to": end_line}}
+    Multi-line:  adds "from": start_line when end_line != start_line
+    """
+
+    def to_api_params(self, position: "PlatformPosition") -> dict:
+        self._validate_anchored(position)
+        inline: dict[str, Any] = {"path": position["file_path"], "to": position["end_line"]}
+        if position["end_line"] != position["start_line"]:
+            inline["from"] = position["start_line"]
+        return {"inline": inline}
+
+
 # ---------------------------------------------------------------------------
 # Factory — OCP: add a registry entry to support a new platform; no code edits
 # ---------------------------------------------------------------------------
 
-def _make_github(pr_context: "PRContext | None", vcs_adapter: Any) -> GitHubPositionAdapter:
-    return GitHubPositionAdapter()
+def _stateless_factory(cls: type) -> Any:
+    """Wrap a stateless adapter class as a factory function.
+
+    Stateless adapters (GitHub, Bitbucket) don't need pr_context or vcs_adapter;
+    the factory wrapper accepts them only to satisfy the registry signature.
+    """
+    return lambda pr_context, vcs_adapter: cls()
 
 
 def _make_gitlab(pr_context: "PRContext | None", vcs_adapter: Any) -> GitLabPositionAdapter:
@@ -345,9 +383,9 @@ def _make_gitlab(pr_context: "PRContext | None", vcs_adapter: Any) -> GitLabPosi
 
 
 _ADAPTER_FACTORY_REGISTRY: dict[str, Any] = {
-    "github": _make_github,
+    "github": _stateless_factory(GitHubPositionAdapter),
     "gitlab": _make_gitlab,
-    # "bitbucket": _make_bitbucket  ← REVUE-238 follow-up
+    "bitbucket": _stateless_factory(BitbucketPositionAdapter),
 }
 
 

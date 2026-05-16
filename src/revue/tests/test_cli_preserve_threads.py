@@ -65,16 +65,19 @@ _SRC_APP_PY_DIFF = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in ra
 _APP_PY_DIFF = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
 
 
-def _run(args, review_results, *, tmp_path, adapter=None, pre_seed=None, existing_comments=None):
+def _run(args, review_results, *, tmp_path, adapter=None, pre_seed=None, existing_comments=None,
+          diff_by_file: "dict[str, str] | None" = None):
     """Call _post_to_bitbucket with real PerPRCommentStore (rooted at tmp_path).
 
     pre_seed:           optional callable(PerPRCommentStore) to add entries before the call.
     existing_comments:  list of raw comment dicts returned by get_existing_comments (default []).
+    diff_by_file:       optional dict mapping file_path → diff snippet for PositionAdapter (default {}).
     """
     from revue.cli import _post_to_bitbucket
 
     mock_adapter = adapter or MagicMock()
     mock_adapter.post_review_comment.return_value = "new-id-1"
+    mock_adapter.post_review_comment_with_params.return_value = "new-id-1"
     mock_adapter.post_summary_comment.return_value = "summary-id"
     mock_adapter.update_comment.return_value = False
     mock_adapter.resolve_inline_comment.return_value = True
@@ -86,11 +89,13 @@ def _run(args, review_results, *, tmp_path, adapter=None, pre_seed=None, existin
     if pre_seed:
         pre_seed(PerPRCommentStore(tmp_path))
 
+    _dby_f = diff_by_file or {}
     with (
         patch("os.getcwd", return_value=str(tmp_path)),
         patch("revue.comments.platform_adapter.BitbucketAdapter", return_value=mock_adapter),
         patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
         patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+        patch("revue.cli._parse_diff_by_file", return_value=_dby_f),
     ):
         _post_to_bitbucket(args, review_results)
 
@@ -141,7 +146,8 @@ def _run_github(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id=
     return mock_adapter
 
 
-def _run_gitlab(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id="42"):
+def _run_gitlab(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id="42",
+                diff_by_file: "dict[str, str] | None" = None):
     """Call _post_to_gitlab with real PerPRCommentStore (rooted at tmp_path)."""
     from revue.cli import _post_to_gitlab
 
@@ -157,6 +163,8 @@ def _run_gitlab(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id=
     mock_adapter.update_comment.return_value = False
     mock_adapter.resolve_inline_comment.return_value = True
     mock_adapter.get_existing_comments.return_value = []
+    # GitLab PositionAdapter init calls _get_mr_version_shas — must return a 3-tuple
+    mock_adapter._get_mr_version_shas.return_value = ("base-sha", "start-sha", "head-sha")
 
     mock_summary_store = MagicMock()
     mock_summary_store.get_summary_for_pr.return_value = None
@@ -164,12 +172,14 @@ def _run_gitlab(review_results, *, tmp_path, adapter=None, pre_seed=None, pr_id=
     if pre_seed:
         pre_seed(PerPRCommentStore(tmp_path))
 
+    _dby_f = diff_by_file or {}
     with (
         patch("os.getcwd", return_value=str(tmp_path)),
         patch.dict(os.environ, {"GITLAB_TOKEN": "tok", "CI_PROJECT_PATH": "ws/repo"}, clear=False),
         patch("revue.core.gitlab_adapter.GitLabAdapter", return_value=mock_adapter),
         patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
         patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+        patch("revue.cli._parse_diff_by_file", return_value=_dby_f),
     ):
         _post_to_gitlab(args, review_results)
 
@@ -188,9 +198,12 @@ def test_no_existing_store_all_findings_posted(tmp_path) -> None:
             response=_make_review_response([_FINDING_A, _FINDING_B]),
         )
     ]
-    adapter = _run(_make_args(), review_results, tmp_path=tmp_path)
+    # Provide valid diff so line 10 and 20 anchor correctly
+    diff_for_app = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
+    adapter = _run(_make_args(), review_results, tmp_path=tmp_path,
+                   diff_by_file={"src/app.py": diff_for_app})
 
-    assert adapter.post_review_comment.call_count == 2
+    assert adapter.post_review_comment_with_params.call_count == 2
     # Store file must now exist
     store_file = tmp_path / ".revue" / "comments" / "bitbucket-PR-42.json"
     assert store_file.exists()
@@ -244,17 +257,21 @@ def test_new_finding_posted_and_saved_to_store(tmp_path) -> None:
             response=_make_review_response([_FINDING_A]),
         )
     ]
-    adapter = _run(_make_args(), review_results, tmp_path=tmp_path)
+    # Provide valid diff so line 10 anchors correctly
+    diff_for_app = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
+    adapter = _run(_make_args(), review_results, tmp_path=tmp_path,
+                   diff_by_file={"src/app.py": diff_for_app})
 
-    assert adapter.post_review_comment.call_count == 1
+    assert adapter.post_review_comment_with_params.call_count == 1
 
     store = PerPRCommentStore(tmp_path)
     from revue.comments.fingerprint import fingerprint as fp_func
-    fp = fp_func("src/app.py", 10, "")
+    # Fingerprint is computed with the actual diff that was used
+    fp = fp_func("src/app.py", 10, diff_for_app)
     assert store.has_fingerprint("bitbucket", 42, "src/app.py", fp)
 
     # Sentinel must be embedded in the posted body for API-based dedup on re-runs
-    posted_body = adapter.post_review_comment.call_args[1]["body"]
+    posted_body = adapter.post_review_comment_with_params.call_args[1]["body"]
     assert f"[//]: # (revue:fp:{fp})" in posted_body
 
 
@@ -380,9 +397,12 @@ def test_separate_pr_numbers_are_isolated(tmp_path) -> None:
             response=_make_review_response([_FINDING_A]),
         )
     ]
-    adapter = _run(_make_args(pr_id="43"), review_results, tmp_path=tmp_path, pre_seed=pre_seed)
+    # Provide valid diff so line 10 anchors correctly
+    diff_for_app = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
+    adapter = _run(_make_args(pr_id="43"), review_results, tmp_path=tmp_path, pre_seed=pre_seed,
+                   diff_by_file={"src/app.py": diff_for_app})
 
-    assert adapter.post_review_comment.call_count == 1
+    assert adapter.post_review_comment_with_params.call_count == 1
 
 
 # =====================================================================
@@ -515,13 +535,16 @@ def test_gitlab_new_finding_posted(tmp_path) -> None:
             response=_make_review_response([_FINDING_A]),
         )
     ]
-    adapter = _run_gitlab(review_results, tmp_path=tmp_path)
+    # Provide valid diff so line 10 anchors via PositionAdapter
+    diff_for_app = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
+    adapter = _run_gitlab(review_results, tmp_path=tmp_path,
+                          diff_by_file={"src/app.py": diff_for_app})
 
-    assert adapter.post_review_comment.call_count == 1
+    assert adapter.post_review_comment_with_params.call_count == 1
 
     store = PerPRCommentStore(tmp_path)
     from revue.comments.fingerprint import fingerprint as fp_func
-    fp = fp_func("src/app.py", 10, "")
+    fp = fp_func("src/app.py", 10, diff_for_app)
     assert store.has_fingerprint("gitlab", 42, "src/app.py", fp)
 
 
@@ -610,14 +633,9 @@ def test_bitbucket_skips_finding_when_line_outside_diff(tmp_path) -> None:
 
 
 def test_bitbucket_posts_finding_when_line_in_diff(tmp_path) -> None:
-    """Bitbucket: position=1 from resolve_position → post_review_comment IS called."""
-    from revue.core.vcs_adapter import DiffPosition
-
+    """Bitbucket: PositionAdapter finds line in diff → post_review_comment_with_params IS called."""
     adapter = MagicMock()
-    adapter.post_review_comment.return_value = "new-id"
-    adapter.resolve_position.return_value = DiffPosition(
-        file_path="src/app.py", line_number=10, position=1
-    )
+    adapter.post_review_comment_with_params.return_value = "new-id"
 
     review_results = [
         _FakeReviewResult(
@@ -625,27 +643,38 @@ def test_bitbucket_posts_finding_when_line_in_diff(tmp_path) -> None:
             response=_make_review_response([_FINDING_A]),
         )
     ]
-    _run(_make_args(), review_results, tmp_path=tmp_path, adapter=adapter)
+    # Provide valid diff so line 10 anchors correctly
+    diff_for_app = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
+    _run(_make_args(), review_results, tmp_path=tmp_path, adapter=adapter,
+         diff_by_file={"src/app.py": diff_for_app})
 
-    adapter.post_review_comment.assert_called_once()
+    adapter.post_review_comment_with_params.assert_called_once()
 
 
-def test_gitlab_posts_finding_even_when_line_outside_diff_hunks(tmp_path) -> None:
-    """GitLab: guard does NOT fire — compute_gitlab_line_code snaps to nearest hunk line."""
+def test_gitlab_skips_finding_when_line_outside_diff_hunks(tmp_path) -> None:
+    """GitLab: line outside diff → routed to summary_sink, NOT posted inline.
+
+    Under the strict changed-line rule (REVUE-236/238), lines outside the diff
+    route to summary_sink. Previously this test asserted the opposite (snapping
+    behaviour from compute_gitlab_line_code) — that behaviour is gone.
+    """
     review_results = [
         _FakeReviewResult(
             file_path="src/app.py",
-            # Line 999 is far outside any real diff — GitLab snaps, not skips
+            # Line 999 is far outside the diff — under strict rule, summary_sink only.
             response=_make_review_response([{
                 "severity": "high", "issue": "SQL injection", "line": 999,
                 "details": "Details", "recommendation": "Fix it",
             }]),
         )
     ]
-    adapter = _run_gitlab(review_results, tmp_path=tmp_path)
+    # Diff covers only lines 1–25 → line 999 is out_of_hunk
+    diff_for_app = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
+    adapter = _run_gitlab(review_results, tmp_path=tmp_path,
+                          diff_by_file={"src/app.py": diff_for_app})
 
-    # GitLab snaps the position — the comment must still be posted
-    adapter.post_review_comment.assert_called_once()
+    # Strict rule: line 999 is out_of_hunk → summary_sink, no inline post
+    adapter.post_review_comment_with_params.assert_not_called()
 
 
 # =====================================================================
@@ -666,6 +695,7 @@ def test_bitbucket_summary_posted_after_inline_comments(tmp_path) -> None:
     )
     mock_adapter = MagicMock()
     mock_adapter.post_review_comment.return_value = "inline-id"
+    mock_adapter.post_review_comment_with_params.return_value = "inline-id"
     mock_adapter.post_summary_comment.return_value = "summary-id"
     mock_adapter.get_existing_comments.return_value = []
     mock_adapter.update_comment.return_value = False
@@ -673,14 +703,18 @@ def test_bitbucket_summary_posted_after_inline_comments(tmp_path) -> None:
     mock_summary_store.get_summary_for_pr.return_value = None
 
     call_order = []
-    mock_adapter.post_review_comment.side_effect = lambda **kw: (call_order.append("inline"), "inline-id")[1]
+    mock_adapter.post_review_comment_with_params.side_effect = lambda **kw: (call_order.append("inline"), "inline-id")[1]
     mock_adapter.post_summary_comment.side_effect = lambda **kw: (call_order.append("summary"), "summary-id")[1]
+
+    # Provide valid diff so line 10 anchors correctly
+    diff_for_app = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
 
     with (
         patch("os.getcwd", return_value=str(tmp_path)),
         patch("revue.comments.platform_adapter.BitbucketAdapter", return_value=mock_adapter),
         patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
         patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+        patch("revue.cli._parse_diff_by_file", return_value={"app.py": diff_for_app}),
     ):
         from revue.cli import _post_to_bitbucket
         _post_to_bitbucket(_make_args(), [rr])
@@ -702,15 +736,21 @@ def test_gitlab_summary_posted_after_inline_comments(tmp_path) -> None:
     )
     mock_adapter = MagicMock()
     mock_adapter.post_review_comment.return_value = "inline-id"
+    mock_adapter.post_review_comment_with_params.return_value = "inline-id"
     mock_adapter.post_summary_comment.return_value = "summary-id"
     mock_adapter.get_existing_comments.return_value = []
     mock_adapter.update_comment.return_value = False
+    # GitLab PositionAdapter init calls _get_mr_version_shas — must return a 3-tuple
+    mock_adapter._get_mr_version_shas.return_value = ("base-sha", "start-sha", "head-sha")
     mock_summary_store = MagicMock()
     mock_summary_store.get_summary_for_pr.return_value = None
 
     call_order = []
-    mock_adapter.post_review_comment.side_effect = lambda **kw: (call_order.append("inline"), "inline-id")[1]
+    mock_adapter.post_review_comment_with_params.side_effect = lambda **kw: (call_order.append("inline"), "inline-id")[1]
     mock_adapter.post_summary_comment.side_effect = lambda **kw: (call_order.append("summary"), "summary-id")[1]
+
+    # Provide valid diff so line 10 anchors correctly
+    diff_for_app = "@@ -0,0 +1,25 @@\n" + "".join(f"+app_line_{i}\n" for i in range(1, 26))
 
     with (
         patch("os.getcwd", return_value=str(tmp_path)),
@@ -718,6 +758,7 @@ def test_gitlab_summary_posted_after_inline_comments(tmp_path) -> None:
         patch("revue.core.gitlab_adapter.GitLabAdapter", return_value=mock_adapter),
         patch("revue.comments.file_store.CommentFileStore", return_value=mock_summary_store),
         patch("revue.core.diff_parser.parse_diff_file", return_value=[]),
+        patch("revue.cli._parse_diff_by_file", return_value={"app.py": diff_for_app}),
     ):
         from revue.cli import _post_to_gitlab
         _post_to_gitlab(_make_args(), [rr])

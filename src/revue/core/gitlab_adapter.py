@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from revue.core.logging_channels import Log
+from revue.core.logging_channels import Log, log_comment_posted
 
 from revue.core.models import FileChange, CodeFix
 from revue.core.vcs_adapter import (
@@ -218,6 +218,11 @@ class GitLabAdapter:
                 {"body": body, "position": api_params},
             )
             discussion_id = resp.get("id")
+            log_comment_posted(
+                platform="gitlab", pr_id=pr_id,
+                comment_id=str(discussion_id) if discussion_id is not None else None,
+                api_params=api_params,
+            )
             return str(discussion_id) if discussion_id is not None else None
         except Exception as exc:
             Log.cli.warning(

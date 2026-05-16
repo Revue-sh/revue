@@ -16,7 +16,7 @@ from revue.core.diff_parser import parse_diff
 from revue.core.models import FileChange
 from revue.core.vcs_adapter import DiffPosition
 from .models import Platform
-from revue.core.logging_channels import Log
+from revue.core.logging_channels import Log, log_comment_posted
 
 # logging_channels imported for Log.cli
 
@@ -541,7 +541,7 @@ class BitbucketAdapter(PlatformAdapter):
         """Post using pre-built api_params from BitbucketPositionAdapter.to_api_params().
 
         api_params contains {"inline": {"path": ..., "to": ..., ["from": ...]}}
-        (REVUE-238: BitbucketPositionAdapter not yet wired; method stub for protocol compliance.)
+        Wired in REVUE-238 — Bitbucket now uses PositionAdapter on par with GitHub/GitLab.
         """
         payload: dict[str, Any] = {"content": {"raw": body}, **api_params}
         try:
@@ -549,6 +549,11 @@ class BitbucketAdapter(PlatformAdapter):
             response = httpx.post(url, json=payload, **self._auth_kwargs())
             response.raise_for_status()
             comment_id = response.json().get("id")
+            log_comment_posted(
+                platform="bitbucket", pr_id=pr_id,
+                comment_id=str(comment_id) if comment_id is not None else None,
+                api_params=api_params,
+            )
             return str(comment_id) if comment_id is not None else None
         except httpx.HTTPStatusError as exc:
             resp_body = exc.response.text[:300] if exc.response.text else "(empty)"

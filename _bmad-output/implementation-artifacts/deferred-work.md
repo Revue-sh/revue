@@ -101,3 +101,11 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ### D2 — `rr.file_path` can be `None` or empty string
 `src/revue/cli.py` / reviewed-files dedup block. If a `ReviewResult` has `file_path=None` and a truthy `response`, it passes the `not rr.error and rr.response` filter and renders as `` `None` `` in the published comment. Pre-existing issue (old code had the same behaviour). Should be guarded with `if rr.file_path`.
+
+---
+
+## Deferred from: code review of REVUE-249 (2026-05-15)
+
+- **DF1 — Vex prompt heuristic inconsistency** `src/revue/comments/_verifier.py` — The block-completeness subsection tells Vex: "if the trailing line is at or deeper than the *deepest* indent inside the range, the block continues." The deterministic guard correctly uses `min_indent` (shallowest/outermost) not `max_indent`. For same-level orphan cases like PR #29 Case 1 (orphan at indent 4 with deepest range indent ~16), Vex's heuristic (`4 >= 16 → False`) would pass the finding where the guard (`4 >= 4 → True`) correctly fires. The guard compensates as the hard backstop. The prompt wording should be corrected to "shallowest/outermost indent in the range" for full Vex-side effectiveness.
+- **DF2 — No file-content cache in `OrphanLineGuardPostProcessor`** `src/revue/comments/_orphan_line_guard.py:79` — Same file is read from disk once per finding. Consistent with `VexVerifyPostProcessor`'s pattern. For reviews with many findings on the same large file this causes redundant I/O and inconsistent snapshots if the file changes mid-run (unlikely). A `dict[str, str]` read-cache would eliminate this.
+- **DF3 — `_build_consolidator` positional 3-tuple expands each story** `src/revue/core/pipeline.py:1349` — Was 2-tuple (REVUE-248), is now 3-tuple (REVUE-249). A `NamedTuple` or lightweight result dataclass would remove positional coupling and make the next addition safe without sync-updating all unpack sites.
