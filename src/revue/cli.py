@@ -48,6 +48,11 @@ from revue.core.config_loader import (
     load_config,
     validate_config,
 )
+from revue.core.models_registry import (
+    ModelConfig,
+    load_builtin_registry,
+    merge_user_overrides,
+)
 from revue.core.diff_parser import filter_changes, parse_diff_file
 from revue.core.ai_client import create_ai_client
 from revue.core.pipeline import ReviewPipeline
@@ -191,6 +196,26 @@ def build_parser() -> argparse.ArgumentParser:
     val = sub.add_parser("validate", help="Validate a config file")
     val.add_argument("--config", default=".revue.yml", help="Path to config file")
     val.set_defaults(func=cmd_validate)
+
+    # -- list-models --
+    list_models = sub.add_parser(
+        "list-models",
+        help="List supported and user-overridden models with their per-model knobs",
+    )
+    fmt = list_models.add_mutually_exclusive_group()
+    fmt.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="Emit JSON array (one object per model) instead of the default table",
+    )
+    fmt.add_argument(
+        "--markdown",
+        action="store_true",
+        dest="as_markdown",
+        help="Emit a Markdown table (used to regenerate the README section)",
+    )
+    list_models.set_defaults(func=cmd_list_models)
 
     return parser
 
@@ -1574,6 +1599,218 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     print("Config valid")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# list-models (REVUE-264)
+# ---------------------------------------------------------------------------
+
+# Columns emitted by ``revue list-models`` (default + markdown modes).
+# Keep this list as the single source of truth — both renderers iterate it.
+_LIST_MODELS_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("Model", "model_id"),
+    ("Provider", "provider"),
+    ("Tier", "tier"),
+    ("schema_strict", "schema_strict"),
+    ("tool_choice_first_turn", "tool_choice_first_turn"),
+    ("max_tokens_default", "max_tokens_default"),
+)
+
+# Marker appended to a cell when the user has overridden it via .revue.yml.
+_OVERRIDE_MARKER = "*"
+
+
+def _load_user_models_block(cwd: Path) -> dict[str, dict[str, object]] | None:
+    """Read ``.revue.yml`` in *cwd* and return its ``models:`` mapping.
+
+    Returns ``None`` when the file is absent, empty, or has no ``models:``
+    block. Any YAML parse error is surfaced as ``ValueError`` so the caller
+    can decide whether to fail or fall back to the built-in registry.
+    """
+    import yaml  # local import: avoid yaml at module-import time
+
+    revue_yml = cwd / ".revue.yml"
+    if not revue_yml.exists():
+        return None
+    try:
+        raw = yaml.safe_load(revue_yml.read_text()) or {}
+    except (yaml.YAMLError, OSError) as exc:
+        raise ValueError(f"failed to read {revue_yml}: {exc}") from exc
+    models = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(models, dict):
+        return None
+    return models
+
+
+def _resolve_list_models_registry() -> tuple[dict[str, ModelConfig], set[tuple[str, str]]]:
+    """Return ``(registry, overridden_cells)``.
+
+    ``overridden_cells`` is the set of ``(model_id, knob_name)`` pairs that
+    differ from the built-in entry — used by the renderers to annotate cells.
+    A customer-added model (not in the built-in) marks every cell as
+    overridden.
+    """
+    builtin = load_builtin_registry()
+    user_models = _load_user_models_block(Path.cwd())
+    if not user_models:
+        return builtin, set()
+    merged = merge_user_overrides(builtin, user_models)
+
+    overridden: set[tuple[str, str]] = set()
+    knob_fields = ("provider", "schema_mode", "schema_strict",
+                   "tool_choice_first_turn", "max_tokens_default", "tier")
+    for model_id, entry in merged.items():
+        base = builtin.get(model_id)
+        if base is None:
+            # Customer-added entry: flag the row itself as overridden.
+            overridden.add((model_id, "model_id"))
+            continue
+        for knob in knob_fields:
+            if getattr(entry, knob) != getattr(base, knob):
+                overridden.add((model_id, knob))
+    return merged, overridden
+
+
+def _config_as_dict(
+    cfg: ModelConfig,
+    overridden_cells: set[tuple[str, str]] | None = None,
+) -> dict[str, object]:
+    """Render a ModelConfig as a plain dict (drops the read-only extras wrapper).
+
+    When *overridden_cells* is supplied, an ``_overridden_fields`` key lists
+    the knob names that came from ``.revue.yml`` for this model. A customer-
+    added row (flagged via ``(model_id, "model_id")``) is reported as
+    ``_customer_added: true`` instead, since every knob technically deviates
+    from "no built-in".
+    """
+    payload: dict[str, object] = {
+        "model_id": cfg.model_id,
+        "provider": cfg.provider,
+        "schema_mode": cfg.schema_mode,
+        "schema_strict": cfg.schema_strict,
+        "tool_choice_first_turn": cfg.tool_choice_first_turn,
+        "max_tokens_default": cfg.max_tokens_default,
+        "tier": cfg.tier,
+        "extras": dict(cfg.extras),
+    }
+    if overridden_cells is not None:
+        is_customer_added = (cfg.model_id, "model_id") in overridden_cells
+        payload["_customer_added"] = is_customer_added
+        if is_customer_added:
+            payload["_overridden_fields"] = []
+        else:
+            payload["_overridden_fields"] = sorted(
+                knob for (mid, knob) in overridden_cells if mid == cfg.model_id
+            )
+    return payload
+
+
+def _cell_value(cfg: ModelConfig, field: str, overridden: bool) -> str:
+    """Stringify a knob value and append the override marker when applicable."""
+    if field == "model_id":
+        raw = cfg.model_id
+    else:
+        raw = getattr(cfg, field)
+    text = "true" if raw is True else "false" if raw is False else str(raw)
+    return f"{text}{_OVERRIDE_MARKER}" if overridden else text
+
+
+def _render_human_table(
+    registry: dict[str, ModelConfig],
+    overridden_cells: set[tuple[str, str]],
+) -> str:
+    """Render the registry as a fixed-width, terminal-friendly table.
+
+    Uses stdlib f-string padding only — no ``tabulate`` / ``rich``.
+    """
+    headers = [label for label, _ in _LIST_MODELS_COLUMNS]
+
+    rows: list[list[str]] = []
+    for model_id in sorted(registry):
+        cfg = registry[model_id]
+        row: list[str] = []
+        for label, field in _LIST_MODELS_COLUMNS:
+            is_override = (model_id, field) in overridden_cells
+            # A customer-added row marks every cell as overridden so the user
+            # sees the row stands out even on its row-only flag.
+            if (model_id, "model_id") in overridden_cells:
+                is_override = True
+            row.append(_cell_value(cfg, field, is_override))
+        rows.append(row)
+
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    def fmt_row(cells: list[str]) -> str:
+        return "  ".join(c.ljust(widths[i]) for i, c in enumerate(cells))
+
+    lines = [fmt_row(headers), fmt_row(["-" * w for w in widths])]
+    lines.extend(fmt_row(r) for r in rows)
+    lines.append("")
+    lines.append(
+        f"({_OVERRIDE_MARKER}) value overridden by .revue.yml in current directory."
+    )
+    return "\n".join(lines)
+
+
+def _render_markdown_table(
+    registry: dict[str, ModelConfig],
+    overridden_cells: set[tuple[str, str]],
+) -> str:
+    """Render the registry as a GitHub-flavoured Markdown table."""
+    headers = [label for label, _ in _LIST_MODELS_COLUMNS]
+    header_line = "| " + " | ".join(headers) + " |"
+    sep_line = "| " + " | ".join("---" for _ in headers) + " |"
+
+    body_lines: list[str] = []
+    for model_id in sorted(registry):
+        cfg = registry[model_id]
+        cells: list[str] = []
+        for label, field in _LIST_MODELS_COLUMNS:
+            is_override = (model_id, field) in overridden_cells
+            if (model_id, "model_id") in overridden_cells:
+                is_override = True
+            cells.append(_cell_value(cfg, field, is_override))
+        body_lines.append("| " + " | ".join(cells) + " |")
+
+    footer = (
+        f"\n_({_OVERRIDE_MARKER}) value overridden by `.revue.yml` "
+        "in current directory._"
+    )
+    return "\n".join([header_line, sep_line, *body_lines]) + footer
+
+
+def cmd_list_models(args: argparse.Namespace) -> int:
+    """``revue list-models`` handler.
+
+    Default output is a human-readable table. ``--json`` emits a JSON array;
+    ``--markdown`` emits a GitHub-flavoured Markdown table (used to regenerate
+    the README's Supported Models section).
+    """
+    try:
+        registry, overridden_cells = _resolve_list_models_registry()
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if getattr(args, "as_json", False):
+        # Deterministic order: sorted by model_id so the JSON output is
+        # diff-friendly and CI assertions are stable.
+        payload = [
+            _config_as_dict(registry[mid], overridden_cells)
+            for mid in sorted(registry)
+        ]
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    if getattr(args, "as_markdown", False):
+        print(_render_markdown_table(registry, overridden_cells))
+        return 0
+
+    print(_render_human_table(registry, overridden_cells))
     return 0
 
 
