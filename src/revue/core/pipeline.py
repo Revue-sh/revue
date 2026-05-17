@@ -66,6 +66,41 @@ from .run_verdict import AgentStatus, RunVerdict, compute_run_verdict
 
 _log = logging.getLogger(__name__)
 
+
+def build_consolidation_postprocessors(
+    *,
+    vex_post_processor: Any,
+    orphan_guard_post_processor: Any,
+    summary_sink: Any,
+) -> list:
+    """Single source of truth for the consolidator post-processor chain order.
+
+    Order is contract: NoOp drops trivial findings before Vex burns LLM calls;
+    Vex verifies; OrphanLineGuard sweeps Vex's ``apply`` survivors;
+    UnanchoredFindingExtractor observes the final outcome (REVUE-249 §D4 /
+    P3 plan). Callers wishing to skip a stage (e.g. the dev tool has no
+    summary sink) compose their own chain by selecting from this list.
+
+    F7 — ``NoOpSuggestionDropper`` and ``UnanchoredFindingExtractor`` are
+    imported lazily inside the helper rather than at module scope. This
+    matches the original (pre-extraction) wiring in ``run_review`` and
+    avoids paying the import cost when the helper is unused (e.g. in tests
+    that only need other ``pipeline`` symbols). No behavioural delta on
+    runtime startup beyond a negligible per-call ``LOAD_GLOBAL``.
+    """
+    from revue.comments.consolidator import (
+        NoOpSuggestionDropper,
+        UnanchoredFindingExtractor,
+    )
+
+    return [
+        NoOpSuggestionDropper(),
+        vex_post_processor,
+        orphan_guard_post_processor,
+        UnanchoredFindingExtractor(summary_sink),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Premium-agent sentinel — these agents trigger full orchestration path
 # ---------------------------------------------------------------------------
@@ -1312,11 +1347,7 @@ class ReviewPipeline:
             diff_by_file=diff_by_file,
         )
 
-        # P3: NoOpSuggestionDropper runs FIRST so trivial no-ops are filtered
-        # before they burn Vex LLM calls. Vex then verifies the remaining
-        # real candidates. OrphanLineGuard sweeps Vex's ``apply`` survivors
-        # for block-completeness regressions. UnanchoredFindingExtractor runs
-        # last because it observes the post-verification outcome.
+        # Chain order is contract — see ``build_consolidation_postprocessors``.
         consolidator = Consolidator(
             grouping=ProximityAndCountGroupingStrategy(
                 n=self.config.consolidation_proximity_lines,
@@ -1328,12 +1359,11 @@ class ReviewPipeline:
                 diff_by_file=diff_by_file,
                 repo_root=repo_root,
             ),
-            post_processors=[
-                NoOpSuggestionDropper(),
-                vex_post_processor,
-                orphan_guard_post_processor,
-                UnanchoredFindingExtractor(summary_sink),
-            ],
+            post_processors=build_consolidation_postprocessors(
+                vex_post_processor=vex_post_processor,
+                orphan_guard_post_processor=orphan_guard_post_processor,
+                summary_sink=summary_sink,
+            ),
         )
 
         # REVUE-240 invariant — defensive runtime check. The test
