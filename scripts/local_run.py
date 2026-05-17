@@ -36,7 +36,29 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(REPO_ROOT))  # for _revue package
 
 from revue.comments.position_adapter import calculate, PositionStatus
+from revue.core.terminal_state import TerminalState, classify_terminal_state
 from positioning.adapters import ADAPTERS
+
+
+def _classify_agent_output(raw_text: str) -> TerminalState:
+    """Classify a /revue-local Agent-fork output via REVUE-246's contract.
+
+    Calls ``classify_terminal_state`` with dev-tool defaults (one-shot
+    Agent fork, no tool loop): ``stop_reason='end_turn'``, ``iterations_used=1``,
+    ``max_iterations=1``, ``hit_iteration_cap=False``. The returned
+    :class:`TerminalState` carries the validated payload — callers route
+    on ``state`` ('findings' / 'clean' / 'error'). Legacy shapes (raw
+    findings arrays, ``{"findings": []}``) collapse to
+    ``invalid_response_schema`` — the AC10 silent-bail-out disambiguation
+    REVUE-246 was built to surface.
+    """
+    return classify_terminal_state(
+        raw_text=raw_text,
+        stop_reason="end_turn",
+        iterations_used=1,
+        max_iterations=1,
+        hit_iteration_cap=False,
+    )
 
 LOG_DIR = Path("/tmp/revue_local")
 
@@ -393,11 +415,13 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     user_prompt = (
         "Carefully review the code diff for bugs, security issues, performance "
         f"problems, and code quality concerns. {_REVIEW_INSTRUCTIONS}"
-        "\n\nIMPORTANT: Your ONLY task is to review the diff above and output a JSON "
-        "array of findings. Do NOT use the Agent tool. Do NOT spawn other agents. "
-        "Do NOT make any HTTP requests to api.anthropic.com or any other external API. "
-        "Produce your findings using only the diff text provided above, then write your "
-        "JSON output to the output file using the Write tool."
+        "\n\nIMPORTANT: Your ONLY task is to review the diff above and output the "
+        "three-state JSON envelope (findings | clean | error) per the contract above. "
+        "Do NOT emit a bare findings array — that is the legacy shape and will be "
+        "rejected as invalid_response_schema. Do NOT use the Agent tool. Do NOT spawn "
+        "other agents. Do NOT make any HTTP requests to api.anthropic.com or any other "
+        "external API. Produce your output using only the diff text provided above, "
+        "then write your JSON envelope to the output file using the Write tool."
     )
 
     manifest = []
@@ -500,22 +524,25 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
                 "[revue] consolidate  no output for agent=%s — skipping", agent_name
             )
             continue
-        raw = output_file.read_text().strip()
-        clean = raw
-        if clean.startswith("```"):
-            clean = "\n".join(clean.split("\n")[1:])
-        if clean.endswith("```"):
-            clean = "\n".join(clean.split("\n")[:-1])
-        clean = clean.strip()
-        try:
-            data = json.loads(clean)
-        except json.JSONDecodeError as exc:
+        raw = output_file.read_text()
+        ts = _classify_agent_output(raw)
+        if ts.state == "error":
+            err = ts.payload["error"]
             Log.pipeline.warning(
-                "[revue] consolidate  agent=%s  invalid JSON: %s", agent_name, exc
+                "[revue] consolidate  agent=%s  error code=%s message=%s",
+                agent_name, err["code"], err["message"],
             )
             continue
-        if not isinstance(data, list):
-            data = data.get("findings", []) if isinstance(data, dict) else []
+        if ts.state == "clean":
+            Log.pipeline.info(
+                "[revue] consolidate  agent=%s  clean — %s (conf=%.2f)",
+                agent_name,
+                ts.payload.get("summary", ""),
+                float(ts.payload.get("confidence", 0.0)),
+            )
+            continue
+        # state == "findings" — payload schema guarantees the list is present and non-empty.
+        data = ts.payload["findings"]
 
         severity_default = (
             stub_agents[agent_name].definition.severity_default
