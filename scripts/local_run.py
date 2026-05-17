@@ -40,6 +40,67 @@ from revue.core.terminal_state import TerminalState, classify_terminal_state
 from positioning.adapters import ADAPTERS
 
 
+def _build_tool_scope_constraint(diff_files: list[str] | tuple[str, ...]) -> str:
+    """Build the reviewer-tools scope constraint block for Phase 1 prompts.
+
+    Tells the Agent fork which paths are in-scope for reading and warns that
+    reading outside the list invalidates the findings. The constraint is
+    observability-only (Phase 3 emits a soft audit warning, never rejects).
+
+    The constraint sentence is verbatim from the approved plan; do not
+    paraphrase. See Slice 2 of
+    /Users/langostin/.claude/plans/cryptic-percolating-perlis.md.
+    """
+    header = (
+        "Available tools: Read, Grep, Bash. Restrict reads to the file paths "
+        "listed below — these are the files modified in this PR. Reading "
+        "paths outside this list invalidates your findings."
+    )
+    if not diff_files:
+        return header + "\n\nFiles modified in this PR: (none)"
+    bullets = "\n".join(f"  - {p}" for p in diff_files)
+    return f"{header}\n\nFiles modified in this PR:\n{bullets}"
+
+
+def _audit_finding_paths(
+    *,
+    agent_name: str,
+    findings: list[dict],
+    diff_files: set[str] | frozenset[str] | list[str] | tuple[str, ...],
+) -> list[str]:
+    """Cross-check finding ``file_path`` values against the diff file set.
+
+    Returns the list of out-of-diff paths (preserving first-occurrence order).
+    If any are found, emits a single warning line to stderr naming the agent
+    and listing every offending path. Findings are never mutated — this
+    helper is purely observability per Slice 2's threat-model framing
+    (the dev tool doesn't need hard enforcement).
+
+    Findings missing a ``file_path`` field are silently skipped (malformed
+    findings are surfaced elsewhere via three-state validation; the audit
+    only opines on the path-scope dimension).
+    """
+    diff_set = set(diff_files)
+    out_of_diff: list[str] = []
+    seen: set[str] = set()
+    for item in findings:
+        path = item.get("file_path") if isinstance(item, dict) else None
+        if not path or path in seen:
+            continue
+        if path not in diff_set:
+            out_of_diff.append(path)
+            seen.add(path)
+
+    if out_of_diff:
+        joined = ", ".join(out_of_diff)
+        sys.stderr.write(
+            f"[revue-local][tool-audit] agent={agent_name} referenced "
+            f"out-of-diff path(s): {joined}\n"
+        )
+        sys.stderr.flush()
+    return out_of_diff
+
+
 def _classify_agent_output(raw_text: str) -> TerminalState:
     """Classify a /revue-local Agent-fork output via REVUE-246's contract.
 
@@ -412,6 +473,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     review_agents = [a for a in all_agents if a.name in _REVIEW_AGENTS]
 
     diff_text = _build_diff_text(changes)
+    tool_scope_block = _build_tool_scope_constraint(sorted(diff_by_file.keys()))
     user_prompt = (
         "Carefully review the code diff for bugs, security issues, performance "
         f"problems, and code quality concerns. {_REVIEW_INSTRUCTIONS}"
@@ -422,6 +484,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
         "other agents. Do NOT make any HTTP requests to api.anthropic.com or any other "
         "external API. Produce your output using only the diff text provided above, "
         "then write your JSON envelope to the output file using the Write tool."
+        f"\n\n{tool_scope_block}"
     )
 
     manifest = []
@@ -543,6 +606,13 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
             continue
         # state == "findings" — payload schema guarantees the list is present and non-empty.
         data = ts.payload["findings"]
+
+        # Slice 2: soft post-hoc audit — observability only, never rejects findings.
+        _audit_finding_paths(
+            agent_name=agent_name,
+            findings=data,
+            diff_files=set(diff_by_file.keys()),
+        )
 
         severity_default = (
             stub_agents[agent_name].definition.severity_default
