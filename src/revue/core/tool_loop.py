@@ -513,6 +513,11 @@ def anthropic_tool_loop(
     return CompletionResult(text=last_text, usage=token_usage)
 
 
+_VALID_TOOL_CHOICE_FIRST_TURN: Final[frozenset[str]] = frozenset(
+    {"auto", "required", "none"}
+)
+
+
 def openai_tool_loop(
     sdk_client: Any,
     *,
@@ -528,6 +533,7 @@ def openai_tool_loop(
     response_format: "dict[str, Any] | None" = None,
     agent_name: "str | None" = None,
     metrics: "Any | None" = None,
+    tool_choice_first_turn: str = "auto",
 ) -> "CompletionResult":  # type: ignore[name-defined]
     """Run the OpenAI-compatible tool-use loop.
 
@@ -544,7 +550,24 @@ def openai_tool_loop(
     Azure / OpenRouter / Custom reviewer calls surface in
     ``.revue/metrics.jsonl`` — closing the asymmetry where only the
     Anthropic loop persisted per-agent token usage on the tool-use path.
+
+    REVUE-263: ``tool_choice_first_turn`` lets the per-model registry
+    nudge the opening turn — required by qwen / deepseek models that
+    otherwise skip tools entirely. Only turn 1 carries the hint; later
+    turns omit the key so OpenAI's implicit ``auto`` applies and the
+    forced-finalize guardrail can still emit a tool-free text response.
+    The value ``"auto"`` is treated as a no-op (no key written) to keep
+    request payloads identical to today's wire shape for the common case.
     """
+    # Fail fast before any API spend if the caller (typically a client
+    # that read the value from the registry) passed a bad value.
+    if tool_choice_first_turn not in _VALID_TOOL_CHOICE_FIRST_TURN:
+        raise ValueError(
+            f"tool_choice_first_turn must be one of "
+            f"{sorted(_VALID_TOOL_CHOICE_FIRST_TURN)}, got "
+            f"{tool_choice_first_turn!r}."
+        )
+
     from datetime import datetime, timezone
     from .ai_client import CompletionResult, TokenUsage, _build_openai_token_usage, _openai_messages
     from .metrics import MetricsEvent
@@ -565,6 +588,11 @@ def openai_tool_loop(
         }
         if response_format is not None:
             kwargs["response_format"] = response_format
+        # Only the opening turn carries the nudge; subsequent iterations
+        # let OpenAI's implicit ``auto`` apply so the model can converge.
+        # ``auto`` is the wire-level default — write nothing for it.
+        if iter_idx == 0 and tool_choice_first_turn != "auto":
+            kwargs["tool_choice"] = tool_choice_first_turn
         resp = sdk_client.chat.completions.create(**kwargs)
         choice = resp.choices[0]
         message = choice.message

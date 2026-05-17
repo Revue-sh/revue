@@ -25,6 +25,72 @@ import openai
 
 from .ai_config import AIConfig
 from .metrics import MetricsCollector, MetricsEvent, NullMetricsCollector
+from .models_registry import ModelConfig, load_builtin_registry
+
+_log = logging.getLogger(__name__)
+
+# REVUE-263 fallback knobs for customer-added models that aren't in the
+# built-in registry. ``ai_client`` doesn't see the merged user-override
+# view (config_loader plumbs that at startup, then drops it), so we keep
+# the safety net minimal and explicit. ``auto`` matches the OpenAI wire
+# default; 4096 matches the long-standing client signature default — both
+# preserve today's behaviour exactly for users on the fallback path.
+_FALLBACK_TOOL_CHOICE_FIRST_TURN: Final[str] = "auto"
+_FALLBACK_MAX_TOKENS: Final[int] = 4096
+
+
+def _resolve_model_config(model_id: str) -> "ModelConfig | None":
+    """Look up a model's registry entry; return ``None`` for fallback path.
+
+    Used only by the OpenAI-compatible clients (REVUE-263). The Anthropic
+    client deliberately ignores the registry knobs — its tool semantics
+    differ and the spec scopes the knob to the OpenAI loop.
+
+    Customer-added entries live in the merged registry built by
+    ``config_loader._load_and_validate_model_registry``, but the merged
+    view is not threaded into ``ai_client``. Falling back to the built-in
+    view keeps this layer dependency-free; missing entries trigger a
+    one-shot INFO log so operators can see they're on the fallback path
+    rather than the engineered defaults.
+    """
+    registry = load_builtin_registry()
+    cfg = registry.get(model_id)
+    if cfg is None:
+        _log.info(
+            "[ai-client] model %r not in built-in registry; "
+            "using fallback tool_choice_first_turn=%s and max_tokens_default=%d",
+            model_id,
+            _FALLBACK_TOOL_CHOICE_FIRST_TURN,
+            _FALLBACK_MAX_TOKENS,
+        )
+    return cfg
+
+
+def _apply_model_knobs(
+    cfg: "ModelConfig | None",
+    caller_max_tokens: "int | None",
+) -> tuple[int, str]:
+    """Resolve per-call values from the registry snapshot + caller overrides.
+
+    Returns ``(max_tokens, tool_choice_first_turn)``. Caller-supplied
+    ``max_tokens`` always wins; ``None`` means "use the registry default
+    (or the fallback if this model isn't registered)". This is the only
+    point where the registry knobs influence the wire shape, which keeps
+    the policy auditable — clients themselves stay dumb.
+    """
+    if cfg is None:
+        max_tokens = (
+            caller_max_tokens
+            if caller_max_tokens is not None
+            else _FALLBACK_MAX_TOKENS
+        )
+        return max_tokens, _FALLBACK_TOOL_CHOICE_FIRST_TURN
+    max_tokens = (
+        caller_max_tokens
+        if caller_max_tokens is not None
+        else cfg.max_tokens_default
+    )
+    return max_tokens, cfg.tool_choice_first_turn
 
 # Shared timeout used by all clients
 _TIMEOUT = httpx.Timeout(connect=60.0, read=600.0, write=600.0, pool=600.0)
@@ -223,6 +289,7 @@ def _openai_complete_with_tools(
     output_config: "dict[str, Any] | None" = None,
     agent_name: "str | None" = None,
     metrics: "Any | None" = None,
+    tool_choice_first_turn: str = "auto",
 ) -> "CompletionResult":
     """Shared tool-loop driver for all OpenAI-compatible clients.
 
@@ -276,6 +343,7 @@ def _openai_complete_with_tools(
             response_format=response_format,
             agent_name=agent_name,
             metrics=metrics,
+            tool_choice_first_turn=tool_choice_first_turn,
         )
 
     return _with_retry(_call, max_attempts=max_attempts)
@@ -341,6 +409,9 @@ class OpenAIClient:
             timeout=_TIMEOUT,
         )
         self._metrics = metrics or NullMetricsCollector()
+        # REVUE-263: snapshot registry knobs at construction time. One lookup
+        # per client instance, not per call.
+        self._model_cfg = _resolve_model_config(self._model)
 
     def complete(
         self,
@@ -383,19 +454,23 @@ class OpenAIClient:
         tools: list[dict[str, Any]],
         tool_handlers: "dict[str, ToolHandler]",
         max_iterations: "int | None" = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
     ) -> CompletionResult:
+        resolved_max_tokens, tool_choice_first_turn = _apply_model_knobs(
+            self._model_cfg, max_tokens
+        )
         return _openai_complete_with_tools(
             self._client, self._model, "openai", self._max_attempts,
             messages=messages, tools=tools, tool_handlers=tool_handlers,
-            max_iterations=max_iterations, max_tokens=max_tokens,
+            max_iterations=max_iterations, max_tokens=resolved_max_tokens,
             temperature=temperature, system=system,
             output_config=output_config,
             agent_name=agent_name, metrics=self._metrics,
+            tool_choice_first_turn=tool_choice_first_turn,
         )
 
 
@@ -538,6 +613,10 @@ class AzureOpenAIClient:
             timeout=_TIMEOUT,
         )
         self._metrics = metrics or NullMetricsCollector()
+        # REVUE-263: registry lookup uses ``config.model`` (the model id),
+        # NOT ``azure_deployment`` (the deployment alias) — the registry is
+        # keyed by canonical model identifiers, not provider-side aliases.
+        self._model_cfg = _resolve_model_config(config.model)
 
     def complete(
         self,
@@ -580,7 +659,7 @@ class AzureOpenAIClient:
         tools: list[dict[str, Any]],
         tool_handlers: "dict[str, ToolHandler]",
         max_iterations: "int | None" = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         agent_name: "str | None" = None,
@@ -588,13 +667,19 @@ class AzureOpenAIClient:
     ) -> CompletionResult:
         # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
         # their 3-attempt retry budget on the new default path.
+        # REVUE-263: apply per-model registry knobs (tool_choice_first_turn,
+        # max_tokens_default) — caller-supplied max_tokens still wins.
+        resolved_max_tokens, tool_choice_first_turn = _apply_model_knobs(
+            self._model_cfg, max_tokens
+        )
         return _openai_complete_with_tools(
             self._client, self._model, "azure", self._max_attempts,
             messages=messages, tools=tools, tool_handlers=tool_handlers,
-            max_iterations=max_iterations, max_tokens=max_tokens,
+            max_iterations=max_iterations, max_tokens=resolved_max_tokens,
             temperature=temperature, system=system,
             output_config=output_config,
             agent_name=agent_name, metrics=self._metrics,
+            tool_choice_first_turn=tool_choice_first_turn,
         )
 
 
@@ -618,6 +703,7 @@ class OpenRouterClient:
             },
         )
         self._metrics = metrics or NullMetricsCollector()
+        self._model_cfg = _resolve_model_config(self._model)
 
     def complete(
         self,
@@ -660,7 +746,7 @@ class OpenRouterClient:
         tools: list[dict[str, Any]],
         tool_handlers: "dict[str, ToolHandler]",
         max_iterations: "int | None" = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         agent_name: "str | None" = None,
@@ -668,13 +754,18 @@ class OpenRouterClient:
     ) -> CompletionResult:
         # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
         # their 3-attempt retry budget on the new default path.
+        # REVUE-263: apply per-model registry knobs.
+        resolved_max_tokens, tool_choice_first_turn = _apply_model_knobs(
+            self._model_cfg, max_tokens
+        )
         return _openai_complete_with_tools(
             self._client, self._model, "openrouter", self._max_attempts,
             messages=messages, tools=tools, tool_handlers=tool_handlers,
-            max_iterations=max_iterations, max_tokens=max_tokens,
+            max_iterations=max_iterations, max_tokens=resolved_max_tokens,
             temperature=temperature, system=system,
             output_config=output_config,
             agent_name=agent_name, metrics=self._metrics,
+            tool_choice_first_turn=tool_choice_first_turn,
         )
 
 
@@ -694,6 +785,7 @@ class CustomGatewayClient:
             timeout=_TIMEOUT,
         )
         self._metrics = metrics or NullMetricsCollector()
+        self._model_cfg = _resolve_model_config(self._model)
 
     def complete(
         self,
@@ -736,7 +828,7 @@ class CustomGatewayClient:
         tools: list[dict[str, Any]],
         tool_handlers: "dict[str, ToolHandler]",
         max_iterations: "int | None" = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         temperature: float = 0.3,
         system: "str | list[dict[str, Any]] | None" = None,
         agent_name: "str | None" = None,
@@ -744,13 +836,18 @@ class CustomGatewayClient:
     ) -> CompletionResult:
         # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
         # their 3-attempt retry budget on the new default path.
+        # REVUE-263: apply per-model registry knobs.
+        resolved_max_tokens, tool_choice_first_turn = _apply_model_knobs(
+            self._model_cfg, max_tokens
+        )
         return _openai_complete_with_tools(
             self._client, self._model, "custom", self._max_attempts,
             messages=messages, tools=tools, tool_handlers=tool_handlers,
-            max_iterations=max_iterations, max_tokens=max_tokens,
+            max_iterations=max_iterations, max_tokens=resolved_max_tokens,
             temperature=temperature, system=system,
             output_config=output_config,
             agent_name=agent_name, metrics=self._metrics,
+            tool_choice_first_turn=tool_choice_first_turn,
         )
 
 
