@@ -91,6 +91,17 @@ agents:
 output:
   format: json
   file: review-output.json
+
+# gpt-4o is not a Revue-vetted model; declare it as an unsupported
+# customer-extended entry so the per-model registry gate accepts it.
+models:
+  gpt-4o:
+    provider: openai
+    schema_mode: response_format
+    schema_strict: true
+    tool_choice_first_turn: auto
+    max_tokens_default: 8192
+    tier: unsupported
 """
     path = _write_yml(tmp_path, full_yml)
     config = load_config(config_path=path)
@@ -511,14 +522,18 @@ def test_resolve_file_type_routing_empty_reviewers_means_none(tmp_path: Path) ->
 
 
 def test_load_config_parses_synthesis_model_from_ai_section(tmp_path: Path) -> None:
-    """ai.synthesis_model is read into AIConfig.synthesis_model when present."""
+    """ai.synthesis_model is read into AIConfig.synthesis_model when present.
+
+    Uses a real registry key so the dispatcher gate (REVUE-262) exercises the
+    synthesis-model validation path instead of passing by accident.
+    """
     # Arrange
     yml = """\
 version: "1"
 ai:
   provider: anthropic
   model: claude-haiku-4-5-20251001
-  synthesis_model: claude-sonnet-4-6
+  synthesis_model: claude-sonnet-4-5-20250929
 """
     path = _write_yml(tmp_path, yml)
 
@@ -526,7 +541,7 @@ ai:
     config = load_config(config_path=path)
 
     # Assert
-    assert config.synthesis_model == "claude-sonnet-4-6"
+    assert config.synthesis_model == "claude-sonnet-4-5-20250929"
     assert config.model == "claude-haiku-4-5-20251001"
 
 
@@ -540,3 +555,104 @@ def test_load_config_synthesis_model_defaults_to_empty_when_absent(tmp_path: Pat
 
     # Assert — empty string signals "reuse main model for synthesis"
     assert config.synthesis_model == ""
+
+
+# ---------------------------------------------------------------------------
+# Per-model registry integration (REVUE-262)
+# ---------------------------------------------------------------------------
+
+def test_config_loader_validates_model_registry_on_load(tmp_path: Path) -> None:
+    """When `models:` is present, the dispatcher gate runs at startup.
+
+    Selecting a built-in supported model (overridden in `models:`) must succeed.
+    """
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: anthropic\n"
+        "  model: claude-sonnet-4-5-20250929\n"
+        "models:\n"
+        "  claude-sonnet-4-5-20250929:\n"
+        "    max_tokens_default: 8000\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert config.model == "claude-sonnet-4-5-20250929"
+
+
+def test_config_loader_rejects_unknown_model_at_startup(tmp_path: Path) -> None:
+    """An unknown selected model is rejected by the gate at startup.
+
+    The gate runs against the built-in registry unconditionally — no
+    ``models:`` block needed to trigger the missing-model failure.
+    """
+    from revue.core.models_registry import ModelRegistryError
+
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: anthropic\n"
+        "  model: totally-bogus-model\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    with pytest.raises(ModelRegistryError, match="unknown model"):
+        load_config(config_path=path)
+
+
+def test_config_loader_validates_against_builtin_when_no_user_overrides(
+    tmp_path: Path,
+) -> None:
+    """m3: gate must run even without a `models:` block.
+
+    A config selecting a built-in model with no overrides should still
+    succeed — validation against the built-in registry happens unconditionally.
+    """
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: anthropic\n"
+        "  model: claude-sonnet-4-5-20250929\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert config.model == "claude-sonnet-4-5-20250929"
+
+
+def test_config_loader_rejects_unknown_synthesis_model(tmp_path: Path) -> None:
+    """MAJ-1: a typo in ``synthesis_model`` must fail at config-load.
+
+    Without this, the bad model id only surfaces at Vex/Nova boot — far
+    from where the config error lives.
+    """
+    from revue.core.models_registry import ModelRegistryError
+
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: anthropic\n"
+        "  model: claude-sonnet-4-5-20250929\n"
+        "  synthesis_model: claude-banana-99\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    with pytest.raises(ModelRegistryError, match="unknown model"):
+        load_config(config_path=path)
+
+
+def test_config_loader_accepts_synthesis_model_equal_to_main_model(
+    tmp_path: Path,
+) -> None:
+    """MAJ-1: omitting ``synthesis_model`` (or setting it equal to ``model``)
+    must not double-validate. An empty fallback resolves at boot to the main
+    model, which the gate has already cleared.
+    """
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: anthropic\n"
+        "  model: claude-sonnet-4-5-20250929\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    # Empty string signals "reuse main model".
+    assert config.synthesis_model == ""
+    assert config.model == "claude-sonnet-4-5-20250929"

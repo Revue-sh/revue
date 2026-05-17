@@ -45,6 +45,11 @@ from pathlib import Path
 import yaml
 
 from .ai_config import AIConfig, FileTypeRule
+from .models_registry import (
+    load_builtin_registry,
+    merge_user_overrides,
+    validate_selected_model,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +276,45 @@ def load_config(
     # --- env-var precedence layer ---
     _apply_env_precedence(config)
 
+    # --- per-model registry gate (REVUE-262) ---
+    # Always runs against the built-in registry. User `models:` block, when
+    # present, overrides per-entry knobs before validation.
+    _load_and_validate_model_registry(config, raw)
+
     return config
+
+
+def _load_and_validate_model_registry(
+    ai_config: AIConfig, user_yaml: dict[str, object]
+) -> None:
+    """Run the per-model registry dispatcher gate at startup.
+
+    The gate always runs against the built-in registry so that an unknown
+    ``ai.model`` is rejected even when the user has no ``models:`` block.
+    When a ``models:`` block is present its entries are merged on top of
+    the built-in registry before validation.
+
+    Every ``AIConfig`` field that names a model id is validated. Currently
+    that is ``ai_config.model`` and ``ai_config.synthesis_model`` (Vex/Nova
+    reasoning override). When ``synthesis_model`` is empty or equal to
+    ``model`` it falls back to the main model — no second validation needed.
+    """
+    user_models = user_yaml.get("models") if isinstance(user_yaml, dict) else None
+    if user_models is not None and not isinstance(user_models, dict):
+        raise ValueError(
+            ".revue.yml: 'models' must be a mapping of model_id -> knob mapping."
+        )
+
+    registry = load_builtin_registry()
+    if user_models:
+        registry = merge_user_overrides(registry, user_models)
+    validate_selected_model(registry, ai_config.model)
+
+    # Validate every other AIConfig field that names a model id. Empty string
+    # (or a value identical to ``model``) means "reuse the main model" — skip.
+    synthesis_model = ai_config.synthesis_model
+    if synthesis_model and synthesis_model != ai_config.model:
+        validate_selected_model(registry, synthesis_model)
 
 
 def validate_config(config: AIConfig) -> list[str]:

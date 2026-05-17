@@ -1,0 +1,46 @@
+# Per-model registry (REVUE-262).
+#
+# This file is the source of truth for built-in, Revue-supported models.
+# Customers may extend or override entries via the `models:` section of
+# their `.revue.yml` (see `merge_user_overrides` in `models_registry.py`).
+#
+# Knob reference:
+#   provider                : anthropic | openrouter | openai | azure | custom
+#   schema_mode             : output_config (Anthropic) | response_format (OpenAI-shaped)
+#   schema_strict           : true => dispatcher refuses a "supported" model that loses strictness
+#   tool_choice_first_turn  : auto | required | none
+#   max_tokens_default      : default token cap for this model
+#   tier                    : supported (Revue-vetted) | unsupported (customer-extended)
+
+models:
+  claude-sonnet-4-5-20250929:
+    provider: anthropic
+    schema_mode: output_config
+    schema_strict: true
+    tool_choice_first_turn: auto
+    max_tokens_default: 4096
+    tier: supported
+
+  claude-haiku-4-5-20251001:
+    provider: anthropic
+    schema_mode: output_config
+    schema_strict: true
+    tool_choice_first_turn: auto
+    max_tokens_default: 2048
+    tier: supported
+
+  qwen/qwen3-coder-next:
+    provider: openrouter
+    schema_mode: response_format
+    schema_strict: true
+    tool_choice_first_turn: required
+    max_tokens_default: 2048
+    tier: supported
+
+  deepseek/deepseek-v4-pro:
+    provider: openrouter
+    schema_mode: response_format
+    schema_strict: true
+    tool_choice_first_turn: required
+    max_tokens_default: 2048
+    tier: supported
