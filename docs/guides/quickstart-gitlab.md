@@ -90,9 +90,9 @@ revue-review:
 version: "1"
 
 ai:
-  provider: anthropic              # anthropic | openai | azure | openrouter | custom
-  model: claude-sonnet-4-5-20250929
-  api_key_env: ANTHROPIC_API_KEY   # env var name for your AI provider key (BYOK)
+  provider: openrouter             # anthropic | openai | azure | openrouter | custom
+  model: deepseek/deepseek-v4-pro  # default (cost-optimised). See docs/configuration/per-model-knobs.md
+  api_key_env: OPENROUTER_API_KEY  # env var name for your AI provider key (BYOK)
 
 review:
   max_diff_lines: 2000             # skip the review if the diff is larger than this

@@ -1,23 +1,31 @@
 # Revue.io — Product Requirements Document
-**Version:** 1.4  
-**Date:** March 2026  
-**Status:** Draft  
+**Version:** 2.0  
+**Date:** May 2026  
+**Status:** Draft — strategic pivot revision (cost-driven)  
 **Owner:** Revue Team
+
+> **v2.0 changes** (vs v1.4, March 2026): Default AI backend swapped from Anthropic Sonnet to DeepSeek-V4-Pro on OpenRouter; primary customer surface shifted from CI/CD service to `/revue-local` — a Claude Code skill invoked inside the customer's AI-coding workflow before the AI commits; CI integrations (GitHub Actions, GitLab CI, Bitbucket Pipelines) moved to deprecated-but-maintained status; architecture principle made explicit: AI-model-agnostic. Driver: Anthropic API pricing made the original CI-centric model uneconomic for both Revue and customers. Positioning pillar added: customer AI-bill reduction.
+>
+> **v2.0 addendum (2026-05-18):** Validator-driven fix pass applied. Resolved 9 Critical and 14 Warning findings from `validation-report-prd-2026-05-18.md`: Executive Summary re-anchored on customer cost outcome; agent inventory reconciled to 8 across all sections (Cleo, Zara, Kai, Maya, Leo, Nova, Sage, Vex) with Vex and Sage now specified in §7.1; §5.2 GitHub Actions example moved to DeepSeek/OpenRouter default; §4.2 split into `/revue-local` (primary) and CI (deprecated-but-maintained) surfaces; §10 gains a `/revue-local` output sample; §11.1 custom-agents row disambiguated (YAML vs UI); §3.5 KPIs gain a measurement-method column and the ≥40% AI-spend target is now method-anchored; cost-savings positioning surfaces consistently in §1, §11, and Appendix A.
 
 ---
 
 ## 1. Executive Summary
 
-Revue is a platform-agnostic, AI-powered code review service that runs inside CI/CD pipelines and — optionally — as a pre-commit git hook. It uses a **multi-agent BMAD architecture** where specialised AI agents (Security, Performance, Code Quality, Architecture, and more) review code in parallel, then consolidate findings into a single, prioritised, actionable review posted directly as inline comments on pull/merge requests.
+**Revue cuts customer AI API expenditure by ~79–88% at typical review volumes** (§11.2 TCO table) and eliminates Revue-side AI spend entirely on the `/revue-local` path. Revue is a code reviewer that catches issues inside the customer's AI-coding session — before the AI commits — so the team stops re-paying for the same defects in CI. AI API expenditure is a board-level line item; Revue is positioned as a partner in cost discipline at exactly the moment that bill is climbing.
 
-Revue is designed for the **AI-first development era**: teams generating more code faster with AI coding tools need automated review that handles the mechanical layer, so human reviewers can focus on judgement calls.
+Revue ships in two configurations:
+
+1. **`/revue-local` — primary surface (v2.0).** A Claude Code skill the customer's AI-coding agent invokes inside its own workflow, before it commits code to the repository. Same pattern teams already use for code generation: AI writes → Revue reviews → AI revises → AI commits. Customer pays only their existing Claude Code subscription — no Revue-side AI API spend.
+2. **CI/CD service — deprecated-but-maintained (originally shipped v1.x, still supported on v2.0+).** Multi-agent review that runs inside the customer's CI pipeline on every PR/MR, posted as inline comments. Supported with the cheapest available model (DeepSeek-V4-Pro on OpenRouter, ~10× cheaper per typical review than Anthropic Sonnet 4.5 — REVUE-265) but no longer the primary product investment focus.
 
 **Core Principles:**
-- Multi-agent by default; single-agent available as a lightweight mode
-- Fully open AI backend — bring your own key or use any compatible gateway
-- Hybrid deployment — cloud-orchestrated, runs locally in the CI runner
-- Platform agnostic — GitHub, GitLab first; Bitbucket, Azure DevOps to follow
-- Configurable blocking — teams decide when to gate merges
+- **We care about your AI bill.** Catching issues in `/revue-local` before commit means fewer CI review cycles, fewer AI API calls, lower customer spend. ~79–88% TCO reduction vs the v1.x Anthropic Sonnet baseline (§11.2). Cost-savings is a first-class product promise, not a feature note.
+- **Multi-agent by default.** Specialised reviewers outperform a single generalist on every signal measured to date. Eight agents ship today (§7).
+- **AI-model-agnostic.** DeepSeek-V4-Pro on OpenRouter is the default. Anthropic, OpenAI, Azure, OpenRouter, and self-hosted gateways are all supported via the registry/dispatcher abstraction. No Anthropic-specific code in business logic.
+- **Bring your own key.** Customers pay their AI provider directly; Revue charges only for orchestration.
+- **Platform agnostic.** GitHub, GitLab, and Bitbucket inline-comment posting supported. Azure DevOps planned for Phase 3.
+- **Configurable blocking.** Teams decide when to gate commits or merges.
 
 ---
 
@@ -37,12 +45,12 @@ The industry has four layers of code quality checks (per the 4-layer model):
 
 | Layer | What | Timing | Tools |
 |-------|------|--------|-------|
-| **1** | Automate the obvious | Pre-commit hooks | ESLint, SAST, linters |
-| **2** | Review locally before push | Before push | AI agent (fresh context) |
-| **3** | Review on CI | Every PR/MR | Automated AI review ← **Revue's core** |
+| **1** | Automate the obvious | Pre-commit git hooks | ESLint, SAST, linters |
+| **2** | **AI-agent self-review before commit** | Inside the AI-coding agent's loop, before it commits | **Revue via `/revue-local` ← primary surface (v2.0)** |
+| **3** | Multi-agent review on CI | Every PR/MR | Revue CI service ← deprecated-but-maintained track |
 | **4** | Human review | PR/MR | Engineer judgement |
 
-Most teams have Layer 1. Almost none have Layer 2. Few have Layer 3 done well. Revue owns Layer 3 (CI review) and extends into Layer 2 (pre-commit, git hook mode).
+Most teams have Layer 1. Almost none have Layer 2 in a structured form — AI agents typically commit without an independent review pass. Few have Layer 3 done well at multi-agent granularity. **Revue's v2.0 strategy concentrates on Layer 2 via `/revue-local`**: catching issues at the moment of highest leverage (in-session, pre-commit) eliminates downstream CI review cycles — saving the customer AI API spend at the layer that bills it. The CI track (Layer 3) remains supported but is no longer the primary investment focus.
 
 ### 2.3 Problems with Existing Tools
 
@@ -63,31 +71,46 @@ Most teams have Layer 1. Almost none have Layer 2. Few have Layer 3 done well. R
 
 Revue's job is to remove that bottleneck without forcing teams to trade quality for throughput. Every comment Revue posts must give a developer the same value as a senior teammate's inline review: anchored where the issue is, attributed to who is saying it, and — where possible — one-click applicable. Anything less is noise, and noise makes the bottleneck worse.
 
-### 3.2 MVP Goals (v1.0)
-- [ ] Multi-agent CI review that runs on GitHub and GitLab PRs/MRs
-- [ ] Configurable specialised agents: Cleo, Zara, Kai, Maya, Leo, Nova
-- [ ] Support any AI backend (OpenAI, Anthropic, Azure, OpenRouter, custom gateway)
-- [ ] Inline review comments with severity levels
-- [ ] **Sage (Resolver)** — scoped, confidence-gated fix suggestions posted as platform-native suggestions (1-click accept)
-- [ ] Configurable blocking behaviour
-- [ ] Self-service onboarding (GitHub App, GitLab integration)
+### 3.2 MVP Goals — shipped
 
-### 3.3 Phase 2 Goals (v1.5)
-- [ ] Single-agent mode as pre-commit git hook (Layer 2)
+**Shipped in v1.x (CI-era):**
+- [x] Multi-agent CI review on GitHub, GitLab, and Bitbucket PRs/MRs
+- [x] AI backend abstraction: OpenAI, Anthropic, Azure, OpenRouter, custom gateway — all via the per-model registry + dispatcher
+- [x] Inline review comments with severity levels
+- [x] Sage (Resolver) — scoped, confidence-gated fix suggestions posted as platform-native 1-click suggestions
+- [x] Configurable blocking behaviour
+- [x] Self-service onboarding (GitHub App, GitLab integration)
+
+**Shipped in v2.0 (cost-driven pivot):**
+- [x] Eight specialised agents — Cleo, Zara, Kai, Maya, Leo, Nova, Sage, Vex (Vex added in REVUE-241 / REVUE-261 as the in-loop semantic verifier)
+- [x] **DeepSeek-V4-Pro on OpenRouter as default model** (REVUE-267) — ~10× cheaper per review than Anthropic Sonnet 4.5 (REVUE-265; see `docs/research/deepseek-v4-pro-evaluation.md`)
+- [x] **`/revue-local` Mode 2 — native Claude Code Task-based review pipeline** (REVUE-259/260/261) — runs in the customer's existing Claude Code session at zero Revue-side AI spend
+
+### 3.3 Phase 2 Goals (v2.x) — `/revue-local` productisation
+- [ ] **Distribution: `/revue-local` as an installable customer-facing Claude Code skill** (skill registry, install flow, paywall mechanics — covered in `docs/planning/revue-local-distribution-brief.md`, TBC — brief not yet authored)
+- [ ] **Pre-commit AI review workflow** — published patterns for invoking `/revue-local` from common AI-coding agents (Claude Code, Cursor, Windsurf) before they commit
+- [ ] **Cost-saving dashboard** — show customers their AI-bill reduction vs. the CI-only path (delta = number of reviews caught locally × per-review API cost)
 - [ ] Sage v2 — auto-commit fixes to branch + multi-round loop
-- [ ] Review analytics dashboard
-- [ ] Bitbucket + Azure DevOps support
 - [ ] Custom agent authoring UI
+- [ ] Review analytics dashboard
 
-### 3.4 Success Metrics
-| Metric | MVP Target | 6-Month Target |
-|--------|-----------|----------------|
-| Platforms supported | GitHub, GitLab | + Bitbucket, AzDO |
-| Active workspaces | 100 free, 20 paid | 500 free, 150 paid |
-| Avg review time (CI) | <3 min | <2 min |
-| False positive rate | <15% | <10% |
-| User satisfaction (NPS) | >40 | >50 |
-| Critical issue detection improvement vs single-agent | 35%+ | 40%+ |
+### 3.4 Phase 3 Goals (v3.x) — Scale
+- [ ] Azure DevOps adapter (CI track maintenance)
+- [ ] Enterprise SSO/SAML, self-hosted Revue backend
+- [ ] Agent marketplace (community agents)
+
+### 3.5 Success Metrics
+
+| Metric | MVP Target | 6-Month Target | Measurement Method |
+|--------|-----------|----------------|---------------------|
+| Platforms supported (CI inline-comment posting) | GitHub, GitLab, Bitbucket | + AzDO | Shipped adapter count, verified in CI integration tests |
+| `/revue-local` skill installs (Phase 2 KPI) | n/a | 500 | Skill registry install counter, distinct workspace IDs |
+| Active workspaces (CI track) | 100 free, 20 paid | 500 free, 150 paid | Workspaces with ≥1 review in the trailing 30 days, queried from usage-tracker |
+| **Customer AI-spend reduction** (`/revue-local` adopters vs same-customer CI-only 90-day baseline) | Instrumented; baseline cohort established | **≥40% reduction** | Per-customer A/B: baseline = customer's prior 90-day OpenRouter/Anthropic CI token spend pre-`/revue-local`; post = same customer's 90-day spend post-adoption; attribution = `findings_caught_locally × avg_per_review_CI_token_cost`. Cohort: customers with ≥30 reviews in both windows. Reported per-customer (median) and aggregate. Methodology owner: PM; gate resolution before Phase 2 dashboard ticket enters sprint planning. |
+| Avg review time (CI) | <3 min | <2 min | p95 wall-clock across all review runs in the trailing 30 days, instrumented in orchestrator |
+| False positive rate | <15% | <10% | Findings marked `false_positive` by developer accept/reject UI ÷ total findings, sampled per 1,000 findings, adjudicated by PR-author feedback |
+| User satisfaction (NPS) | >40 | >50 | Quarterly in-product NPS survey, n ≥ 50 per quarter |
+| Critical issue detection improvement vs single-agent | 35%+ | 40%+ | Internal labelled corpus; multi-agent run findings ∩ ground-truth Critical ÷ single-agent baseline on same corpus |
 
 ---
 
@@ -95,27 +118,56 @@ Revue's job is to remove that bottleneck without forcing teams to trade quality 
 
 ### 4.1 The 4-Layer Integration Model
 
-Revue is primarily a **Layer 3 tool** (CI-triggered, automatic) with Layer 2 extension (pre-push hook):
+Revue's v2.0 strategy is a **Layer 2 product** (`/revue-local` invoked inside the customer's AI agent before commit) with Layer 3 as a deprecated-but-maintained track (CI multi-agent review):
 
 ```
-Developer writes code
+Developer (or AI coding agent) writes code
        │
        ▼
 Layer 1: Git hooks (linting, SAST) ─── NOT Revue
        │
        ▼
-Layer 2: Pre-push review ──────────── Revue single-agent hook (Phase 2)
+Layer 2: Pre-commit AI review ─────── Revue /revue-local (primary surface — v2.0)
+   (multi-agent, in customer's          ← runs in customer's Claude Code session
+    Claude Code session, before          ← customer pays only Claude Code subscription
+    the AI commits)                      ← catches issues before CI bills another round
        │
        ▼
-Layer 3: CI/CD PR review ──────────── Revue multi-agent (Core product)
+Layer 3: CI/CD PR review ──────────── Revue multi-agent CI service
+   (DeepSeek-default, BYOK)             ← deprecated-but-maintained track
        │
        ▼
 Layer 4: Human review ─────────────── Human decision (Revue output informs this)
 ```
 
-### 4.2 Deployment Model (On-Premise Orchestrator)
+### 4.2 Deployment Model
 
-Revue's orchestrator runs **entirely inside the customer's CI environment**. Source code and diffs never leave the customer's infrastructure.
+Revue ships two execution surfaces, each with its own deployment topology.
+
+#### 4.2a `/revue-local` — Primary Surface
+
+`/revue-local` runs as a Claude Code skill inside the customer's existing AI-coding session. No Revue-managed runtime, no Revue-side AI compute, no Revue-side API key required for inference. The customer's Claude Code subscription is the only billed channel.
+
+```
+Customer's AI-coding session (Claude Code)
+         │
+         ▼
+  /revue-local skill invoked on staged diff
+         │
+         ▼
+  Multi-agent pipeline (Cleo → Zara/Kai/Maya/Leo → Nova → Sage → Vex)
+  runs inside the same Claude Code session
+         │
+         ▼
+  Findings streamed back to the calling AI
+  (markdown digest + BLOCK_COMMIT / WARN_PROCEED / OK signal)
+```
+
+**What leaves the customer's machine:** nothing during the review itself. Distribution-mechanic concerns (skill install, licence validation, paywall enforcement for `/revue-local`) are covered in the sibling product brief `docs/planning/revue-local-distribution-brief.md` (TBC — brief not yet authored).
+
+#### 4.2b CI Orchestrator — Deprecated-but-Maintained
+
+The CI orchestrator runs **entirely inside the customer's CI environment**. Source code and diffs never leave the customer's infrastructure. This surface still ships and is still supported on v2.0+; no new feature investment.
 
 ```
 User's Repo → CI Trigger → Revue Orchestrator (runs on CI runner)
@@ -130,8 +182,9 @@ User's Repo → CI Trigger → Revue Orchestrator (runs on CI runner)
                           User's AI Provider API Key
                                     │
                     ┌───────────────▼───────────────┐
-                    │  OpenAI / Anthropic / Azure /  │
-                    │  OpenRouter / Custom Gateway   │
+                    │  OpenRouter (default) /        │
+                    │  Anthropic / OpenAI / Azure /  │
+                    │  Custom Gateway                │
                     └───────────────┬───────────────┘
                                     │
                          Review Results → PR/MR Comment
@@ -146,16 +199,16 @@ User's Repo → CI Trigger → Revue Orchestrator (runs on CI runner)
 - Source code
 - Review findings
 
-**IP Protection:**
-- **All tiers:** Orchestrator compiled to native C binaries using **Nuitka** — source cannot be decompiled or read. Distributed as platform-specific `.whl` (Free/Indie/Pro) or Docker image (Enterprise)
-- **Runtime enforcement:** License key validated on orchestrator startup via `POST /api/license/validate` — returns tier, agents allowed, reviews remaining. Hard stop on invalid key. 72h offline grace period for Enterprise airgapped environments
+**IP Protection (4.2b only):**
+- **All tiers:** CI orchestrator compiled to a binary distribution that resists decompilation (currently Nuitka). Distributed as platform-specific `.whl` (Free/Indie/Pro) or Docker image (Enterprise).
+- **Runtime enforcement:** License key validated on orchestrator startup via `POST /api/license/validate` — returns tier, agents allowed, reviews remaining. Hard stop on invalid key. 72h offline grace period for Enterprise airgapped environments.
 
-**Webhook security:** All incoming webhooks are verified using platform-native secret tokens (GitHub webhook secrets, GitLab secret tokens). Requests with invalid signatures are rejected before processing.
+**Webhook security (4.2b only):** All incoming webhooks are verified using platform-native secret tokens (GitHub webhook secrets, GitLab secret tokens, Bitbucket signed payloads). Requests with invalid signatures are rejected before processing.
 
 ### 4.3 Multi-Agent BMAD Architecture
 
 ```
-PR/MR Opened
+PR/MR Opened  (or /revue-local invocation)
      │
      ▼
 ┌──────────────┐
@@ -163,20 +216,21 @@ PR/MR Opened
 │ (Orchestrator│
 └──────┬───────┘
        │ parallel dispatch
-  ┌────┴─────────────────────────────────┐
-  │            │            │            │
-  ▼            ▼            ▼            ▼
-┌──────┐  ┌──────┐  ┌──────────┐  ┌──────────┐
-│ Zara │  │ Kai  │  │   Maya   │  │   Leo    │
-│      │  │      │  │          │  │          │
-│ Sec. │  │Perf. │  │  SOLID/  │  │Patterns/ │
-│ OWASP│  │ Algo │  │Maintain. │  │  Design  │
-│ CVEs │  │  N+1 │  │Tech debt │  │ Coupling │
-└──┬───┘  └──┬───┘  └────┬─────┘  └────┬─────┘
-   │         │            │             │
-   └────┬────┘            └──────┬──────┘
-        │                        │
-        ▼                        ▼
+  ┌────┴───────────────────┬───────────────────────┐
+  │ Security pillar        │ Quality pillar        │
+  ▼                        ▼                       ▼
+┌──────┐               ┌──────────┐         ┌──────────┐
+│ Zara │               │   Maya   │         │   Leo    │
+│      │               │          │         │          │
+│ Sec. │   ┌──────┐    │  SOLID/  │         │Patterns/ │
+│ OWASP│   │ Kai  │    │Maintain. │         │  Design  │
+│ CVEs │   │ Perf │    │Tech debt │         │ Coupling │
+└──┬───┘   └──┬───┘    └────┬─────┘         └────┬─────┘
+   │          │              │                    │
+   └────┬─────┘              └──────────┬─────────┘
+        │                               │
+        └───────────────┬───────────────┘
+                        ▼
    ┌─────────────────────────────────┐
    │              Nova               │
    │  Merge → Deduplicate → Prioritise│
@@ -197,7 +251,22 @@ PR/MR Opened
    └──────────────┬──────────────────┘
                   │
                   ▼
+   ┌─────────────────────────────────┐
+   │              Vex                │
+   │     (Semantic Verifier — in-loop)│
+   │                                 │
+   │  Per finding (Nova / Sage):     │
+   │  ├─ apply → keep finding        │
+   │  ├─ drop_cr_keep_prose → keep   │
+   │  │    explanation, drop fix     │
+   │  └─ reject_finding → suppress   │
+   │       (hallucination / wrong    │
+   │        attribution)             │
+   └──────────────┬──────────────────┘
+                  │
+                  ▼
          PR/MR Comments + Suggestions
+         (or /revue-local digest)
          Blocking decision (configurable)
 ```
 
@@ -248,7 +317,7 @@ GitLab  → Apply Suggestion
 
 #### Sage v1 vs v2
 
-| Capability | MVP (v1.0) | Phase 2 (v1.5) |
+| Capability | MVP (v1.0) | Phase 2 (v2.x) |
 |-----------|-----------|----------------|
 | Classify: fixable vs needs-human | ✅ | ✅ |
 | Post fix as platform suggestion (1-click) | ✅ | ✅ |
@@ -262,7 +331,7 @@ GitLab  → Apply Suggestion
 
 ## 5. Platform Integration
 
-### 5.1 MVP: GitHub + GitLab
+### 5.1 Supported Platforms (GitHub, GitLab, Bitbucket)
 
 **GitHub Integration:**
 - GitHub App (OAuth + webhook-based)
@@ -277,6 +346,13 @@ GitLab  → Apply Suggestion
 - Uses GitLab API: fetch MR diff, post inline comments
 - CI integration via `.gitlab-ci.yml` include (existing pattern)
 - Supports GitLab Self-Managed
+
+**Bitbucket Integration:**
+- Bitbucket OAuth App + webhook
+- Triggers on `pullrequest:created` and `pullrequest:updated` events
+- Uses Bitbucket API: fetch PR diff, post inline comments via `pullrequests/{id}/comments`
+- CI integration via Bitbucket Pipelines step
+- Supports Bitbucket Cloud; Bitbucket Data Center on the Enterprise tier
 
 **VCS Abstraction Layer:**
 
@@ -299,8 +375,8 @@ class VCSAdapter(Protocol):
 
 class GitHubAdapter(VCSAdapter): ...   # Translates DiffPosition → diff offset
 class GitLabAdapter(VCSAdapter): ...   # Translates DiffPosition → line_code hash
-class BitbucketAdapter(VCSAdapter): ...  # Phase 2
-class AzureDevOpsAdapter(VCSAdapter): ...  # Phase 2
+class BitbucketAdapter(VCSAdapter): ...  # Shipped — translates DiffPosition → inline comment payload
+class AzureDevOpsAdapter(VCSAdapter): ...  # Phase 3
 ```
 
 ### 5.2 CI/CD Integration Patterns
@@ -311,10 +387,14 @@ class AzureDevOpsAdapter(VCSAdapter): ...  # Phase 2
   uses: revue-io/action@v1
   with:
     revue_token: ${{ secrets.REVUE_TOKEN }}
-    ai_api_key: ${{ secrets.OPENAI_API_KEY }}  # or any provider
-    ai_provider: openai  # openai | anthropic | azure | openrouter | custom
-    ai_model: gpt-4o
+    ai_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+    ai_provider: openrouter  # openrouter (default) | anthropic | openai | azure | custom
+    ai_model: deepseek/deepseek-v4-pro  # cost-optimised default
     mode: multi-agent  # multi-agent | single-agent
+    # Opt back into Anthropic Sonnet:
+    # ai_provider: anthropic
+    # ai_model: claude-sonnet-4-5-20250929
+    # ai_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
 **GitLab CI:**
@@ -325,9 +405,9 @@ include:
 revue-review:
   variables:
     REVUE_TOKEN: $REVUE_TOKEN
-    AI_API_KEY: $AI_API_KEY
-    AI_PROVIDER: anthropic
-    AI_MODEL: claude-sonnet-4-5
+    AI_API_KEY: $OPENROUTER_API_KEY
+    AI_PROVIDER: openrouter
+    AI_MODEL: deepseek/deepseek-v4-pro
 ```
 
 **Direct (any CI platform):**
@@ -340,30 +420,48 @@ revue review --provider=gitlab --pr=123 --config=.revue.yml
 
 ## 6. AI Backend Support
 
-### 6.1 Supported Providers (MVP)
+### 6.1 Default Model
 
-| Provider | Auth Method | Notes |
-|----------|------------|-------|
-| OpenAI | API key | GPT-4o, GPT-4 Turbo |
-| Anthropic | API key | Claude Sonnet, Claude Opus |
-| Azure OpenAI | API key + endpoint | Enterprise Azure deployments |
-| OpenRouter | API key | 100+ models via single API |
-| Custom Gateway | API key + base URL | Any OpenAI-compatible endpoint |
+**Default: `deepseek/deepseek-v4-pro` on OpenRouter.** Selected on cost grounds (~10× cheaper per typical review than Anthropic Sonnet 4.5) with no observed quality regression on Revue's supported-tier protocol (REVUE-265 smoke evaluation: 3/3 schema-valid trials with `tool_choice_first_turn: required`, multi-call context fetching, three-state envelope compliance).
 
-### 6.2 Configuration
+Customers can override the default per project in `.revue.yml` or via the `REVUE_PROVIDER` / `REVUE_MODEL` environment variables. Anthropic Sonnet 4.5 remains supported as an opt-in for teams that explicitly require Anthropic infrastructure.
+
+### 6.2 Supported Providers
+
+| Provider | Default model | Auth Method | Notes |
+|----------|--------------|-------------|-------|
+| **OpenRouter (default)** | `deepseek/deepseek-v4-pro` | API key | 100+ models via single API; default cost-optimised route |
+| Anthropic | `claude-sonnet-4-5-20250929` | API key | Sonnet, Haiku — opt-in via explicit config |
+| OpenAI | GPT-4o | API key | Supported as a customer-extended tier |
+| Azure OpenAI | Customer's deployment | API key + endpoint | Enterprise Azure deployments |
+| Custom Gateway | Customer's choice | API key + base URL | Any OpenAI-compatible endpoint |
+
+Each model is registered in the built-in per-model registry (`models_registry.yml`) with its own knob set: `provider`, `schema_mode`, `schema_strict`, `tool_choice_first_turn`, `max_tokens_default`, `tier`. Customers can extend or override the registry via the `models:` section of `.revue.yml`. Run `revue list-models` to see the live merged registry.
+
+### 6.3 Configuration
 
 ```yaml
-# .revue.yml in client repo
+# .revue.yml — defaults
 ai:
-  provider: anthropic          # openai | anthropic | azure | openrouter | custom
-  model: claude-sonnet-4-5
-  base_url: https://custom-gateway.example.com  # for custom/azure
-  api_key_env: AI_API_KEY     # env var name (never hardcoded)
+  provider: openrouter             # openai | anthropic | azure | openrouter | custom
+  model: deepseek/deepseek-v4-pro  # default — see docs/configuration/per-model-knobs.md
+  api_key_env: OPENROUTER_API_KEY  # env var name (never hardcoded)
   temperature: 0.2
-  max_tokens: 4000
+  max_tokens: 2048
+
+# Opt back into Anthropic Sonnet:
+# ai:
+#   provider: anthropic
+#   model: claude-sonnet-4-5-20250929
+#   api_key_env: ANTHROPIC_API_KEY
 ```
 
-### 6.3 AI Provider Abstraction
+### 6.4 Architecture Principle — AI-Model-Agnostic
+
+**Business logic must remain provider-neutral.** All multi-provider behaviour lives behind:
+- The **per-model registry** (`src/revue/core/models_registry.yml`) — declarative knob set per model.
+- The **dispatcher** (`src/revue/core/models_registry.py`) — validates `ai_config.model` and `synthesis_model` against the registry at config-load time; rejects unknown or mis-tiered models.
+- The **AIClient protocol** — one abstract interface; concrete clients per provider.
 
 ```python
 class AIClient(Protocol):
@@ -372,24 +470,28 @@ class AIClient(Protocol):
         messages: list[Message],
         model: str,
         temperature: float,
-        max_tokens: int
+        max_tokens: int,
     ) -> str: ...
 
-class OpenAIClient(AIClient): ...
+class OpenRouterClient(AIClient): ...   # Default route
 class AnthropicClient(AIClient): ...
+class OpenAIClient(AIClient): ...
 class AzureOpenAIClient(AIClient): ...
-class OpenRouterClient(AIClient): ...
 class CustomGatewayClient(AIClient): ...
 
 def create_ai_client(config: AIConfig) -> AIClient:
-    """Factory based on provider config"""
+    """Factory based on provider config; dispatcher gate has already validated the model."""
 ```
+
+`create_ai_client(default_config())` returns an `OpenRouterClient` configured for `deepseek/deepseek-v4-pro`.
+
+Provider-specific quirks (Anthropic's `output_config`, OpenRouter's `tool_choice_first_turn: required` for Qwen/DeepSeek, etc.) live behind the registry knob — not in agent prompts, not in pipeline code, not in reviewer logic. Adding a new model = adding a registry row; no code change in business logic.
 
 ---
 
 ## 7. Agent System
 
-### 7.1 Core Agents (MVP)
+### 7.1 Core Agents (8 shipped)
 
 | Agent | ID | Focus | Triggers |
 |-------|----|-------|---------|
@@ -399,6 +501,10 @@ def create_ai_client(config: AIConfig) -> AIClient:
 | **Maya** *(Code Quality)* | `code-quality-expert` | SOLID, maintainability, naming, dead code | Always runs (secondary) |
 | **Leo** *(Architecture)* | `architecture-reviewer` | Coupling, patterns, design decisions | Large diffs, structural changes |
 | **Nova** *(Consolidator)* | `consolidator` | Merge + deduplicate + prioritise findings | Always runs (final step) |
+| **Sage** *(Resolver)* | `resolver` | Per-finding classification: fixable as 1-click platform suggestion vs needs-human; confidence-gated (≥90%); never auto-commits in v1 | Runs after Nova on every review |
+| **Vex** *(Semantic Verifier)* | `semantic-verifier` | Verifies each finding against the actual code; classifies as `apply` / `drop_cr_keep_prose` / `reject_finding` to suppress hallucinated or misattributed findings before they reach the developer | Runs in-loop after Nova/Sage (REVUE-241, made in-loop in REVUE-261) |
+
+Agent system prompts must remain **provider-neutral** — no model-specific framing, no Anthropic/OpenAI-shaped instructions, no language-specific code examples. The coding language is injected from file extensions at runtime; provider-specific quirks live behind the registry/dispatcher (§6.4), never in the agent prompt.
 
 ### 7.2 Planned Agents (Phase 2+)
 
@@ -459,6 +565,8 @@ system_prompt: |
 ```
 ```
 
+Agent definitions must remain **provider-neutral**: no `model:` or `provider:` constraints in the YAML, no Anthropic/OpenAI-shaped framing inside `system_prompt`, no language-specific code examples. The provider, model, and language are injected at runtime by the dispatcher (§6.4) and the file-extension router. A `tier:` field is reserved for downstream registry binding (e.g. `tier: supported` to gate the agent against models in that registry tier).
+
 Custom agents can be added per project without touching Revue's core code:
 ```yaml
 # .revue.yml
@@ -498,9 +606,9 @@ review:
 version: "1.0"
 
 ai:
-  provider: anthropic
-  model: claude-sonnet-4-5
-  api_key_env: AI_API_KEY
+  provider: openrouter             # default; opt back into Anthropic with provider: anthropic
+  model: deepseek/deepseek-v4-pro  # cost-optimised default (see docs/configuration/per-model-knobs.md)
+  api_key_env: OPENROUTER_API_KEY
   temperature: 0.2
   max_tokens: 4000
 
@@ -556,35 +664,53 @@ notifications:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `REVUE_LICENSE_KEY` | Yes | Revue licence key (from revue.io/account) |
-| `AI_API_KEY` | Yes | AI provider API key |
-| `AI_PROVIDER` | No | Default: `anthropic` |
-| `AI_MODEL` | No | Default: `claude-sonnet-4-5` |
-| `AI_BASE_URL` | No | For custom/Azure gateways |
-| `REVUE_MODE` | No | `multi-agent` or `single-agent` |
+| `OPENROUTER_API_KEY` | Yes (default path) | OpenRouter API key — required for the DeepSeek default; swap for `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` if opting into those providers |
+| `REVUE_PROVIDER` | No | Default: `openrouter`. Override values: `anthropic`, `openai`, `azure`, `custom` |
+| `REVUE_MODEL` | No | Default: `deepseek/deepseek-v4-pro`. Override per registry entry |
+| `REVUE_BASE_URL` | No | For custom/Azure gateways |
 | `REVUE_BLOCK_ON_CRITICAL` | No | Override blocking config |
 
 ---
 
-## 9. Single-Agent Mode (Git Hook — Phase 2)
+## 9. `/revue-local` — Pre-Commit AI Review
 
-### 9.1 Use Case
+### 9.1 What it is
 
-Layer 2 of the 4-layer model: review locally before pushing. The agent that wrote the code has context bias. Revue in single-agent mode gives a **fresh context review** before the code leaves the developer's machine.
+`/revue-local` is a **Claude Code skill** the customer's AI-coding agent invokes inside its own workflow, **before the AI commits code to the repository**. It runs Revue's full multi-agent pipeline against the work-in-progress diff, surfacing findings the AI can act on (revise, ask for clarification, or proceed) before the commit lands.
 
-```bash
-# Install the pre-push hook
-revue hook install
+This is Revue's **primary product surface as of v2.0**. The CI/CD service (§5, §10) remains supported but is no longer the primary investment focus.
 
-# Or manually in .git/hooks/pre-push
-revue review --local --mode=single-agent --diff=HEAD..origin/main
+### 9.2 Why this shape
+
+**Cost-savings for the customer.** Every issue caught in `/revue-local` is one fewer issue that triggers a CI review cycle and bills another round of AI API calls. At scale, this is the single largest lever a Revue customer has to reduce their AI spend.
+
+**Same AI session, no Revue-side API cost.** `/revue-local` runs as a Claude Code skill inside the customer's existing Claude Code session. The customer pays only their existing Claude Code subscription — Revue does not bill per-API-call.
+
+**Aligned with how AI-coding workflows actually work.** Modern AI-coding agents (Claude Code, Cursor, Windsurf) operate in a write-review-revise loop. `/revue-local` is the *review* step in that loop. Without it, the AI's own output is the only quality gate before commit; with it, a multi-agent reviewer with specialised focus areas (Security, Performance, etc.) intercepts before commit.
+
+**Fresh context.** The agent that wrote the code has context bias — it tends to miss its own mistakes. `/revue-local` gives a fresh-context multi-agent review at the moment of highest leverage (pre-commit, in the same session).
+
+### 9.3 How customers invoke it
+
+The customer instructs their AI-coding agent to call `/revue-local` before each commit. Example pattern in a project's `CLAUDE.md` or equivalent:
+
+```markdown
+## Commit workflow
+
+Before committing, run `/revue-local` on the staged diff. If any High-severity
+finding appears, resolve it (or get explicit user override) before proceeding
+to the commit. Repeat the review after each fix.
 ```
 
-### 9.2 Design Considerations
-- Single-agent only (speed matters — this is synchronous)
-- Configurable exit behaviour (warn vs block)
-- Respects `.revueignore` for local overrides
-- Works offline with a locally running model (Ollama, LM Studio)
-- Shares the same `.revue.yml` config as the CI runner
+The skill itself runs the same multi-agent pipeline (Cleo, Zara, Kai, Maya, Leo, Nova, Sage, Vex) the CI path runs — same config (`.revue.yml`), same agents, same output format. The only difference is where it runs (customer's Claude Code session) and who pays for compute (the customer's Claude Code subscription, not Revue).
+
+### 9.4 Design constraints
+
+- Runs inside the customer's Claude Code session — no Revue-managed API key required for inference.
+- Shares the same `.revue.yml` config as the CI path. One config, two execution surfaces.
+- Configurable exit behaviour: block the commit on High-severity findings, warn-only, or summary-only.
+- Works on uncommitted, staged, or specified-range diffs.
+- Distribution mechanics (skill registry, install flow, paywall, licence enforcement) are covered in `docs/planning/revue-local-distribution-brief.md` (TBC — brief not yet authored). This PRD only defines the customer-facing behaviour.
 
 ---
 
@@ -645,28 +771,70 @@ A consolidated summary posted to the PR/MR:
 
 ---
 *Agents: Zara 🔒 · Kai ⚡ · Maya ✨ · Leo 🏗️ · Sage 🧠*
-*AI: Claude Sonnet 4.5 · Team: auto → team-security-focus*
+*AI: DeepSeek-V4-Pro (OpenRouter) · Team: auto → team-security-focus*
 *[View full report](https://app.revue.io/reviews/abc123)*
 ```
+
+### 10.3 `/revue-local` Output Format
+
+The `/revue-local` skill streams findings back into the customer's Claude Code session as a markdown digest, structured identically to §10.2 so the calling AI can parse it without surface-specific handling. The CI-only fields (`[View full report]` link, run ID, posted-comment count) are omitted; everything else — severities, agent attributions, model identifier, Sage suggestions — matches §10.2 byte-equivalent.
+
+A trailing block signals the recommended next action to the calling AI:
+
+```markdown
+## 🔍 Revue /revue-local — pre-commit review
+
+**Files reviewed:** 4 | **Issues found:** 3 | **Review time:** 22s
+
+### 🔴 Critical (1)
+- SQL injection in `src/api/users.py:47`
+
+### 🟠 High (1)
+- Missing input validation in `src/api/users.py:23`
+
+### 🟡 Medium (1)
+- Magic number in `src/models/order.py:78`
+
+### 🧠 Sage's Suggestions (2)
+- `src/api/users.py:47` — Apply parameterised query fix
+- `src/api/users.py:23` — Apply input sanitisation fix
+
+---
+**Recommended action:** BLOCK_COMMIT — 1 Critical finding present.
+Resolve before commit, or pass `--override` with explicit user approval.
+
+*Agents: Cleo · Zara 🔒 · Kai ⚡ · Maya ✨ · Leo · Nova · Sage 🧠 · Vex*
+*AI: customer's Claude Code session (no Revue-side API spend)*
+```
+
+Exit semantics: `BLOCK_COMMIT` (any Critical or configured-block severity), `WARN_PROCEED` (findings below block threshold), or `OK` (no findings). The calling AI uses this signal to decide whether to commit, revise, or escalate to the user.
 
 ---
 
 ## 11. Pricing & Tiers
 
+> **Cost-care positioning — load-bearing.** Revue's pricing story is "we save you money on your AI bill." Two mechanisms:
+>
+> 1. **Default model is cost-optimised.** DeepSeek-V4-Pro on OpenRouter runs at ~10× lower per-token cost than Anthropic Sonnet 4.5 (see TCO table below). This is the default — customers benefit without configuration.
+> 2. **`/revue-local` eliminates Revue-side AI spend entirely.** Running reviews inside the customer's existing Claude Code session means the customer's AI bill is the only line item — and `/revue-local` actively *reduces* it by catching issues before they trigger CI review cycles. Every issue caught locally is one fewer round of CI-side AI calls billed.
+>
+> This positioning must be visible in the README, the website, the pricing page, the launch post, and every customer-facing surface. It is not a feature note; it is the headline.
+
 ### 11.1 Tier Comparison
 
-> **BYOK model:** Users pay their AI provider directly (OpenAI, Anthropic, etc.). Revue charges only for orchestration, prompt engineering, and agent coordination — not AI compute. This is structurally different from competitors who absorb AI costs, and must be communicated clearly in all pricing pages.
+> **BYOK model:** Customers pay their AI provider directly (OpenRouter, Anthropic, OpenAI, etc.). Revue charges only for orchestration, prompt engineering, and agent coordination — not AI compute. This is structurally different from competitors who absorb AI costs (and price accordingly).
 
 | Feature | Free | Indie | Pro | Enterprise |
 |---------|------|-------|-----|------------|
 | **Reviews/month** | 25 | 100 | Unlimited | Unlimited |
-| **Agents** | Basic (1) | All 6 | All 6 | All 6 |
+| **Agents** | Cleo + 1 reviewer + Nova | All 8 | All 8 | All 8 |
 | **Code location** | User's CI | User's CI | User's CI | User's CI or self-hosted |
 | **AI API keys** | User-provided | User-provided | User-provided | User-provided |
 | **Orchestrator** | Nuitka .whl | Nuitka .whl | Nuitka .whl | Nuitka Docker image |
 | **License validation** | Online | Online | Online | Online or offline |
 | **Custom rules** | ✅ | ✅ | ✅ | ✅ |
-| **Custom agents** | ❌ | ❌ | ❌ | ❌ (Post-MVP) |
+| **Custom agents (YAML)** | ✅ | ✅ | ✅ | ✅ |
+| **Custom agents (authoring UI)** | ❌ | ❌ | ✅ (Phase 2) | ✅ (Phase 2) |
 | **Custom models** | ❌ | ❌ | ❌ (Post-MVP) | ❌ (Post-MVP) |
 | **Support** | Community | Email | Priority | Dedicated + SLA |
 
@@ -681,16 +849,24 @@ A consolidated summary posted to the PR/MR:
 | **Enterprise Growth** (11–50 seats, light-touch) | $149/mo | $1,249/yr | Mid-size enterprises |
 | **Enterprise Plus** (51+ seats, high-touch sales) | Custom | Required annual | Large enterprises |
 
-**Total Cost of Ownership (TCO = Revue price + user's AI provider cost):**
+**Total Cost of Ownership (TCO = Revue price + customer's AI provider cost).**
 
-| Tier | Revue price | Typical AI cost (GPT-4o BYOK) | Monthly TCO |
-|------|-------------|-------------------------------|-------------|
-| Free | $0 | ~$0.50 | ~$0.50 |
-| Indie | $9 | ~$10 | ~$19 |
-| Pro | $29 | ~$30–50 (team of 5) | ~$59–79 |
-| Enterprise Starter | $59 | ~$50–80 | ~$109–139 |
+Two columns: the cost under the **legacy Anthropic Sonnet 4.5 default** (v1.x), and the cost under the **DeepSeek-V4-Pro default** (v2.0+). The delta is the customer's saving from the model swap alone — *before* `/revue-local` further reduces CI cycles.
 
-At Indie TCO (~$19/month), Revue is competitively positioned against CodeRabbit ($12/dev/month) for the value delivered: multi-agent specialised review, code staying on customer infrastructure, and BYOK data sovereignty.
+**Assumptions (rate card sampled 2026-05-18):**
+- Anthropic Sonnet 4.5 on Anthropic API: $3/M prompt + $15/M completion.
+- DeepSeek-V4-Pro on OpenRouter: $0.435/M prompt + $0.87/M completion (per `docs/research/deepseek-v4-pro-evaluation.md`).
+- Typical review: ~120K prompt + ~20K completion tokens.
+- Customers who additionally adopt `/revue-local` shift those API costs to their existing Claude Code subscription, eliminating Revue-side AI spend entirely.
+
+| Tier | Revue price | TCO (v1.x — Anthropic Sonnet baseline) | TCO (v2.0 — DeepSeek default) | Monthly saving |
+|------|-------------|----------------------------------------|-------------------------------|----------------|
+| Free (25 reviews/mo) | $0 | ~$17 | ~$2 | **~$15 (~88%)** |
+| Indie (100 reviews/mo) | $9 | ~$75 | ~$16 | **~$59 (~79%)** |
+| Pro (~500 reviews/mo, team of 5) | $29 | ~$359 | ~$64 | **~$295 (~82%)** |
+| Enterprise Starter (~1,000 reviews/mo) | $59 | ~$719 | ~$129 | **~$590 (~82%)** |
+
+At Indie TCO (~$16/month under DeepSeek default), Revue is **structurally cheaper** than CodeRabbit's $12/dev/month for a 2-dev team while delivering multi-agent specialised review, BYOK data sovereignty, and source code that never leaves the customer's infrastructure. For teams adopting `/revue-local`, the gap widens further — CI-side AI cost approaches zero as more reviews land pre-commit.
 
 ### 11.3 Free Tier Strategy
 
@@ -714,38 +890,52 @@ A conversion tracking dashboard (Epic E6) will provide the data needed to make t
 
 ## 12. Phased Roadmap
 
-### Phase 1: Foundation — MVP (Months 1–3)
-**Goal:** Ship a working multi-agent CI reviewer for GitHub + GitLab
+### Phase 1: Foundation — MVP (shipped, v1.0–v2.0)
+**Goal:** Ship a working multi-agent reviewer with platform-agnostic adapters and a cost-optimised default.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| GitHub App integration | ✅ Done | Webhook + API adapter |
+| GitLab integration | ✅ Done | |
+| Bitbucket adapter | ✅ Done | Promoted earlier than original Phase 2 plan |
+| Multi-agent BMAD engine | ✅ Done | Cleo, Zara, Kai, Maya, Leo, Nova, Sage, Vex |
+| AI provider abstraction via per-model registry + dispatcher | ✅ Done | REVUE-262/263/264 |
+| **DeepSeek-V4-Pro on OpenRouter as default model** | ✅ Done | REVUE-267 — cost-driven default swap |
+| **`/revue-local` Mode 2 — native Claude Code Task pipeline** | ✅ Done | REVUE-259/260/261 — zero Revue-side AI spend |
+| Sage (Resolver) — scoped MVP | ✅ Done | Suggestion-only, confidence-gated |
+| `.revue.yml` config schema | ✅ Done | |
+| Inline + summary comments | ✅ Done | |
+| Configurable blocking | ✅ Done | |
+| Self-service workspace onboarding | ✅ Done | Web UI |
+| Free / Indie / Pro tier billing | ✅ Done | Stripe + license key |
+| Basic analytics (run history, issue counts) | ✅ Done | |
+| Documentation site | ✅ Done | |
+
+### Phase 2: `/revue-local` productisation (current focus)
+**Goal:** Turn `/revue-local` from an internal dogfooding tool into a customer-facing skill, distributed via a registry, with a clear install path and the existing paywall preserved.
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| GitHub App integration | P0 | Webhook + API adapter |
-| GitLab integration (migrate existing) | P0 | Port from internal tool |
-| Multi-agent BMAD engine | P0 | Port from internal tool, extend |
-| AI provider abstraction (OpenAI, Anthropic, Azure, OpenRouter, Custom) | P0 | |
-| Core agents: Cleo, Zara, Kai, Maya, Leo, Nova | P0 | |
-| **Sage (Resolver) — scoped MVP** | P0 | Suggestion-only, self-contained fixes, confidence-gated |
-| `.revue.yml` config schema | P0 | |
-| Inline + summary comments | P0 | |
-| Configurable blocking | P0 | |
-| Self-service workspace onboarding | P0 | Web UI |
-| Free tier enforcement (BYOK, 25 runs/month cap, license key) | P1 | |
-| Indie + Pro tier billing | P1 | Stripe |
-| Basic analytics (run history, issue counts) | P1 | |
-| Documentation site | P1 | |
-
-### Phase 2: Expansion (Months 4–6)
-| Feature | Priority | Notes |
-|---------|----------|-------|
-| Single-agent git hook (pre-push) | P0 | Layer 2 |
-| Bitbucket + Azure DevOps adapters | P0 | |
-| **Sage v2** — auto-commit + multi-round loop | P1 | Builds on MVP Sage foundation |
-| Concurrency specialist (Swift 6, Kotlin coroutines) | P1 | |
+| **`/revue-local` skill packaging & distribution** | P0 | Distribution mechanics covered in `docs/planning/revue-local-distribution-brief.md` (TBC) |
+| **Install + onboarding flow** | P0 | One-command install into customer's Claude Code; auto-detect `.revue.yml` |
+| **Pre-commit AI-workflow integration patterns** | P0 | Published patterns / `CLAUDE.md` snippets for Claude Code, Cursor, Windsurf |
+| **Cost-saving dashboard** | P0 | Show customer their AI-bill reduction vs CI-only baseline (delta = reviews caught locally × per-review API cost) |
+| Customer-cost-care messaging rollout | P0 | README, website, pricing page, launch post — see [[feedback_customer_cost_messaging]] |
+| Sage v2 — auto-commit + multi-round loop | P1 | Builds on MVP Sage |
 | Custom agent authoring (UI) | P1 | |
 | Slack / Teams notifications | P2 | |
 | Review analytics dashboard | P2 | Trend data, false positive tracking |
 
-### Phase 3: Scale (Months 7–12)
+### Phase 2b: CI track — deprecated-but-maintained
+**Status:** Receive only keep-the-lights-on maintenance. No new feature investment. Continues to work and stays cheap thanks to the DeepSeek default. Strategic focus has moved to Phase 2 (`/revue-local`).
+
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| Bug fixes on existing CI integrations | P1 (reactive only) | GitHub Actions, GitLab CI, Bitbucket Pipelines |
+| Azure DevOps adapter | P3 | De-prioritised; revisit if customer demand warrants |
+| Concurrency specialist (Swift 6, Kotlin coroutines) | P3 | Deferred from original Phase 2 plan |
+
+### Phase 3: Scale (later)
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | Enterprise SSO/SAML | P0 | |
@@ -765,7 +955,8 @@ A conversion tracking dashboard (Epic E6) will provide the data needed to make t
 - Agent runner must be runnable as a standalone binary / Docker image / pip package
 - Must support air-gapped environments (self-hosted AI + self-hosted VCS)
 - Review must complete within 3 minutes for diffs up to 2,000 changed lines
-- **Large diffs (> configurable limit, default 2,000 lines):** Revue stops the review immediately — before any AI call — and posts a single comment explaining the limit, why it exists, and suggesting a logical PR breakdown. Exit is a warning (non-blocking), not a failure. Batch mode (chunked review across multiple agent passes) is a Phase 2 feature.
+- **AI-model-agnostic.** Business logic, agent prompts, and pipeline code must remain provider-neutral. All provider-specific behaviour lives behind the per-model registry + dispatcher. No direct `anthropic.Anthropic(...)` (or any other provider SDK) usage outside the corresponding `AIClient` implementation. Anthropic-shaped APIs (`output_config`, etc.) and OpenRouter-shaped APIs (`response_format`, `tool_choice_first_turn`) must not leak across the abstraction boundary. New provider support = a registry row + an `AIClient` implementation, never a business-logic conditional.
+- **Large diffs (> configurable limit, default 2,000 lines):** Revue stops the review immediately — before any AI call — and posts a single comment explaining the limit, why it exists, and suggesting a logical PR breakdown. Exit is a warning (non-blocking), not a failure. Batch mode (chunked review across multiple agent passes) is a future feature.
 - **Graceful degradation:** If an agent fails or times out (default: 90s per agent), Nova proceeds with available findings and marks the failing agent's contribution as unavailable in the summary. The review run does not fail entirely.
 - **Monorepos:** Multiple `.revue.yml` files are supported via path-scoped configuration. Each top-level service path can define its own team and agent settings.
 - **Token budget:** Each agent receives only the diff portions relevant to its trigger patterns, not the full diff. Cleo is responsible for routing the correct diff slices per agent.
@@ -777,36 +968,51 @@ A conversion tracking dashboard (Epic E6) will provide the data needed to make t
 - Revue does **not** store or index the codebase (it reviews diffs only, not full context)
 - Revue is **not** a code search or refactoring tool
 
+### Non-Goals (v2.0 — `/revue-local` shape)
+- `/revue-local` is **not** a git pre-commit hook — it is an AI-workflow integration step that lives in the customer's prompt / skill / agent configuration, invoked by the customer's AI-coding agent before the AI commits
+- `/revue-local` does **not** replace the customer's AI-coding agent (Claude Code, Cursor, Windsurf) — it runs alongside it as the review step in the write-review-revise loop
+- `/revue-local` does **not** require a Revue-side AI API key — inference runs inside the customer's existing Claude Code session at zero Revue-side AI spend
+
 ---
 
 ## 14. Open Questions
 
-1. **Agent Marketplace:** Should community-contributed agents be hosted on revue.io or distributed via GitHub? → Recommend GitHub-hosted with a curated index on revue.io.
-2. **Cross-model review:** Priority for Phase 2 or 3? → High value differentiator, suggest Phase 2.
-3. **Sage v2 auto-commit:** When Sage pushes a fix autonomously — same commit on same branch, or a new commit? → New commit on same branch, clearly attributed to Revue (e.g. `[revue] fix: parameterise SQL query`).
-4. **Confidentiality of findings:** Should review comments be private (visible only to the PR author) or public by default? → Public by default, configurable.
-5. **Free tier limits:** 25 runs/month, resets monthly. Rationale: enough to evaluate, not enough to avoid upgrading. Viral growth tracked via conversion metrics for 6 months post-launch before adjusting.
-6. **Sage confidence threshold:** Is 90% the right cutoff, or should teams be able to configure it? → Recommend 90% default, configurable per project in `.revue.yml`.
+1. **`/revue-local` distribution mechanics (NEW — v2.0 pivot):** How is `/revue-local` packaged, distributed, installed, licensed, and paywall-gated as a customer-facing Claude Code skill? → Covered in `docs/planning/revue-local-distribution-brief.md` (TBC — brief not yet authored); this PRD specifies *what* and *why*, the brief specifies *how it ships*. Outstanding sub-questions: skill registry choice (Anthropic's vs Revue-hosted vs GitHub-based), one-command install pattern, licence-key validation inside the skill, free-tier enforcement in a customer-side execution context.
+2. **Cost-saving dashboard methodology:** How do we measure customer AI-bill reduction credibly? → Proposal: instrument `/revue-local` to count "issues caught locally" and multiply by typical per-review CI cost (DeepSeek per-review × team's review frequency). Dashboard surfaces both raw count and estimated dollar saving. Compare against the customer's actual OpenRouter/Anthropic monthly spend if they grant read-only access. **Owner:** PM. **Target resolution:** before the Phase 2 cost-saving dashboard ticket enters sprint planning. Gates the §3.5 ≥40% AI-spend headline KPI.
+3. **Agent Marketplace:** Should community-contributed agents be hosted on revue.io or distributed via GitHub? → Recommend GitHub-hosted with a curated index on revue.io.
+4. **Cross-model review:** Priority for Phase 2 or 3? → High value differentiator; deferred to Phase 3 now that `/revue-local` productisation is the Phase 2 spearhead.
+5. **Sage v2 auto-commit:** When Sage pushes a fix autonomously — same commit on same branch, or a new commit? → New commit on same branch, clearly attributed to Revue (e.g. `[revue] fix: parameterise SQL query`).
+6. **Confidentiality of findings:** Should review comments be private (visible only to the PR author) or public by default? → Public by default, configurable.
+7. **Free tier limits:** 25 runs/month, resets monthly. Rationale: enough to evaluate, not enough to avoid upgrading. Viral growth tracked via conversion metrics for 6 months post-launch before adjusting.
+8. **Sage confidence threshold:** Is 90% the right cutoff, or should teams be able to configure it? → Recommend 90% default, configurable per project in `.revue.yml`.
 
 ---
 
 ## Appendix A: Competitive Positioning Summary
 
-| Feature | Revue | CodeRabbit | Greptile | Copilot Review | Snyk Code | SonarCloud |
-|---------|-------|------------|----------|----------------|-----------|------------|
-| Multi-agent | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Open AI backend | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Feature | Revue (v2.0) | CodeRabbit | Greptile | Copilot Review | Snyk Code | SonarCloud |
+|---------|--------------|------------|----------|----------------|-----------|------------|
+| **Cost-savings positioning (we reduce customer AI bill)** | ✅ first-class pillar | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **AI-workflow integration (pre-commit review by AI agent)** | ✅ via `/revue-local` (primary surface) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Multi-agent specialised review** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **AI-model-agnostic (DeepSeek default, opt-in Anthropic/OpenAI/Azure)** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Customer pays AI provider directly (BYOK) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | GitHub | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | GitLab | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
-| Bitbucket | Phase 2 | ✅ | ❌ | ❌ | ✅ | ✅ |
-| Code stays in CI | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Pre-commit hook | Phase 2 | ❌ | ❌ | ❌ | ✅ (CLI) | ✅ (CLI) |
+| Bitbucket | ✅ | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Code stays in customer infra | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Pre-commit CLI hook (legacy shape) | n/a — superseded by `/revue-local` | ❌ | ❌ | ❌ | ✅ (CLI) | ✅ (CLI) |
 | Resolver (fix suggestions) | ✅ MVP | ❌ | ❌ | ❌ | Limited | Limited |
 | Resolver (auto-commit loop) | Phase 2 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Custom agents | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Configurable blocking | ✅ | Limited | ❌ | ❌ | ✅ | ✅ |
 | Security focus | ✅ (Zara) | Limited | ❌ | ❌ | ✅ primary | ✅ primary |
 | Self-hosted option | Phase 3 | ❌ | ❌ | ❌ | ✅ | ✅ (Sonar) |
+
+**Strongest competitive differentiators (v2.0):**
+1. **AI-workflow integration via `/revue-local`** — no competitor offers a code-review tool the customer's AI agent invokes inside its own session. Every competitor still assumes review happens *after* code lands on a branch.
+2. **Cost-savings as the pricing pillar** — competitors absorb AI costs and price accordingly, hiding the spend; Revue's BYOK + cost-optimised default + `/revue-local` triple makes the saving visible and quantifiable on the customer's own AI bill.
+3. **AI-model-agnostic by architecture, not by claim** — DeepSeek default, Anthropic/OpenAI/Azure/custom all supported via the registry; competitors lock to one provider.
 
 ---
 

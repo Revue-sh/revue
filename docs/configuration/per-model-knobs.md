@@ -6,6 +6,11 @@ the dispatcher and the tool-loop wire up the underlying API call. This page is
 the reference for those knobs: what they do, what values are valid, and why
 they vary across models.
 
+> **Default model:** `deepseek/deepseek-v4-pro` (OpenRouter).
+> To use a different model, set `ai.model:` and `ai.provider:` in `.revue.yml`,
+> or set the `REVUE_MODEL` and `REVUE_PROVIDER` environment variables.
+> See examples below.
+
 > The built-in registry is the source of truth for Revue-vetted models. To
 > view the live, merged registry (built-ins + your `.revue.yml` overrides),
 > run:

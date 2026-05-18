@@ -53,11 +53,11 @@ class AIConfig:
     ai_max_tokens: int
 
     # Multi-provider Configuration
-    provider: Literal["anthropic", "openai", "azure", "openrouter", "custom"] = "anthropic"
+    provider: Literal["anthropic", "openai", "azure", "openrouter", "custom"] = "openrouter"
     api_key: str = ""
     api_key_env: str = ""
     base_url: str = ""
-    model: str = "claude-sonnet-4-5-20250929"
+    model: str = "deepseek/deepseek-v4-pro"
     synthesis_model: str = ""  # REVUE-236/240: reasoning-tier override (Nova + Vex). Empty → reuse `model`.
     azure_endpoint: str = ""
     azure_deployment: str = ""
@@ -116,7 +116,7 @@ class AIConfig:
     @classmethod
     def from_env(cls) -> "AIConfig":
         """Create configuration from environment variables."""
-        provider = os.getenv("REVUE_PROVIDER", "anthropic")
+        provider = os.getenv("REVUE_PROVIDER", "openrouter")
         provider_key_env = PROVIDER_DEFAULT_ENV_VARS.get(provider, "")
         return cls(
             # GitLab Configuration with fallbacks
@@ -137,7 +137,7 @@ class AIConfig:
             api_key=os.getenv(provider_key_env, "") if provider_key_env else "",
             api_key_env=os.getenv("REVUE_API_KEY_ENV", ""),
             base_url=os.getenv("REVUE_BASE_URL", os.getenv("GENAI_GATEWAY_URL", "")),
-            model=os.getenv("REVUE_MODEL", "claude-sonnet-4-5-20250929"),
+            model=os.getenv("REVUE_MODEL", "deepseek/deepseek-v4-pro"),
             azure_endpoint=os.getenv("REVUE_AZURE_ENDPOINT", os.getenv("AZURE_OPENAI_ENDPOINT", "")),
             azure_deployment=os.getenv("REVUE_AZURE_DEPLOYMENT", os.getenv("AZURE_OPENAI_DEPLOYMENT", "")),
             azure_api_version=os.getenv("REVUE_AZURE_API_VERSION", os.getenv("AZURE_API_VERSION", "2024-02-01")),

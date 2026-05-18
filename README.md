@@ -34,16 +34,23 @@ registry shipped with this release.
 
 _(*) value overridden by `.revue.yml` in current directory._
 
+**Default model: DeepSeek-v4-pro (OpenRouter).**
+
+Revue prioritises cost-effectiveness to keep review affordable. DeepSeek-v4-pro
+is the default for all three pipeline agents. To opt back into Sonnet (Anthropic's
+most capable reviewer), set `REVUE_PROVIDER=anthropic REVUE_MODEL=claude-sonnet-4-5-20250929`
+in your shell or `.revue.yml`.
+
 **Cost / quality summary:**
 
-- **Haiku 4.5** — fastest and cheapest worker for per-agent review; use for
-  high-volume CI runs where latency matters.
-- **Sonnet 4.5** — strongest synthesis / consolidator pass; use for the Vex
-  reasoning override on shipped PRs.
-- **Qwen3-coder-next** — OpenRouter cost-saver with reliable structured
-  output; tool-call required first turn.
-- **DeepSeek-v4-pro** — strongest non-Anthropic option for code review;
-  evaluated end-to-end in REVUE-265.
+- **DeepSeek-v4-pro** (default) — strongest code review quality at lowest cost;
+  OpenRouter-hosted; evaluated end-to-end in REVUE-265.
+- **Qwen3-coder-next** — OpenRouter alternative; reliable structured output;
+  tool-call required first turn; trade-off: slightly lower signal than DeepSeek.
+- **Sonnet 4.5** — Anthropic's strongest synthesis / consolidator pass; higher
+  cost; use for security-sensitive code review or when Anthropic infra is required.
+- **Haiku 4.5** — fastest and cheapest per-agent worker; suitable for high-volume
+  CI where latency matters and breadth matters more than depth.
 
 For the full knob reference (what each column means, when to override, and
 how to bring your own model), see

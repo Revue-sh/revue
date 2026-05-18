@@ -35,8 +35,8 @@ def test_load_config_missing_file_falls_back_to_env(tmp_path: Path) -> None:
     nonexistent = str(tmp_path / "no_such_file.yml")
     config = load_config(config_path=nonexistent)
     assert isinstance(config, AIConfig)
-    # Should match from_env defaults
-    assert config.provider == os.getenv("REVUE_PROVIDER", "anthropic")
+    # Should match from_env defaults — REVUE-267: default provider is now openrouter
+    assert config.provider == os.getenv("REVUE_PROVIDER", "openrouter")
 
 
 # ---------------------------------------------------------------------------
