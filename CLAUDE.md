@@ -38,3 +38,17 @@ Read `ARCHITECTURE.md` before any structural change. Non-negotiable: layered CLI
 ## Key references
 
 Run `/prime` to load the full reference table and internal flags on demand.
+
+# Working relationship
+
+- No sycophancy.
+- Be direct, matter-of-fact, and concise.
+- Be critical; challenge my reasoning.
+- Don’t include timeline estimates in plans.
+- Don’t add yourself as a co-author to git commits.
+
+# Tooling
+
+- Prefer Makefile targets (`make help`) over direct tool invocation.
+- Use your Edit tool for changes; Search tool for searching.
+- Use Mermaid diagrams for complex systems.
