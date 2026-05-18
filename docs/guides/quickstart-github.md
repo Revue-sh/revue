@@ -86,7 +86,7 @@ jobs:
 version: "1"
 
 ai:
-  provider: openrouter             # anthropic | openai | azure | openrouter | custom
+  provider: openrouter             # openrouter | anthropic | openai | azure | custom
   model: deepseek/deepseek-v4-pro  # default (cost-optimised). See docs/configuration/per-model-knobs.md
   api_key_env: OPENROUTER_API_KEY  # env var name for your AI provider key (BYOK)
 

@@ -27,7 +27,7 @@ Go to **Settings → Secrets and variables → Actions → New repository secret
 | Secret name | Value |
 |---|---|
 | `REVUE_LICENSE_KEY` | Your Revue license key |
-| `ANTHROPIC_API_KEY` | Your Anthropic API key (or `OPENAI_API_KEY` if using OpenAI) |
+| `OPENROUTER_API_KEY` | Your OpenRouter API key (default). For Anthropic/OpenAI, use `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` respectively |
 
 ---
 
@@ -66,7 +66,7 @@ jobs:
       - name: Run Revue review
         env:
           REVUE_LICENSE_KEY: ${{ secrets.REVUE_LICENSE_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -75,7 +75,7 @@ jobs:
           revue review --diff /tmp/pr.diff --post-comments
 ```
 
-**Using OpenAI instead of Anthropic?** Replace `ANTHROPIC_API_KEY` with `OPENAI_API_KEY` and set `provider: openai` in your `.revue.yml`.
+**Using Anthropic or OpenAI instead?** Replace `OPENROUTER_API_KEY` with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, and set `provider: anthropic` or `provider: openai` and the corresponding model in your `.revue.yml`.
 
 ---
 
@@ -86,9 +86,9 @@ jobs:
 version: "1"
 
 ai:
-  provider: anthropic              # anthropic | openai | azure | openrouter | custom
-  model: claude-sonnet-4-5-20250929
-  api_key_env: ANTHROPIC_API_KEY   # env var name for your AI provider key (BYOK)
+  provider: openrouter             # openrouter | anthropic | openai | azure | custom
+  model: deepseek/deepseek-v4-pro  # default (cost-optimised). See docs/configuration/per-model-knobs.md
+  api_key_env: OPENROUTER_API_KEY  # env var name for your AI provider key (BYOK)
 
 review:
   max_diff_lines: 2000             # skip the review if the diff is larger than this

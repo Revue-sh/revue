@@ -12,14 +12,14 @@ inputs:
     required: true
 
   - name: AI_PROVIDER
-    description: "AI provider: anthropic | openai | azure | openrouter | custom"
+    description: "AI provider: openrouter | anthropic | openai | azure | custom"
     required: false
-    default: "anthropic"
+    default: "openrouter"
 
   - name: AI_MODEL
     description: "Model name for the chosen provider"
     required: false
-    default: "claude-sonnet-4-5-20250929"
+    default: "deepseek/deepseek-v4-pro"
 
   - name: AI_BASE_URL
     description: "Custom base URL for Azure or self-hosted gateways"

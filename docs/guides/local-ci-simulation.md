@@ -18,9 +18,9 @@ Run the exact same Revue review that CI runs — locally, before pushing — to 
 Ensure these are set in `~/.zshenv`:
 
 ```bash
-export AI_API_KEY="YOUR_ANTHROPIC_API_KEY_HERE"
-export AI_PROVIDER="anthropic"
-export AI_MODEL="claude-sonnet-4-5-20250929"
+export AI_API_KEY="YOUR_OPENROUTER_API_KEY_HERE"
+export AI_PROVIDER="openrouter"
+export AI_MODEL="deepseek/deepseek-v4-pro"
 export REVUE_TIER_OVERRIDE="pro"
 export BITBUCKET_USERNAME="your-username"
 export BITBUCKET_API_TOKEN="your-bb-token"
@@ -28,9 +28,9 @@ export BITBUCKET_API_TOKEN="your-bb-token"
 
 Verify your key works:
 ```bash
-source ~/.zshenv && curl -s https://api.anthropic.com/v1/models \
-  -H "x-api-key: ${AI_API_KEY}" \
-  -H "anthropic-version: 2023-06-01" | python3 -c "import json,sys; d=json.load(sys.stdin); print('✅ Key valid' if d.get('data') else '❌ ' + str(d))"
+source ~/.zshenv && curl -s https://openrouter.ai/api/v1/models \
+  -H "Authorization: Bearer ${AI_API_KEY}" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print('✅ Key valid' if d.get('data') else '❌ ' + str(d))"
 ```
 
 ---
@@ -82,8 +82,8 @@ python3 -u src/revue/cli.py review \
   --repo-slug "revue" \
   --bb-username "${BITBUCKET_USERNAME}" \
   --bb-token "${BITBUCKET_API_TOKEN}" \
-  --provider "${AI_PROVIDER:-anthropic}" \
-  --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" \
+  --provider "${AI_PROVIDER:-openrouter}" \
+  --model "${AI_MODEL:-deepseek/deepseek-v4-pro}" \
   --config .revue.yml \
   --comment-style per-issue \
   --pr-description-file /tmp/revue_pr_description.txt
@@ -215,7 +215,7 @@ Once diff and PR description are generated (steps 1–2), save this as an alias 
 
 ```bash
 # Quick alias (add to ~/.zshenv)
-alias revue-local='source ~/.zshenv && cd ~/Projects/revue.io && export APP_ENV=staging PYTHONPATH="$(pwd)/src" && python3 -u src/revue/cli.py review --diff /tmp/revue_pr.diff --platform bitbucket --pr-id "${PR_ID}" --workspace cbscd --repo-slug revue --bb-username "${BITBUCKET_USERNAME}" --bb-token "${BITBUCKET_API_TOKEN}" --provider "${AI_PROVIDER:-anthropic}" --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" --config .revue.yml --comment-style per-issue --pr-description-file /tmp/revue_pr_description.txt'
+alias revue-local='source ~/.zshenv && cd ~/Projects/revue.io && export APP_ENV=staging PYTHONPATH="$(pwd)/src" && python3 -u src/revue/cli.py review --diff /tmp/revue_pr.diff --platform bitbucket --pr-id "${PR_ID}" --workspace cbscd --repo-slug revue --bb-username "${BITBUCKET_USERNAME}" --bb-token "${BITBUCKET_API_TOKEN}" --provider "${AI_PROVIDER:-openrouter}" --model "${AI_MODEL:-deepseek/deepseek-v4-pro}" --config .revue.yml --comment-style per-issue --pr-description-file /tmp/revue_pr_description.txt'
 ```
 
 ---
@@ -224,9 +224,9 @@ alias revue-local='source ~/.zshenv && cd ~/Projects/revue.io && export APP_ENV=
 
 | Variable | Required | Description |
 |---|---|---|
-| `AI_API_KEY` | ✅ | Anthropic (or OpenAI) API key |
-| `AI_PROVIDER` | ✅ | `anthropic` or `openai` |
-| `AI_MODEL` | ✅ | e.g. `claude-sonnet-4-5-20250929` |
+| `AI_API_KEY` | ✅ | OpenRouter API key (default). Use Anthropic / OpenAI key if overriding `AI_PROVIDER`. |
+| `AI_PROVIDER` | ✅ | `openrouter` (default), `anthropic`, or `openai` |
+| `AI_MODEL` | ✅ | e.g. `deepseek/deepseek-v4-pro` (default), `claude-sonnet-4-5-20250929`, `gpt-4o-mini` |
 | `REVUE_TIER_OVERRIDE` | ✅ (staging) | Set to `pro` for local testing |
 | `BITBUCKET_USERNAME` | ✅ | Your Bitbucket username |
 | `BITBUCKET_API_TOKEN` | ✅ | Bitbucket repository access token |

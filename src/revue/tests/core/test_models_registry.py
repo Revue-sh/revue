@@ -233,12 +233,11 @@ def test_modelconfig_is_frozen() -> None:
 # Post-bmad-code-review regression tests (REVUE-262)
 # ---------------------------------------------------------------------------
 
-def test_validate_selected_model_accepts_real_default_model_id() -> None:
-    """B1: the built-in registry key must match the production default model.
-
-    `ai_config.AIConfig.model` defaults to ``claude-sonnet-4-5-20250929``;
-    if the registry doesn't carry that exact id, the gate rejects every
-    out-of-the-box install.
+def test_validate_selected_model_accepts_anthropic_optin_model_id() -> None:
+    """B1: the built-in registry must keep ``claude-sonnet-4-5-20250929`` as
+    a supported, strict-schema entry so REVUE-267's Anthropic opt-in path
+    (AC4) remains valid after the default flipped to deepseek-v4-pro on
+    OpenRouter.
     """
     registry = load_builtin_registry()
     cfg = validate_selected_model(registry, "claude-sonnet-4-5-20250929")

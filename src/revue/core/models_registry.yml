@@ -5,7 +5,7 @@
 # their `.revue.yml` (see `merge_user_overrides` in `models_registry.py`).
 #
 # Knob reference:
-#   provider                : anthropic | openrouter | openai | azure | custom
+#   provider                : openrouter | anthropic | openai | azure | custom
 #   schema_mode             : output_config (Anthropic) | response_format (OpenAI-shaped)
 #   schema_strict           : true => dispatcher refuses a "supported" model that loses strictness
 #   tool_choice_first_turn  : auto | required | none

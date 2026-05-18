@@ -11,6 +11,7 @@ Place `.revue.yml` in the root of your repository. If the file is absent, Revue 
 | Key | Type | Required | Description |
 |---|---|---|---|
 | `version` | string | **Yes** | Config schema version. Must be `"1"`. |
+| `language` | string | No | Repository's primary coding language (e.g. `python`, `swift`, `go`). Used to prime reviewer agents — they treat this as their default expertise lens but still review every file in the diff. When omitted, Revue infers the language from the diff. |
 | `ai` | object | No | AI provider settings. |
 | `review` | object | No | Review behaviour settings. |
 | `noise_filters` | object | No | Noise filter settings. |
@@ -35,9 +36,9 @@ Controls which AI provider and model Revue uses.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `provider` | string | `anthropic` | AI provider. One of: `anthropic`, `openai`, `azure`, `openrouter`, `custom`. |
-| `model` | string | `claude-sonnet-4-5-20250929` | Model identifier passed to the provider API. |
-| `api_key_env` | string | — | Name of the environment variable that holds your API key (BYOK). Example: `ANTHROPIC_API_KEY`. |
+| `provider` | string | `openrouter` | AI provider. One of: `openrouter`, `anthropic`, `openai`, `azure`, `custom`. |
+| `model` | string | `deepseek/deepseek-v4-pro` | Model identifier passed to the provider API. |
+| `api_key_env` | string | — | Name of the environment variable that holds your API key (BYOK). Example: `OPENROUTER_API_KEY`. |
 | `base_url` | string | — | Override the provider's base URL. Useful for corporate AI gateways. |
 | `temperature` | float | `0.3` | Sampling temperature (0.0–2.0). Lower = more deterministic output. |
 | `max_tokens` | int | `50000` | Maximum tokens the AI may generate per call. |
@@ -56,7 +57,13 @@ Required only when `provider: azure`.
 ### Examples
 
 ```yaml
-# Anthropic (default)
+# OpenRouter / DeepSeek (default — cheapest reliable reviewer pair)
+ai:
+  provider: openrouter
+  model: deepseek/deepseek-v4-pro
+  api_key_env: OPENROUTER_API_KEY
+
+# Anthropic (opt-in — highest signal, highest cost)
 ai:
   provider: anthropic
   model: claude-sonnet-4-5-20250929
@@ -208,9 +215,9 @@ output:
 version: "1"
 
 ai:
-  provider: anthropic
-  model: claude-sonnet-4-5-20250929
-  api_key_env: ANTHROPIC_API_KEY
+  provider: openrouter
+  model: deepseek/deepseek-v4-pro
+  api_key_env: OPENROUTER_API_KEY
   temperature: 0.3
   max_tokens: 50000
 

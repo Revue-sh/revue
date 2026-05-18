@@ -95,8 +95,8 @@ REVUE_ARGS=(
   --diff "${DIFF_FILE}"
   --format json
   --output "${REVIEW_JSON}"
-  --provider "${AI_PROVIDER:-anthropic}"
-  --model "${AI_MODEL:-claude-sonnet-4-5-20250929}"
+  --provider "${AI_PROVIDER:-openrouter}"
+  --model "${AI_MODEL:-deepseek/deepseek-v4-pro}"
   --mode "${MODE:-multi-agent}"
   --min-confidence "${MIN_CONFIDENCE:-70}"
   --platform bitbucket

@@ -35,8 +35,8 @@ Go to **Repository settings → Repository variables** and add (mark secrets as 
 | `BITBUCKET_API_TOKEN` | Your Bitbucket API token | ✅ |
 | `AI_API_KEY` | Your AI provider API key | ✅ |
 | `REVUE_LICENSE_KEY` | Your Revue license key | ✅ |
-| `AI_PROVIDER` | `anthropic` (or `openai`) | |
-| `AI_MODEL` | `claude-sonnet-4-5-20250929` | |
+| `AI_PROVIDER` | `openrouter` (default; or `anthropic` / `openai`) | |
+| `AI_MODEL` | `deepseek/deepseek-v4-pro` (default; cost-optimised) | |
 
 ---
 
@@ -70,8 +70,8 @@ pipelines:
                 --repo-slug "${BITBUCKET_REPO_SLUG}" \
                 --bb-username "${BITBUCKET_USERNAME}" \
                 --bb-token "${BITBUCKET_API_TOKEN}" \
-                --provider "${AI_PROVIDER:-anthropic}" \
-                --model "${AI_MODEL:-claude-sonnet-4-5-20250929}" \
+                --provider "${AI_PROVIDER:-openrouter}" \
+                --model "${AI_MODEL:-deepseek/deepseek-v4-pro}" \
                 --mode multi-agent \
                 --config .revue.yml \
                 || echo "Review completed"
@@ -86,8 +86,8 @@ pipelines:
 version: "1"
 
 ai:
-  provider: anthropic
-  model: claude-sonnet-4-5-20250929
+  provider: openrouter
+  model: deepseek/deepseek-v4-pro
   api_key_env: AI_API_KEY
 
 review:

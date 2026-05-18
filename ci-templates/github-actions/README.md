@@ -6,7 +6,11 @@ Add automated multi-agent AI code reviews to every PR in 2 minutes.
 
 1. Add your AI provider API key as a GitHub secret:
    - **Settings → Secrets and variables → Actions → New repository secret**
-   - Name: `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY`, etc.)
+   - Name the secret after the provider you're using — Revue looks for the matching name:
+     - `OPENROUTER_API_KEY` (default — OpenRouter routes DeepSeek-V4-Pro and many others)
+     - `ANTHROPIC_API_KEY` (Claude)
+     - `OPENAI_API_KEY` (GPT models)
+     - `AZURE_OPENAI_API_KEY` (Azure-hosted OpenAI)
 
 2. Create `.github/workflows/revue-review.yml` in your repo:
 
@@ -31,7 +35,7 @@ jobs:
 
       - uses: revue-io/action@v1
         with:
-          ai_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          ai_api_key: ${{ secrets.OPENROUTER_API_KEY }}
 ```
 
 3. Open a PR — Revue posts inline comments automatically.
@@ -43,8 +47,8 @@ jobs:
 | Input | Required | Default | Description |
 |---|---|---|---|
 | `ai_api_key` | ✅ Yes | — | Your AI provider API key (BYOK — never stored by Revue) |
-| `ai_provider` | No | `anthropic` | `anthropic` \| `openai` \| `azure` \| `openrouter` \| `custom` |
-| `ai_model` | No | `claude-sonnet-4-5-20250929` | Model name for the chosen provider |
+| `ai_provider` | No | `openrouter` | `openrouter` \| `anthropic` \| `openai` \| `azure` \| `custom` |
+| `ai_model` | No | `deepseek/deepseek-v4-pro` | Model name for the chosen provider |
 | `ai_base_url` | No | — | Custom base URL for Azure or self-hosted gateways |
 | `revue_token` | No | — | Revue.io workspace token (from app.revue.io/settings/tokens) for analytics |
 | `mode` | No | `multi-agent` | `multi-agent` \| `single-agent` |
@@ -91,7 +95,7 @@ jobs:
 ```yaml
 - uses: revue-io/action@v1
   with:
-    ai_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+    ai_api_key: ${{ secrets.OPENROUTER_API_KEY }}
     fail_on_critical: true
 ```
 
@@ -101,7 +105,7 @@ jobs:
 - id: revue
   uses: revue-io/action@v1
   with:
-    ai_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+    ai_api_key: ${{ secrets.OPENROUTER_API_KEY }}
 
 - name: Print summary
   run: echo "Revue found ${{ steps.revue.outputs.findings_count }} issues"
@@ -116,9 +120,9 @@ Place in your repo root for project-level settings:
 ```yaml
 version: "1"
 ai:
-  provider: anthropic
-  model: claude-sonnet-4-5-20250929
-  api_key_env: ANTHROPIC_API_KEY
+  provider: openrouter
+  model: deepseek/deepseek-v4-pro
+  api_key_env: OPENROUTER_API_KEY
 
 review:
   max_diff_lines: 2000
@@ -153,7 +157,7 @@ agents:
 
 | Symptom | Fix |
 |---|---|
-| No comments posted | Check Actions log. Verify `ANTHROPIC_API_KEY` secret is set and valid. |
+| No comments posted | Check Actions log. Verify your provider's API key secret (`OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `AZURE_OPENAI_API_KEY`) is set and valid. |
 | `permission denied` on `pull-requests` | Add `permissions: pull-requests: write` to your workflow. |
 | Review times out | Raise `agent_timeout_seconds` in `.revue.yml` (default 90s). |
 | Too many false positives | Raise `min_confidence` in `.revue.yml` to 80 or 90. |
@@ -168,7 +172,7 @@ If you previously used the copy-paste workflow template (pre-v1), replace your `
 ```yaml
 - uses: revue-io/action@v1
   with:
-    ai_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+    ai_api_key: ${{ secrets.OPENROUTER_API_KEY }}
 ```
 
 The action handles diff fetching, Python setup, and comment posting automatically. Remove any manual `pip install`, `revue review`, or `actions/github-script` steps from your workflow.

@@ -86,3 +86,37 @@ def test_leo_system_prompt_mentions_architecture():
     defn = _load("leo")
     assert any(word in defn.system_prompt.lower()
                for word in ["architect", "solid", "design", "coupling"])
+
+
+@pytest.mark.parametrize("agent_name", ["kai", "leo", "maya", "zara"])
+def test_reviewer_agents_have_no_hardcoded_trigger_patterns(agent_name):
+    """REVUE-267 follow-up: reviewer agents must be language-agnostic.
+
+    Hard-coded ``trigger_patterns`` in agent .md frontmatter gated agents on a
+    fixed set of file extensions, contradicting Revue's positioning as a
+    language-agnostic review platform. Language expertise is now injected at
+    pipeline runtime via ``inject_language_context`` using the operator's
+    ``primary_language`` (.revue.yml) or the language inferred from the diff.
+
+    This test is the regression guard: ensure no future PR re-introduces a
+    static trigger_patterns list on any reviewer agent.
+    """
+    defn = _load(agent_name)
+    assert not defn.trigger_patterns, (
+        f"{agent_name}: trigger_patterns must remain empty — agents are "
+        "language-agnostic; language priming is injected at pipeline runtime."
+    )
+
+
+@pytest.mark.parametrize("agent_name", ["kai", "leo", "maya", "zara"])
+def test_reviewer_agents_declare_expertise_domain(agent_name):
+    """Each reviewer agent must declare its ``expertise`` so the pipeline's
+    language-injection step can prime the model with both axes — language AND
+    domain — instead of language alone. Missing expertise degrades the priming
+    to language-only and weakens role priming for that agent.
+    """
+    defn = _load(agent_name)
+    assert defn.expertise and defn.expertise.strip(), (
+        f"{agent_name}: expertise field must be a non-blank string "
+        "(used for per-agent priming in language_injection)."
+    )

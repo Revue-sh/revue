@@ -17,12 +17,16 @@ revue:
   extends: .revue-review
 ```
 
-2. Add your Anthropic API key as a CI/CD variable:
+2. Add your AI provider API key as a CI/CD variable:
    - Go to **Settings → CI/CD → Variables**
    - Click **Add variable**
-   - Key: `ANTHROPIC_API_KEY`
-   - Value: your API key (starts with `sk-ant-`)
-   - Flags: **Masked**, Protected (optional)
+   - **Key**: name the variable after the provider you're using — Revue looks for the matching name:
+     - `OPENROUTER_API_KEY` (default — OpenRouter, e.g. DeepSeek-V4-Pro)
+     - `ANTHROPIC_API_KEY` (Claude — keys start with `sk-ant-`)
+     - `OPENAI_API_KEY` (GPT models)
+     - `AZURE_OPENAI_API_KEY` (Azure-hosted OpenAI)
+   - **Value**: your API key
+   - **Flags**: **Masked**, Protected (optional)
 
 3. Open an MR — Revue will review it automatically.
 
@@ -33,8 +37,8 @@ Create `.revue.yml` in your repo root:
 ```yaml
 version: "1"
 ai:
-  provider: anthropic
-  model: claude-sonnet-4-5-20250929
+  provider: openrouter
+  model: deepseek/deepseek-v4-pro
 review:
   max_diff_lines: 2000
   min_confidence: 70
@@ -56,7 +60,7 @@ agents:
 
 ## Troubleshooting
 
-- **No comments posted**: Check CI job logs. Ensure `ANTHROPIC_API_KEY` is set and unmasked for the pipeline.
+- **No comments posted**: Check CI job logs. Ensure the API key variable for your provider (`OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `AZURE_OPENAI_API_KEY`) is set and unmasked for the pipeline.
 - **`curl: command not found`**: The template installs `curl` and `jq` via `apt-get`. If your runner uses a non-Debian image, override `before_script` to use the appropriate package manager.
 - **API rate limits**: Free tier allows 100 reviews/month. Upgrade at revue.io/pricing.
 - **Permission errors**: Ensure `CI_JOB_TOKEN` has API access (enabled by default in GitLab 15.9+). For self-managed instances older than 15.9, use a project access token stored as `CI_JOB_TOKEN`.

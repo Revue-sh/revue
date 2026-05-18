@@ -10,12 +10,12 @@ Full YAML schema::
     version: "1"                      # required, must be "1"
 
     ai:
-      provider: anthropic             # anthropic|openai|azure|openrouter|custom
-      model: claude-sonnet-4-5-20250929
-      api_key_env: ANTHROPIC_API_KEY  # env var name for key (BYOK)
+      provider: openrouter            # openrouter|anthropic|openai|azure|custom
+      model: deepseek/deepseek-v4-pro
+      api_key_env: OPENROUTER_API_KEY # env var name for key (BYOK)
       base_url: ""                    # optional override
       temperature: 0.3
-      max_tokens: 4096
+      max_tokens: 50000
       azure:
         endpoint: ""
         deployment: ""
@@ -59,10 +59,20 @@ from .models_registry import (
 DEFAULT_REVUE_YML: str = """# .revue.yml — Revue.io configuration
 version: "1"
 
+# Primary coding language for reviewer priming (optional).
+# Operator pin — wins over the language Revue infers from the diff. Uncomment
+# and set to your repository's main language (e.g. python, swift, go, ruby).
+# language: python
+
 ai:
-  provider: anthropic
-  model: claude-sonnet-4-5-20250929
-  api_key_env: ANTHROPIC_API_KEY
+  # Revue defaults to the cheapest reliable reviewer pair: DeepSeek-V4-Pro on
+  # OpenRouter. To opt into Anthropic Sonnet instead, set:
+  #   provider: anthropic
+  #   model: claude-sonnet-4-5-20250929
+  #   api_key_env: ANTHROPIC_API_KEY
+  provider: openrouter
+  model: deepseek/deepseek-v4-pro
+  api_key_env: OPENROUTER_API_KEY
 
 review:
   max_diff_lines: 2000
@@ -143,6 +153,11 @@ def load_config(
 
     # Start from env-based defaults, then layer YAML on top
     config = AIConfig.from_env()
+
+    # --- top-level language pin (operator override for reviewer priming) ---
+    if "language" in raw:
+        lang = raw["language"]
+        config.primary_language = str(lang).strip() if lang else ""
 
     # --- ai section ---
     ai: dict[str, object] = raw.get("ai", {}) or {}  # type: ignore[assignment]

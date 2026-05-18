@@ -60,6 +60,7 @@ from .models import FileChange, PRContext
 from .pr_description_adapter import PRDescription
 from .pr_context import PRContextExtractor
 from .pattern_injection import inject_patterns
+from .language_injection import inject_language_context
 from .usage_tracker import check_reviews_left, track as track_usage
 from .reviewer_tools import build_reviewer_read_file_tool, build_reviewer_toolset
 from .run_verdict import AgentStatus, RunVerdict, compute_run_verdict
@@ -1010,6 +1011,18 @@ class ReviewPipeline:
                 len(self.config.allowed_patterns),
                 len(self.config.disallowed_patterns),
             )
+
+        # 2d. Language priming — prime reviewer agents with the repo's primary
+        #     language. Operator pin (.revue.yml `language:`) wins, otherwise
+        #     falls back to the language inferred by shared analysis. No-op when
+        #     neither is set.
+        resolved_lang = inject_language_context(
+            allowed_agents,
+            primary_language=self.config.primary_language,
+            detected_languages=list(shared.languages) if shared else [],
+        )
+        if resolved_lang:
+            _log.info("[revue]   Language priming injected — %s", resolved_lang)
 
         # 3. Cleo routing — select agents relevant to this diff
         _log.info("[revue]   Routing files to agents (Cleo)...")

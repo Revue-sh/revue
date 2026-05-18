@@ -656,3 +656,43 @@ def test_config_loader_accepts_synthesis_model_equal_to_main_model(
     # Empty string signals "reuse main model".
     assert config.synthesis_model == ""
     assert config.model == "claude-sonnet-4-5-20250929"
+
+
+# ---------------------------------------------------------------------------
+# REVUE-267 follow-up: primary_language pin for reviewer agents
+# ---------------------------------------------------------------------------
+
+
+def test_config_loader_reads_top_level_language_into_primary_language(
+    tmp_path: Path,
+) -> None:
+    """Top-level ``language`` in .revue.yml pins the operator's primary
+    language; reviewer agents will be primed with this expertise instead of
+    falling back to the language inferred from the diff."""
+    yml = (
+        'version: "1"\n'
+        "language: swift\n"
+        "ai:\n"
+        "  provider: openrouter\n"
+        "  model: deepseek/deepseek-v4-pro\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert config.primary_language == "swift"
+
+
+def test_config_loader_primary_language_defaults_to_empty_when_unset(
+    tmp_path: Path,
+) -> None:
+    """When .revue.yml omits ``language``, primary_language is empty —
+    the injection step then falls back to the language inferred from the
+    diff. An empty string is the contract for 'no operator pin'."""
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: openrouter\n"
+        "  model: deepseek/deepseek-v4-pro\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert config.primary_language == ""

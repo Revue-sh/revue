@@ -27,9 +27,9 @@ Go to **Settings → CI/CD → Variables → Add variable** and add:
 | Variable | Value | Masked | Protected |
 |---|---|---|---|
 | `REVUE_LICENSE_KEY` | Your Revue license key | ✅ Yes | No |
-| `ANTHROPIC_API_KEY` | Your Anthropic API key | ✅ Yes | No |
+| `OPENROUTER_API_KEY` | Your OpenRouter API key (default) | ✅ Yes | No |
 
-To use OpenAI instead, add `OPENAI_API_KEY` and set `provider: openai` in `.revue.yml`.
+To use Anthropic or OpenAI instead, add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` and set `provider:` and `model:` accordingly in `.revue.yml`.
 
 > **Tip:** Set variables as "masked" to prevent them from appearing in job logs.
 
@@ -56,7 +56,7 @@ revue-ai-review:
     - revue review --diff /tmp/mr.diff --post-comments
   variables:
     REVUE_LICENSE_KEY: $REVUE_LICENSE_KEY
-    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+    OPENROUTER_API_KEY: $OPENROUTER_API_KEY
     GITLAB_URL: $CI_SERVER_URL
     GITLAB_TOKEN: $GITLAB_TOKEN
     CI_PROJECT_ID: $CI_PROJECT_ID
@@ -78,7 +78,7 @@ revue-review:
   extends: .revue-review
   variables:
     REVUE_LICENSE_KEY: $REVUE_LICENSE_KEY
-    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+    OPENROUTER_API_KEY: $OPENROUTER_API_KEY
 ```
 
 ---
@@ -90,9 +90,9 @@ revue-review:
 version: "1"
 
 ai:
-  provider: anthropic              # anthropic | openai | azure | openrouter | custom
-  model: claude-sonnet-4-5-20250929
-  api_key_env: ANTHROPIC_API_KEY   # env var name for your AI provider key (BYOK)
+  provider: openrouter             # openrouter | anthropic | openai | azure | custom
+  model: deepseek/deepseek-v4-pro  # default (cost-optimised). See docs/configuration/per-model-knobs.md
+  api_key_env: OPENROUTER_API_KEY  # env var name for your AI provider key (BYOK)
 
 review:
   max_diff_lines: 2000             # skip the review if the diff is larger than this

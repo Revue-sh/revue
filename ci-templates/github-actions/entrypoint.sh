@@ -31,8 +31,8 @@ REVUE_ARGS=(
   --diff "${DIFF_FILE}"
   --format json
   --output "${REVIEW_JSON}"
-  --provider "${REVUE_PROVIDER:-anthropic}"
-  --model "${REVUE_MODEL:-claude-sonnet-4-5-20250929}"
+  --provider "${REVUE_PROVIDER:-openrouter}"
+  --model "${REVUE_MODEL:-deepseek/deepseek-v4-pro}"
   --mode "${REVUE_MODE:-multi-agent}"
   --min-confidence "${REVUE_MIN_CONFIDENCE:-70}"
 )

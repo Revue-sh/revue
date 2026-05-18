@@ -56,10 +56,10 @@ Yes. Revue uses your own AI provider key — it does not have a shared AI backen
 
 ### Which AI providers are supported?
 
-- **Anthropic** (Claude) — default
+- **OpenRouter** — default (DeepSeek-V4-Pro, cost-optimised)
+- **Anthropic** (Claude)
 - **OpenAI** (GPT-4o, etc.)
 - **Azure OpenAI**
-- **OpenRouter**
 - **Custom / corporate gateway** (any OpenAI-compatible endpoint)
 
 ### How do I configure my AI provider?
@@ -68,10 +68,12 @@ Set the API key as a CI secret and reference it in `.revue.yml`:
 
 ```yaml
 ai:
-  provider: anthropic
-  model: claude-sonnet-4-5-20250929
-  api_key_env: ANTHROPIC_API_KEY  # name of your CI secret
+  provider: openrouter              # default — cheapest reliable reviewer pair
+  model: deepseek/deepseek-v4-pro
+  api_key_env: OPENROUTER_API_KEY   # name of your CI secret
 ```
+
+To opt into Anthropic Sonnet instead, set `provider: anthropic`, `model: claude-sonnet-4-5-20250929`, `api_key_env: ANTHROPIC_API_KEY`.
 
 ---
 

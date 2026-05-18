@@ -1,8 +1,8 @@
 ai:
-  api_key_env: REVUE_ANTHROPIC_API_KEY
-  model: claude-haiku-4-5-20251001
-  synthesis_model: claude-haiku-4-5-20251001
-  provider: anthropic
+  api_key_env: OPENROUTER_API_KEY
+  model: deepseek/deepseek-v4-pro
+  synthesis_model: deepseek/deepseek-v4-pro
+  provider: openrouter
 noise_filters:
   allowed_patterns:
   - applies_to:
@@ -152,7 +152,7 @@ rating:
     low: 0.05
     medium: 0.3
 review:
-  agent_timeout_seconds: 240
+  agent_timeout_seconds: 480
   ignore_patterns:
   - .revue.yml
   - '*.lock'

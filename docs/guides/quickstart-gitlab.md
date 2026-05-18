@@ -8,7 +8,7 @@ Add Revue AI code review to your GitLab repository in about five minutes.
 
 - A GitLab repository with CI/CD enabled
 - A [Revue account](https://revue.io/signup) and license key
-- An API key for your chosen AI provider (Anthropic or OpenAI)
+- An API key for your chosen AI provider. Revue defaults to **OpenRouter / DeepSeek-V4-Pro** (cheapest reliable reviewer pair). Anthropic and OpenAI are supported via explicit override.
 
 ---
 
@@ -27,9 +27,9 @@ Go to **Settings → CI/CD → Variables → Add variable** and add:
 | Variable | Value | Masked | Protected |
 |---|---|---|---|
 | `REVUE_LICENSE_KEY` | Your Revue license key | ✅ Yes | No |
-| `ANTHROPIC_API_KEY` | Your Anthropic API key | ✅ Yes | No |
+| `OPENROUTER_API_KEY` | Your OpenRouter API key (default) | ✅ Yes | No |
 
-To use OpenAI instead, add `OPENAI_API_KEY` and set `provider: openai` in `.revue.yml`.
+To use Anthropic or OpenAI instead, add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` and set `provider:` and `model:` accordingly in `.revue.yml`.
 
 > **Tip:** Set variables as "masked" to prevent them from appearing in job logs.
 
@@ -56,7 +56,7 @@ revue-ai-review:
     - revue review --diff /tmp/mr.diff --post-comments
   variables:
     REVUE_LICENSE_KEY: $REVUE_LICENSE_KEY
-    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+    OPENROUTER_API_KEY: $OPENROUTER_API_KEY
     GITLAB_URL: $CI_SERVER_URL
     GITLAB_TOKEN: $GITLAB_TOKEN
     CI_PROJECT_ID: $CI_PROJECT_ID
@@ -78,7 +78,7 @@ revue-review:
   extends: .revue-review
   variables:
     REVUE_LICENSE_KEY: $REVUE_LICENSE_KEY
-    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+    OPENROUTER_API_KEY: $OPENROUTER_API_KEY
 ```
 
 ---
@@ -90,7 +90,7 @@ revue-review:
 version: "1"
 
 ai:
-  provider: openrouter             # anthropic | openai | azure | openrouter | custom
+  provider: openrouter             # openrouter | anthropic | openai | azure | custom
   model: deepseek/deepseek-v4-pro  # default (cost-optimised). See docs/configuration/per-model-knobs.md
   api_key_env: OPENROUTER_API_KEY  # env var name for your AI provider key (BYOK)
 

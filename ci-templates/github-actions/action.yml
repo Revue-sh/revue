@@ -15,13 +15,13 @@ inputs:
     description: 'API key for your chosen AI provider (BYOK — never stored by Revue)'
     required: true
   ai_provider:
-    description: 'AI provider: anthropic | openai | azure | openrouter | custom'
+    description: 'AI provider: openrouter | anthropic | openai | azure | custom'
     required: false
-    default: 'anthropic'
+    default: 'openrouter'
   ai_model:
     description: 'Model name for the chosen provider'
     required: false
-    default: 'claude-sonnet-4-5-20250929'
+    default: 'deepseek/deepseek-v4-pro'
   ai_base_url:
     description: 'Custom base URL for Azure or self-hosted gateways'
     required: false

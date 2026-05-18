@@ -58,6 +58,12 @@ class AIConfig:
     api_key_env: str = ""
     base_url: str = ""
     model: str = "deepseek/deepseek-v4-pro"
+    # Operator pin for the repository's primary coding language. Used at pipeline
+    # runtime by language_injection.py to prime reviewer agents' system prompts.
+    # Empty → fall back to the language inferred from the diff.
+    # Config-file only — read from the top-level ``language:`` key in
+    # .revue.yml; there is no environment-variable override.
+    primary_language: str = ""
     synthesis_model: str = ""  # REVUE-236/240: reasoning-tier override (Nova + Vex). Empty → reuse `model`.
     azure_endpoint: str = ""
     azure_deployment: str = ""

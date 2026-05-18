@@ -231,6 +231,12 @@ class AgentDefinition:
     system_prompt: str                  # full system prompt for the AI call
     focus_areas: list[str] = field(default_factory=list)
     trigger_patterns: list[str] = field(default_factory=list)  # fnmatch patterns to trigger
+    # Short noun phrase naming the agent's domain (e.g. "performance
+    # engineering", "application security"). Read by language_injection to
+    # build per-agent priming alongside the repository's primary language.
+    # Empty for custom agents that don't declare it — falls back to a
+    # language-only priming with no domain axis.
+    expertise: str = ""
     severity_default: str = "minor"
     enabled: bool = True
     version: str = "1.0"
@@ -863,6 +869,7 @@ def _dict_to_definition(data: dict, source: str = "") -> AgentDefinition:
         system_prompt=data.get("system_prompt", ""),
         focus_areas=list(data.get("focus_areas", [])),
         trigger_patterns=list(data.get("trigger_patterns", [])),
+        expertise=str(data.get("expertise", "")),
         severity_default=data.get("severity_default", "minor"),
         enabled=bool(data.get("enabled", True)),
         version=str(data.get("version", "1.0")),
