@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "revue"
+version = "0.1.0"
+description = "Run the Revue multi-agent code review pipeline locally via a Claude Code skill — no platform APIs, no Anthropic spend by default."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Token Labs Ltd", email = "team@revue.sh" },
+]
+keywords = ["code-review", "claude-code", "ai", "static-analysis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "jsonschema>=4.21",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "build>=1.2",
+    "pip>=24.0",
+    "nuitka>=2.0",
+    "ordered-set>=4.1",
+    "zstandard>=0.22",
+]
+
+[project.scripts]
+revue = "revue_skill.cli:main"
+
+[project.urls]
+Homepage = "https://revue.sh"
+Documentation = "https://revue.sh/docs"
+Repository = "https://github.com/Token-Labs-Ltd/revue"
+Issues = "https://github.com/Token-Labs-Ltd/revue/issues"
+
+# --- Hatch packaging (dev / source builds only) ----------------------------
+# Production wheels are assembled by packaging/revue/build/build_wheel.py
+# after Nuitka compilation. Hatch is retained here for local development,
+# testing, and source distribution only.
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/revue_skill"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/revue_skill",
+    "tools/sources.yaml",
+    "tools/vendor_sources.py",
+    "manifest.schema.json",
+    "README.md",
+    "tests",
+    "build",
+]

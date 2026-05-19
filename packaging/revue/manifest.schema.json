@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revue.sh/schemas/revue-manifest.schema.json",
+  "title": "revue release manifest",
+  "description": "Schema for the version manifest served at revue.sh/skills/manifest.json. The install script fetches this manifest to verify the current release version before copying the bundled skill.",
+  "type": "object",
+  "required": ["schema_version", "current_version", "released_at", "artefacts"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "description": "Manifest schema version. Increment when the structure changes incompatibly.",
+      "type": "integer",
+      "const": 1
+    },
+    "current_version": {
+      "description": "Semver of the current revue wheel.",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "released_at": {
+      "description": "ISO-8601 UTC timestamp of the release.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "minimum_supported_version": {
+      "description": "Wheels older than this should self-upgrade. Optional.",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "artefacts": {
+      "description": "Per-format release artefacts.",
+      "type": "object",
+      "required": ["wheel"],
+      "properties": {
+        "wheel": { "$ref": "#/$defs/artefact" },
+        "sdist": { "$ref": "#/$defs/artefact" }
+      },
+      "additionalProperties": false
+    },
+    "release_notes_url": {
+      "description": "Human-readable changelog for this release. Optional.",
+      "type": "string",
+      "format": "uri"
+    }
+  },
+  "$defs": {
+    "artefact": {
+      "type": "object",
+      "required": ["url", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "description": "Where to download the artefact.",
+          "type": "string",
+          "format": "uri"
+        },
+        "sha256": {
+          "description": "Hex-encoded SHA-256 of the artefact.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size_bytes": {
+          "description": "Size of the artefact in bytes. Optional.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

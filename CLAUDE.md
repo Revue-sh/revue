@@ -14,6 +14,28 @@ Every PR **must** use `.bitbucket/pull_request_template.md` — fill in every se
 
 Commit and PR title format: `type(scope)[REVUE-XX]: description`
 
+### Scope management (intent-first)
+
+When starting any task, establish scope upfront before writing any code:
+- State the outcome and explicit boundaries ("this task does NOT include X").
+- If out-of-scope work is discovered mid-task, queue it silently — do not interrupt. Present the queue after the task completes.
+- Never ask mid-task whether to create a new ticket for out-of-scope items; always defer to the post-task queue review.
+
+### Jira ticket checks
+
+- **ALWAYS** before creating any Jira ticket, search the existing backlog for semantically similar issues first. Present any matches above 70% similarity for confirmation. Never create a ticket without completing this check.
+
+### Jira ticket completion — epic progress recap
+
+When a Jira ticket is marked complete, /bmad-agent-pm fetch the parent epic's tickets and provides an epic progress recap:
+
+```
+Epic: [REVUE-XX] Epic name
+[█████████░░░░░░░░░░░] 7/16 tickets (44%)
+```
+
+Use `█` for done tickets and `░` for remaining. Bar width = 20 characters.
+
 ### Jira ticket states — non-negotiable rules
 
 | When | Jira state | How |

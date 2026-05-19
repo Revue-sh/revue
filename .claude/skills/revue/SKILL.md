@@ -1,5 +1,5 @@
 ---
-name: revue-local
+name: revue
 model: haiku
 description: >
   Run Revue's pipeline locally — no real PR, no platform APIs, no Anthropic SDK calls.
@@ -9,7 +9,7 @@ description: >
 allowed-tools: Bash Task Read
 ---
 
-# revue-local
+# revue
 
 Local sandbox for Revue orchestration. All AI steps use native Claude Code Tasks
 (Task tool); all platform-posting steps write to local output. Nothing calls
@@ -23,10 +23,10 @@ Agent definitions live in `_revue/agents/` — independently editable copies of
 ## Mode 1 — Position (fast, zero AI calls)
 
 **Invocation patterns:**
-- `/revue-local position` — run all fixtures, show pass/fail summary
-- `/revue-local position github 01` — single fixture by platform + number
-- `/revue-local position <path>` — fixture by explicit path
-- `/revue-local position --platform gitlab` — filter to one platform
+- `/revue position` — run all fixtures, show pass/fail summary
+- `/revue position github 01` — single fixture by platform + number
+- `/revue position <path>` — fixture by explicit path
+- `/revue position --platform gitlab` — filter to one platform
 
 **Dispatch:** Run `local_run.py position` with the appropriate args:
 
@@ -50,7 +50,7 @@ display the output verbatim.
 
 ## Mode 2 — Full pipeline dry-run (Task-based, three phases)
 
-**Invocation:** `/revue-local run [--base <branch>] [--platform <P>] [--files <glob> ...]`
+**Invocation:** `/revue run [--base <branch>] [--platform <P>] [--files <glob> ...]`
 
 **CRITICAL: No subprocess calls, no `claude --print`, no Anthropic SDK.** Agents run as
 Agent tool forks inside the current Claude Code session — they consume this session's
@@ -226,12 +226,12 @@ quick smoke tests without Vex. New work should use 3a → 3b → 3c.
 ## Routing logic (parse user input, then dispatch)
 
 ```
-/revue-local                         → Mode 2, full pipeline (default)
-/revue-local run [args]              → Mode 2, full pipeline
-/revue-local position                → Mode 1, all fixtures
-/revue-local position --all          → Mode 1, all fixtures
-/revue-local position --platform P   → Mode 1, one platform
-/revue-local position github 01      → Mode 1, single fixture
+/revue                         → Mode 2, full pipeline (default)
+/revue run [args]              → Mode 2, full pipeline
+/revue position                → Mode 1, all fixtures
+/revue position --all          → Mode 1, all fixtures
+/revue position --platform P   → Mode 1, one platform
+/revue position github 01      → Mode 1, single fixture
 ```
 
 **Default (no args):** run the full pipeline on the diff between the current

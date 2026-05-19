@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "current_version": "0.1.0",
+  "released_at": "2026-05-19T12:00:00Z",
+  "minimum_supported_version": "0.1.0",
+  "artefacts": {
+    "wheel": {
+      "url": "https://files.pythonhosted.org/packages/revue-0.1.0-cp312-cp312-macosx_14_0_arm64.whl",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 204800
+    }
+  },
+  "release_notes_url": "https://github.com/Token-Labs-Ltd/revue/releases/tag/v0.1.0"
+}

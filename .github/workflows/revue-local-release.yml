@@ -1,0 +1,128 @@
+name: revue-local release
+
+# Build, sign, and publish the revue-local wheel + sdist when a tag like
+# `revue-local-v0.1.0` is pushed. Sigstore signatures are emitted as
+# `.sigstore` bundles and attached to the GitHub release alongside the
+# artefacts. PyPI publish uses OIDC (PyPI Trusted Publishing) — no API token
+# stored in the repo.
+#
+# Required pre-reqs (external setup, tracked in MVP_COMPASS.md):
+#   - PyPI Trusted Publisher entry for `revue-local` package owned by the team
+#   - GitHub repo `revue-io/revue-local` (or this repo, as an interim home)
+#   - `Releases` write permission for GITHUB_TOKEN (default scope is enough)
+
+on:
+  push:
+    tags:
+      - 'revue-local-v*'
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. revue-local-v0.1.0)'
+        required: true
+
+permissions:
+  contents: write     # upload release assets
+  id-token: write     # OIDC for PyPI Trusted Publishing + Sigstore
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build pyyaml
+
+      - name: Vendor sources
+        run: python packaging/revue-local/tools/vendor_sources.py --clean
+
+      - name: Build wheel + sdist
+        run: python -m build packaging/revue-local --outdir packaging/revue-local/dist
+
+      - name: Capture version
+        id: metadata
+        run: |
+          VERSION=$(grep '^version =' packaging/revue-local/pyproject.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: packaging/revue-local/dist/*
+
+  sign:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Sign with Sigstore
+        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        with:
+          inputs: ./dist/*.whl ./dist/*.tar.gz
+          upload-signing-artifacts: true
+
+      - name: Upload signed artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.sigstore
+            dist/*.sigstore.json
+
+  release:
+    needs: sign
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-dist
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.sigstore
+            dist/*.sigstore.json
+          generate_release_notes: true
+
+  publish-pypi:
+    needs: sign
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/revue-local
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to PyPI (Trusted Publishing, OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

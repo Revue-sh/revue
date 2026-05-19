@@ -1,0 +1,86 @@
+# Vendor manifest for the revue skill package
+#
+# Used by tools/vendor_sources.py to copy source-of-truth files into the wheel
+# build tree at packaging/revue/src/revue_skill/{skill,vendored}/.
+#
+# Why a manifest? The skill bundle ships standalone, but the production code
+# lives in src/revue/ and scripts/. To avoid silent drift, we (a) record the
+# canonical paths here, (b) copy them at build time, (c) assert in
+# tests/test_vendored_sources_in_sync.py that the in-tree copy still matches
+# the source-of-truth file. Drift fails CI.
+
+skill:
+  - source: .claude/skills/revue/SKILL.md
+    target: src/revue_skill/skill/SKILL.md
+  - source: scripts/local_run.py
+    target: src/revue_skill/skill/local_run.py
+    rewrite_imports:
+      # local_run.py imports from revue.* and positioning.* — when bundled into
+      # the wheel, those modules live under revue_skill.vendored. Rewrites are
+      # mechanical string substitutions; see tools/vendor_sources.py.
+      - from: "from revue.comments.position_adapter"
+        to: "from revue_skill.vendored.position_adapter"
+      - from: "from revue.core.terminal_state"
+        to: "from revue_skill.vendored.terminal_state"
+      - from: "from positioning.adapters"
+        to: "from revue_skill.vendored.positioning_adapters"
+
+vendored:
+  - source: src/revue/comments/position_adapter.py
+    target: src/revue_skill/vendored/position_adapter.py
+    rewrite_imports:
+      - from: "from revue.core.logging_channels"
+        to: "from revue_skill.vendored.logging_channels"
+  - source: src/revue/core/terminal_state.py
+    target: src/revue_skill/vendored/terminal_state.py
+    rewrite_imports:
+      - from: "from .finding_schema"
+        to: "from revue_skill.vendored.finding_schema"
+  - source: src/revue/core/logging_channels.py
+    target: src/revue_skill/vendored/logging_channels.py
+    rewrite_imports:
+      - from: "from revue.core.display"
+        to: "from revue_skill.vendored.display"
+      - from: "from revue.core.log"
+        to: "from revue_skill.vendored.log"
+  - source: src/revue/core/finding_schema.py
+    target: src/revue_skill/vendored/finding_schema.py
+  - source: src/revue/core/display.py
+    target: src/revue_skill/vendored/display.py
+  - source: src/revue/core/log.py
+    target: src/revue_skill/vendored/log.py
+  - source: scripts/positioning/__init__.py
+    target: src/revue_skill/vendored/positioning_adapters/__init__.py
+    rewrite_imports:
+      - from: "from revue.comments.position_adapter"
+        to: "from revue_skill.vendored.position_adapter"
+  - source: scripts/positioning/adapters.py
+    target: src/revue_skill/vendored/positioning_adapters/adapters.py
+    rewrite_imports:
+      - from: "from revue.comments.position_adapter"
+        to: "from revue_skill.vendored.position_adapter"
+  - source: scripts/positioning/bitbucket.py
+    target: src/revue_skill/vendored/positioning_adapters/bitbucket.py
+  - source: scripts/positioning/github.py
+    target: src/revue_skill/vendored/positioning_adapters/github.py
+  - source: scripts/positioning/gitlab.py
+    target: src/revue_skill/vendored/positioning_adapters/gitlab.py
+  - source: scripts/positioning/helpers.py
+    target: src/revue_skill/vendored/positioning_adapters/helpers.py
+  - source: scripts/positioning/protocol.py
+    target: src/revue_skill/vendored/positioning_adapters/protocol.py
+
+# Agent prompts and the orchestration registry that local_run.py loads at runtime.
+# All entries under _revue/ ship with the wheel so the skill works offline within
+# the licence cache window.
+agent_prompts:
+  - source_dir: _revue/agents
+    target_dir: src/revue_skill/skill/_revue/agents
+  - source_dir: _revue/adapters
+    target_dir: src/revue_skill/skill/_revue/adapters
+  - source_dir: _revue/clients
+    target_dir: src/revue_skill/skill/_revue/clients
+  - source: _revue/config.yaml
+    target: src/revue_skill/skill/_revue/config.yaml
+  - source: _revue/models_registry.yml
+    target: src/revue_skill/skill/_revue/models_registry.yml

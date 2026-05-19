@@ -60,7 +60,7 @@ definitions:
           - .revue/metrics.jsonl
 
     - step: &build-macos
-        name: "Build macOS ARM64"
+        name: "Build macOS ARM64 — revue-ci"
         runs-on:
           - self.hosted
           - macos
@@ -75,7 +75,7 @@ definitions:
           - dist/wheels/*.whl
 
     - step: &build-linux
-        name: "Build Linux x86_64"
+        name: "Build Linux x86_64 — revue-ci"
         image: python:3.12-slim
         caches:
           - pip
@@ -88,6 +88,35 @@ definitions:
         artifacts:
           - dist/wheels/*.whl
 
+    - step: &build-skill-macos
+        name: "Build macOS ARM64 — revue skill"
+        runs-on:
+          - self.hosted
+          - macos
+        script:
+          - export PATH="/opt/homebrew/bin:$PATH"
+          - python3.12 -m venv .skill-build-venv
+          - .skill-build-venv/bin/pip install nuitka ordered-set zstandard pyyaml jsonschema
+          - python3.12 packaging/revue/tools/vendor_sources.py --clean
+          - .skill-build-venv/bin/python -u packaging/revue/build/build_nuitka.py
+          - .skill-build-venv/bin/python -u packaging/revue/build/build_wheel.py
+        artifacts:
+          - packaging/revue/dist/wheels/*.whl
+
+    - step: &build-skill-linux
+        name: "Build Linux x86_64 — revue skill"
+        image: python:3.12-slim
+        caches:
+          - pip
+        script:
+          - apt-get update && apt-get install -y --no-install-recommends gcc patchelf libc6-dev
+          - pip install nuitka ordered-set zstandard pyyaml jsonschema
+          - python packaging/revue/tools/vendor_sources.py --clean
+          - python -u packaging/revue/build/build_nuitka.py
+          - python -u packaging/revue/build/build_wheel.py
+        artifacts:
+          - packaging/revue/dist/wheels/*.whl
+
     - step: &publish-pypi
         name: "Publish CLI → PyPI"
         script:
@@ -99,6 +128,19 @@ definitions:
               python -m twine upload --non-interactive --skip-existing dist/wheels/*.whl
             else
               echo "No wheels found — skipping PyPI upload"
+            fi
+
+    - step: &publish-skill-pypi
+        name: "Publish revue skill → PyPI"
+        script:
+          - pip install --quiet twine
+          - |
+            if ls packaging/revue/dist/wheels/*.whl 2>/dev/null; then
+              export TWINE_USERNAME=__token__
+              export TWINE_PASSWORD=$PYPI_API_TOKEN
+              python -m twine upload --non-interactive --skip-existing packaging/revue/dist/wheels/*.whl
+            else
+              echo "No skill wheels found — skipping PyPI upload"
             fi
 
 pipelines:
@@ -178,12 +220,21 @@ pipelines:
       - step: *build-macos
       - step: *build-linux
       - step:
-          name: "Collect Artifacts"
+          name: "Collect Artifacts — revue-ci"
           script:
             - ls -la dist/wheels/
           artifacts:
             - dist/wheels/*.whl
       - step: *publish-pypi
+      - step: *build-skill-macos
+      - step: *build-skill-linux
+      - step:
+          name: "Collect Artifacts — revue skill"
+          script:
+            - ls -la packaging/revue/dist/wheels/
+          artifacts:
+            - packaging/revue/dist/wheels/*.whl
+      - step: *publish-skill-pypi
 
   pull-requests:
     "**":
@@ -193,7 +244,7 @@ pipelines:
   custom:
     debug-macos-build:
       - step:
-          name: "Debug — Build macOS ARM64"
+          name: "Debug — Build macOS ARM64 (revue-ci)"
           runs-on:
             - self.hosted
             - macos
@@ -207,3 +258,20 @@ pipelines:
             - .build-venv/bin/python -u build/build_wheel.py
           artifacts:
             - dist/wheels/*.whl
+
+    debug-revue-skill-macos-build:
+      - step:
+          name: "Debug — Build macOS ARM64 (revue skill)"
+          runs-on:
+            - self.hosted
+            - macos
+          script:
+            - export PATH="/opt/homebrew/bin:$PATH"
+            - python3.12 --version
+            - python3.12 -m venv .skill-build-venv
+            - .skill-build-venv/bin/pip install nuitka ordered-set zstandard pyyaml jsonschema
+            - python3.12 packaging/revue/tools/vendor_sources.py --clean
+            - .skill-build-venv/bin/python -u packaging/revue/build/build_nuitka.py
+            - .skill-build-venv/bin/python -u packaging/revue/build/build_wheel.py
+          artifacts:
+            - packaging/revue/dist/wheels/*.whl
