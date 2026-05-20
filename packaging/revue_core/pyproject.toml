@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "revue_core"
+version = "0.1.0"
+description = "Shared orchestration logic for Revue multi-agent code review pipeline — CLI and CI integrations."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Token Labs Ltd", email = "team@revue.sh" },
+]
+keywords = ["code-review", "ai", "orchestration"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "jsonschema>=4.21",
+    "PyYAML>=6.0",
+    "tomli_w>=1.0",
+    "httpx>=0.27",
+    "anthropic>=0.20",
+    "openai>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "build>=1.2",
+    "pip>=24.0",
+]
+
+[project.urls]
+Homepage = "https://revue.sh"
+Documentation = "https://revue.sh/docs"
+Repository = "https://github.com/Token-Labs-Ltd/revue"
+Issues = "https://github.com/Token-Labs-Ltd/revue/issues"
+
+# --- Hatch packaging (dev / editable installs only) ----------------------
+# revue_core's *published* wheel is Nuitka-compiled per platform via
+# packaging/revue_core/build/build_nuitka.py + build_wheel.py; the IP must
+# not ship as plain .py. Hatch is kept here so `pip install -e
+# packaging/revue_core/` works for local development and CI test runs.
+#
+# DO NOT add a `targets.sdist` block — publishing an sdist would re-expose
+# the source .py to PyPI and defeat the Nuitka build. The CI pipeline only
+# uploads wheels from packaging/revue_core/dist/wheels/.
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/revue_core"]

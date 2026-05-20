@@ -1,1 +1,1 @@
-../../../src/revue/agents/_shared/guard_rails.md
+../../../packaging/revue_core/src/revue_core/agents/_shared/guard_rails.md

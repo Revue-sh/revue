@@ -50,3 +50,42 @@ def test_validate_rejects_extra_top_level_keys() -> None:
     bad["surprise"] = True
     with pytest.raises(ManifestError):
         validate(bad)
+
+
+# ---------------------------------------------------------------------------
+# REVUE-310 — optional revue_core_min_version
+# ---------------------------------------------------------------------------
+
+
+def test_revue_core_min_version_is_optional() -> None:
+    """A manifest without revue_core_min_version still validates — the field
+    is purely additive."""
+    sample = copy.deepcopy(EXAMPLE)
+    sample.pop("revue_core_min_version", None)
+    validate(sample)
+
+
+def test_revue_core_min_version_accepts_semver() -> None:
+    sample = copy.deepcopy(EXAMPLE)
+    sample["revue_core_min_version"] = "0.1.0"
+    validate(sample)
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    ["1", "1.0", "1.0.0.0", "1.0.0-rc1", "v1.0.0", "not-a-version"],
+)
+def test_revue_core_min_version_rejects_non_semver(bad_value: str) -> None:
+    sample = copy.deepcopy(EXAMPLE)
+    sample["revue_core_min_version"] = bad_value
+    with pytest.raises(ManifestError) as exc_info:
+        validate(sample)
+    assert "revue_core_min_version" in str(exc_info.value)
+
+
+def test_revue_core_min_version_listed_in_schema_properties() -> None:
+    """Smoke check that the schema we ship actually exposes the new field."""
+    assert "revue_core_min_version" in MANIFEST_SCHEMA["properties"]
+    field_schema = MANIFEST_SCHEMA["properties"]["revue_core_min_version"]
+    assert field_schema["type"] == "string"
+    assert "pattern" in field_schema

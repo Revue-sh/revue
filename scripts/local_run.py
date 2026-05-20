@@ -35,8 +35,8 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(REPO_ROOT))  # for _revue package
 
-from revue.comments.position_adapter import calculate, PositionStatus
-from revue.core.terminal_state import TerminalState, classify_terminal_state
+from revue_core.comments.position_adapter import calculate, PositionStatus
+from revue_core.core.terminal_state import TerminalState, classify_terminal_state
 from positioning.adapters import ADAPTERS
 
 # REVUE-261 — concurrency cap default for Slice 3 Vex forks. Mirrors the
@@ -138,8 +138,8 @@ def _setup_local_logging() -> None:
     _capture_revue_logs() overrides the hook temporarily during agent/Nova
     blocks to redirect to the log file, then restores the stdout hook.
     """
-    from revue.core.logging_channels import Log  # noqa: F401 — ensures channels are registered
-    from revue.core.log import RevueLogger
+    from revue_core.core.logging_channels import Log  # noqa: F401 — ensures channels are registered
+    from revue_core.core.log import RevueLogger
 
     def _to_stdout(message: str) -> None:
         sys.stdout.write(message + "\n")
@@ -156,7 +156,7 @@ def _capture_revue_logs(log_fh):
     _setup_local_logging) so subsequent Log.* calls still appear in the
     terminal.
     """
-    from revue.core.log import RevueLogger
+    from revue_core.core.log import RevueLogger
 
     # Python stdlib logging handler
     revue_logger = logging.getLogger("revue")
@@ -188,7 +188,7 @@ def _capture_revue_logs(log_fh):
         shared._proxy_hook = saved_hook
 
 
-FIXTURES_DIR = REPO_ROOT / "src/revue/tests/fixtures/positioning"
+FIXTURES_DIR = REPO_ROOT / "packaging/revue-ci/tests/fixtures/positioning"
 PLATFORMS = ("github", "gitlab", "bitbucket")
 _REVIEW_AGENTS = frozenset({"maya", "zara", "kai", "leo"})  # excludes nova, cleo
 
@@ -411,7 +411,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
         <jobs-dir>/diff_by_file.json — raw per-file diff strings
     """
     import fnmatch
-    from revue.core.logging_channels import Log
+    from revue_core.core.logging_channels import Log
 
     _setup_local_logging()
 
@@ -421,8 +421,8 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     jobs_dir = Path(args.jobs_dir)
     jobs_dir.mkdir(parents=True, exist_ok=True)
 
-    from revue.core.diff_parser import parse_diff_file, filter_changes
-    from revue.core.agent_loader import (
+    from revue_core.core.diff_parser import parse_diff_file, filter_changes
+    from revue_core.core.agent_loader import (
         load_agents_from_dir, _build_diff_text, _REVIEW_INSTRUCTIONS,
     )
 
@@ -542,17 +542,17 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
     If --nova-output is provided the file contains Nova's raw JSON response.
     If omitted, groups are passed through without synthesis.
     """
-    from revue.core.logging_channels import Log
+    from revue_core.core.logging_channels import Log
 
     _setup_local_logging()
 
     jobs_dir = Path(args.jobs_dir)
     platform = args.platform or "github"
 
-    from revue.core.pipeline import _air_to_agent_finding
-    from revue.core.agent_loader import load_agents_from_dir, _parse_finding_item
-    from revue.core.models import AIReview
-    from revue.comments.consolidator import (
+    from revue_core.core.pipeline import _air_to_agent_finding
+    from revue_core.core.agent_loader import load_agents_from_dir, _parse_finding_item
+    from revue_core.core.models import AIReview
+    from revue_core.comments.consolidator import (
         ProximityAndCountGroupingStrategy,
         NovaSingleShotStrategy,
     )
@@ -652,14 +652,14 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         Log.pipeline.info("[revue] consolidate  nova synthesis from Task output")
         class _NovaClient:
             def complete(self, *a, **kw):
-                from revue.core.models import CompletionResult, TokenUsage
+                from revue_core.core.models import CompletionResult, TokenUsage
                 return CompletionResult(text=nova_raw, usage=TokenUsage())
         nova_client = _NovaClient()
     else:
         Log.pipeline.info("[revue] consolidate  no Nova output — passthrough synthesis")
         class _PassthroughClient:
             def complete(self, *a, **kw):
-                from revue.core.models import CompletionResult, TokenUsage
+                from revue_core.core.models import CompletionResult, TokenUsage
                 return CompletionResult(text="[]", usage=TokenUsage())
         nova_client = _PassthroughClient()
 
@@ -773,7 +773,7 @@ def _build_vex_prompts(*, file_content: str, finding) -> tuple[str, str]:
     Byte-equivalence with the production path is enforced by
     ``test_local_run_vex_prompt_matches_production``.
     """
-    from revue.comments._verifier import VexVerifier
+    from revue_core.comments._verifier import VexVerifier
     verifier = VexVerifier(ai_client=None)
     system_prompt = verifier._system_prompt
     user_prompt = VexVerifier._build_prompt(
@@ -895,7 +895,7 @@ def _coerce_verdict(verdict_payload: dict):
             3c catches this and fails-open rather than mutate findings on
             garbage input.
     """
-    from revue.comments._verifier import VexVerdict, CorrectedAnchor, _VALID_VERDICTS
+    from revue_core.comments._verifier import VexVerdict, CorrectedAnchor, _VALID_VERDICTS
 
     verdict_value = verdict_payload.get("verdict")
     if verdict_value is None:
@@ -946,7 +946,7 @@ def _apply_vex_verdict_to_finding(finding, verdict_payload: dict):
     anchor becomes None.
     """
     from dataclasses import replace
-    from revue.comments._verifier import (
+    from revue_core.comments._verifier import (
         VexVerifyPostProcessor,
         VEX_CORRECTION_MAX_DELTA,
     )
@@ -1011,12 +1011,12 @@ def _apply_verdicts_and_finalise(
     are applied first; NoOp still filters trivial no-ops, just from the
     post-verdict survivors.
     """
-    from revue.comments.consolidator import (
+    from revue_core.comments.consolidator import (
         NoOpSuggestionDropper,
         UnanchoredFindingExtractor,
     )
-    from revue.comments._orphan_line_guard import OrphanLineGuardPostProcessor
-    from revue.core.pipeline import build_consolidation_postprocessors
+    from revue_core.comments._orphan_line_guard import OrphanLineGuardPostProcessor
+    from revue_core.core.pipeline import build_consolidation_postprocessors
 
     # Step 1 — apply verdicts. Findings without a verdict pass through
     # unmodified (cap overflow, read_error, no code_replacement).
@@ -1089,7 +1089,7 @@ def _render_findings(findings: list, diff_by_file: dict, platform: str) -> None:
     Body extracted verbatim from the legacy ``cmd_consolidate`` rendering
     loop so both Phase-3 exits produce identical output.
     """
-    from revue.core.logging_channels import Log
+    from revue_core.core.logging_channels import Log
     _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
     adapter = ADAPTERS.get(platform)
@@ -1184,11 +1184,11 @@ def _consolidate_from_manifest(jobs_dir: Path, nova_output: "str | None"):
     No rendering, no Vex — purely produces the
     ``list[ConsolidatedFinding]`` that downstream phases operate on.
     """
-    from revue.core.logging_channels import Log
-    from revue.core.pipeline import _air_to_agent_finding
-    from revue.core.agent_loader import load_agents_from_dir, _parse_finding_item
-    from revue.core.models import AIReview
-    from revue.comments.consolidator import (
+    from revue_core.core.logging_channels import Log
+    from revue_core.core.pipeline import _air_to_agent_finding
+    from revue_core.core.agent_loader import load_agents_from_dir, _parse_finding_item
+    from revue_core.core.models import AIReview
+    from revue_core.comments.consolidator import (
         ProximityAndCountGroupingStrategy,
         NovaSingleShotStrategy,
     )
@@ -1273,14 +1273,14 @@ def _consolidate_from_manifest(jobs_dir: Path, nova_output: "str | None"):
         Log.pipeline.info("[revue] consolidate  nova synthesis from Task output")
         class _NovaClient:
             def complete(self, *a, **kw):
-                from revue.core.models import CompletionResult, TokenUsage
+                from revue_core.core.models import CompletionResult, TokenUsage
                 return CompletionResult(text=nova_raw, usage=TokenUsage())
         nova_client = _NovaClient()
     else:
         Log.pipeline.info("[revue] consolidate  no Nova output — passthrough synthesis")
         class _PassthroughClient:
             def complete(self, *a, **kw):
-                from revue.core.models import CompletionResult, TokenUsage
+                from revue_core.core.models import CompletionResult, TokenUsage
                 return CompletionResult(text="[]", usage=TokenUsage())
         nova_client = _PassthroughClient()
 
@@ -1324,7 +1324,7 @@ def _serialise_finding(finding) -> dict:
 
 def _deserialise_finding(data: dict):
     """Inverse of ``_serialise_finding`` — rebuild a ConsolidatedFinding."""
-    from revue.comments.models import Attribution, ConsolidatedFinding
+    from revue_core.comments.models import Attribution, ConsolidatedFinding
     return ConsolidatedFinding(
         file_path=data["file_path"],
         line_number=data["line_number"],
@@ -1359,7 +1359,7 @@ def cmd_classify_and_build_vex_jobs(args: argparse.Namespace) -> int:
     per job entry, writing verdict JSON to each entry's output_file before
     invoking ``apply-verdicts-and-finalize``.
     """
-    from revue.core.logging_channels import Log
+    from revue_core.core.logging_channels import Log
 
     _setup_local_logging()
 
@@ -1429,7 +1429,7 @@ def cmd_apply_verdicts_and_finalize(args: argparse.Namespace) -> int:
 
     Renders the final findings to stdout via ``_render_findings``.
     """
-    from revue.core.logging_channels import Log
+    from revue_core.core.logging_channels import Log
 
     _setup_local_logging()
 

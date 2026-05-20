@@ -1,0 +1,70 @@
+#!/bin/sh
+# Pre-commit hook for revue.io.
+#
+# 1. Block direct commits to main / develop.
+# 2. Auto-regenerate packaging/revue/src/revue_skill/vendored/ when any of its
+#    source-of-truth files are staged. Fails the commit if the regenerated
+#    vendored/ output differs from what's staged, prompting the developer to
+#    re-add the regenerated files.
+#
+# Enable with:  git config core.hooksPath .githooks
+
+set -e
+
+# --- 1. Block direct commits to protected branches ---
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || true)
+if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "develop" ]; then
+  echo ""
+  echo "❌  Direct commit to '$BRANCH' is not allowed."
+  echo "    Create a feature branch first:"
+  echo "    git switch -c feat/REVUE-XX-description"
+  echo ""
+  exit 1
+fi
+
+# --- 2. Auto-regenerate vendored/ if source-of-truth files are staged ---
+# Triggers: anything under packaging/revue_core/src/revue_core/, scripts/
+# positioning/, scripts/local_run.py, _revue/, the SKILL.md, or the vendor
+# tooling itself (vendor_sources.py / sources.yaml).
+TRIGGERS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E \
+  '^packaging/revue_core/src/revue_core/|^scripts/positioning/|^scripts/local_run\.py$|^_revue/|^\.claude/skills/revue/SKILL\.md$|^packaging/revue/tools/(vendor_sources\.py|sources\.yaml)$' \
+  || true)
+
+if [ -n "$TRIGGERS" ]; then
+  echo "[pre-commit] vendor source-of-truth files staged — regenerating vendored/ ..."
+
+  # Resolve a Python interpreter (python3 preferred, python fallback).
+  PY=$(command -v python3 || command -v python || true)
+  if [ -z "$PY" ]; then
+    echo "❌  pre-commit: no python/python3 on PATH — cannot regenerate vendored/"
+    exit 1
+  fi
+
+  REPO_ROOT=$(git rev-parse --show-toplevel)
+  if ! "$PY" "$REPO_ROOT/packaging/revue/tools/vendor_sources.py" --clean > /dev/null; then
+    echo "❌  pre-commit: vendor_sources.py failed — fix the underlying error before committing."
+    exit 1
+  fi
+
+  # If regeneration produced any UNSTAGED change inside the wheel build tree,
+  # the developer's staged copy of vendored/ is stale. `git diff --name-only`
+  # shows worktree-vs-index differences only — staged regenerator output that
+  # already matches the index is silently ignored, which is what we want.
+  STALE=$(git diff --name-only -- packaging/revue/src/revue_skill/ || true)
+  if [ -n "$STALE" ]; then
+    echo ""
+    echo "❌  vendored/ is out of sync with the staged source-of-truth files."
+    echo "    The hook regenerated it. Re-stage and commit again:"
+    echo ""
+    echo "      git add packaging/revue/src/revue_skill/"
+    echo "      git commit"
+    echo ""
+    echo "    Files updated by the regenerator:"
+    echo "$STALE" | sed 's/^/      /'
+    exit 1
+  fi
+
+  echo "[pre-commit] vendored/ already in sync ✓"
+fi
+
+exit 0

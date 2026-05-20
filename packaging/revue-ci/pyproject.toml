@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "revue-ci"
+version = "0.1.0"
+description = "Revue CI/CLI entry point — runs the multi-agent code review pipeline against GitHub, GitLab, and Bitbucket pull requests."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Token Labs Ltd", email = "team@revue.sh" },
+]
+keywords = ["code-review", "ai", "ci", "cli", "github", "gitlab", "bitbucket"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "revue_core~=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "build>=1.2",
+    "pip>=24.0",
+]
+
+[project.scripts]
+revue-ci = "revue_ci.cli:main"
+
+[project.urls]
+Homepage = "https://revue.sh"
+Documentation = "https://revue.sh/docs"
+Repository = "https://github.com/Token-Labs-Ltd/revue"
+Issues = "https://github.com/Token-Labs-Ltd/revue/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/revue_ci"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/revue_ci",
+    "README.md",
+    "tests",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "slow: integration tests that build wheels or create venvs",
+]

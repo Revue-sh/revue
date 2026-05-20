@@ -27,7 +27,7 @@ from typing import Any, Protocol, TYPE_CHECKING, TypedDict
 from revue_skill.vendored.logging_channels import Log
 
 if TYPE_CHECKING:
-    from revue.core.models import PRContext
+    from revue_core.core.models import PRContext
 
 # Matches unified diff hunk headers: @@ -old[,count] +new[,count] @@
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")

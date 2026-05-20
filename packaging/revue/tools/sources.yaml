@@ -4,10 +4,14 @@
 # build tree at packaging/revue/src/revue_skill/{skill,vendored}/.
 #
 # Why a manifest? The skill bundle ships standalone, but the production code
-# lives in src/revue/ and scripts/. To avoid silent drift, we (a) record the
-# canonical paths here, (b) copy them at build time, (c) assert in
-# tests/test_vendored_sources_in_sync.py that the in-tree copy still matches
-# the source-of-truth file. Drift fails CI.
+# lives in packaging/revue_core/src/revue_core/ and scripts/. To avoid silent
+# drift, we (a) record the canonical paths here, (b) copy them at build time,
+# (c) assert in tests/test_vendored_sources_in_sync.py that the in-tree copy
+# still matches the source-of-truth file. Drift fails CI.
+#
+# REVUE-310: source-of-truth migrated from src/revue/ to packaging/revue_core/
+# after the revue_core extraction. Import rewrites updated to match the new
+# `from revue_core.*` import pattern used in the canonical sources.
 
 skill:
   - source: .claude/skills/revue/SKILL.md
@@ -15,49 +19,53 @@ skill:
   - source: scripts/local_run.py
     target: src/revue_skill/skill/local_run.py
     rewrite_imports:
-      # local_run.py imports from revue.* and positioning.* — when bundled into
-      # the wheel, those modules live under revue_skill.vendored. Rewrites are
-      # mechanical string substitutions; see tools/vendor_sources.py.
-      - from: "from revue.comments.position_adapter"
+      # Partial-vendoring: ONLY these three prefixes are rewritten to
+      # revue_skill.vendored.*. Every other `from revue_core.X` import in
+      # local_run.py (pipeline, agent_loader, diff_parser, models, comments.*,
+      # core.log, core.logging_channels …) is left as-is and resolves at
+      # runtime against the pip-installed revue_core. That is why
+      # packaging/revue/pyproject.toml declares revue_core as a runtime dep.
+      # See test_skill_wheel_requires_revue_core.py for the contract.
+      - from: "from revue_core.comments.position_adapter"
         to: "from revue_skill.vendored.position_adapter"
-      - from: "from revue.core.terminal_state"
+      - from: "from revue_core.core.terminal_state"
         to: "from revue_skill.vendored.terminal_state"
       - from: "from positioning.adapters"
         to: "from revue_skill.vendored.positioning_adapters"
 
 vendored:
-  - source: src/revue/comments/position_adapter.py
+  - source: packaging/revue_core/src/revue_core/comments/position_adapter.py
     target: src/revue_skill/vendored/position_adapter.py
     rewrite_imports:
-      - from: "from revue.core.logging_channels"
+      - from: "from revue_core.core.logging_channels"
         to: "from revue_skill.vendored.logging_channels"
-  - source: src/revue/core/terminal_state.py
+  - source: packaging/revue_core/src/revue_core/core/terminal_state.py
     target: src/revue_skill/vendored/terminal_state.py
     rewrite_imports:
       - from: "from .finding_schema"
         to: "from revue_skill.vendored.finding_schema"
-  - source: src/revue/core/logging_channels.py
+  - source: packaging/revue_core/src/revue_core/core/logging_channels.py
     target: src/revue_skill/vendored/logging_channels.py
     rewrite_imports:
-      - from: "from revue.core.display"
+      - from: "from revue_core.core.display"
         to: "from revue_skill.vendored.display"
-      - from: "from revue.core.log"
+      - from: "from revue_core.core.log"
         to: "from revue_skill.vendored.log"
-  - source: src/revue/core/finding_schema.py
+  - source: packaging/revue_core/src/revue_core/core/finding_schema.py
     target: src/revue_skill/vendored/finding_schema.py
-  - source: src/revue/core/display.py
+  - source: packaging/revue_core/src/revue_core/core/display.py
     target: src/revue_skill/vendored/display.py
-  - source: src/revue/core/log.py
+  - source: packaging/revue_core/src/revue_core/core/log.py
     target: src/revue_skill/vendored/log.py
   - source: scripts/positioning/__init__.py
     target: src/revue_skill/vendored/positioning_adapters/__init__.py
     rewrite_imports:
-      - from: "from revue.comments.position_adapter"
+      - from: "from revue_core.comments.position_adapter"
         to: "from revue_skill.vendored.position_adapter"
   - source: scripts/positioning/adapters.py
     target: src/revue_skill/vendored/positioning_adapters/adapters.py
     rewrite_imports:
-      - from: "from revue.comments.position_adapter"
+      - from: "from revue_core.comments.position_adapter"
         to: "from revue_skill.vendored.position_adapter"
   - source: scripts/positioning/bitbucket.py
     target: src/revue_skill/vendored/positioning_adapters/bitbucket.py

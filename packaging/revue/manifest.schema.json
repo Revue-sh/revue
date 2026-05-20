@@ -27,6 +27,11 @@
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+$"
     },
+    "revue_core_min_version": {
+      "description": "Minimum revue_core version this skill wheel was built against (REVUE-310). When set, the install path can warn or refuse to load if a coexisting revue_core install is older. Optional and backwards-compatible; consumers SHOULD ignore unknown semver suffixes.",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
     "artefacts": {
       "description": "Per-format release artefacts.",
       "type": "object",

@@ -63,7 +63,10 @@ def test_orchestration_py_present_in_build_tree() -> None:
 
 
 def test_orchestration_py_have_revue_skill_imports() -> None:
-    """After vendoring, local_run.py must reference revue_skill.vendored.*, not revue_local.*"""
+    """After vendoring, local_run.py must reference revue_skill.vendored.* for the
+    module-level imports rewritten by sources.yaml, and must contain no stale
+    references to the pre-REVUE-275 module name `revue_local`.
+    """
     local_run = PACKAGING_DIR / "src" / "revue_skill" / "skill" / "local_run.py"
     text = local_run.read_text(encoding="utf-8")
     assert "from revue_skill.vendored.position_adapter" in text

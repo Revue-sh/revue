@@ -1,0 +1,32 @@
+#!/bin/sh
+# Pre-push hook for revue.io.
+#
+# Blocks direct pushes to main / develop on the Bitbucket primary remote.
+# Mirror remotes (github, gitlab) are allowed to push main for sync.
+#
+# Enable with:  git config core.hooksPath .githooks
+
+REMOTE=$1
+URL=$2
+
+case "$URL" in
+  *bitbucket.org*) ENFORCE=1 ;;
+  *) ENFORCE=0 ;;
+esac
+
+if [ "$ENFORCE" = "0" ]; then
+  exit 0
+fi
+
+while read LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+  if echo "$REMOTE_REF" | grep -qE "^refs/heads/(main|develop)$"; then
+    echo ""
+    echo "❌  Direct push to '$(echo $REMOTE_REF | sed 's|refs/heads/||')' is not allowed."
+    echo "    Push to a feature branch and open a PR instead:"
+    echo "    git push origin feat/REVUE-XX-description"
+    echo ""
+    exit 1
+  fi
+done
+
+exit 0

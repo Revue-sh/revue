@@ -57,6 +57,19 @@ Use `█` for done tickets and `░` for remaining. Bar width = 20 characters.
 
 Read `ARCHITECTURE.md` before any structural change. Non-negotiable: layered CLI → Service → Repository → Infrastructure (no skipping), no raw SQL outside `db/repositories/`, constructor injection, domain models in `core/models.py`, `JsonReviewRepository` and `PostgresReviewRepository` share one interface.
 
+## IP protection — published wheels MUST be Nuitka-compiled
+
+All three published packages (`revue_core`, `revue-ci`, `revue` skill wheel) are project IP and **must** ship to PyPI as **per-platform Nuitka-compiled wheels** — never as plain-Python source wheels. The Python source under `packaging/*/src/` is the IP asset; uploading `.py` exposes it directly.
+
+Concretely:
+
+- Each package owns `packaging/<pkg>/build/build_nuitka.py` + `build_wheel.py`. The tag pipeline calls these directly; it must not invoke `python -m build` or hatchling for the published artifact.
+- `bitbucket-pipelines.yml` builds each package on macOS ARM64 + Linux x86_64 (minimum). Adding a platform = add another build step.
+- `pyproject.toml` may keep a hatchling target so that editable dev installs (`pip install -e packaging/<pkg>/`) work from plain `.py` — but the **published** wheel always comes from the Nuitka path.
+- If you see a comment, doc, or pipeline step that says "pure-Python" or "no Nuitka" for any of the three packages: it is wrong and must be corrected. There is no platform-neutral source wheel for these packages on PyPI.
+
+This requirement predates any single Jira ticket; it is a project-wide premise.
+
 ## Key references
 
 Run `/prime` to load the full reference table and internal flags on demand.

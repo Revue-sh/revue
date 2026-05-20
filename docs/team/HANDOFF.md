@@ -1,95 +1,208 @@
-# Session Handoff - 2026-05-17
-**Duration:** ~10h GMT | **Agent:** Claude Opus 4.7 (1M context)
+# Session Handoff - 2026-05-20
+**Duration:** ~6h GMT | **Agent:** Claude Opus 4.7 (1M context)
 
 ## Session Summary
 
-Closed Phase A (per-model registry: REVUE-262/263/264/265) and Phase B (`/revue-local` parity carryover: REVUE-259/260/261) - seven Bitbucket PRs (#149-#155) all merged to main in a single working window. Filed REVUE-266 as the natural post-promotion follow-up (DeepSeek production A/B dogfood), then revised it with eight readiness gaps closed after a party-mode review (Quinn/Winston/John). Formal Jira issue-link relationships wired for REVUE-266 lineage; standing rule for that saved to memory.
+Autonomous overnight run landed REVUE-310 (extract `revue_core`, rename
+`revue` -> `revue-ci`, close skill wheel vendor graph). Tasks 6 through 14
+shipped in a single branch + one PR; Task 13 was marked N/A (no public
+users yet, no migration to message). The 3-package atomic publish topology
+is wired end-to-end with leaf-package AST guard, manifest schema field,
+fresh-venv smoke test, and pipeline contract tests. PR #160 open, Jira at
+Code Review, 1964 tests passing.
 
 ## Project Status
 
 | Metric | Value |
 |--------|-------|
-| Tickets shipped this session | 7 (REVUE-259/260/261/262/263/264/265) |
-| Tests passing | 1789/1789 on main |
-| Main HEAD | `5c4bb02` |
-| Open PRs (this session) | 0 - all merged |
-| Open PRs (stale, pre-session) | #114, #120 - "Revue lessons learned" chore branches |
-| Tickets filed | REVUE-266 (To Do, ready to pick post-2026-06-01) |
+| Tickets shipped this session | REVUE-310 (open PR, awaiting review/merge) |
+| Tests passing | 1964 (15 + 1827 + 82 + 1 + 39) |
+| Open PRs (this session) | #160 |
+| Open PRs (stale, pre-session) | #114, #120 |
+| Branch HEAD | `b96916a` on `feat/REVUE-310-revue-core-extraction` |
 
 ## Completed this session
 
-- **REVUE-259** (commit `1e093b6`, PR #149) - three-state envelope enforcement in `/revue-local`
-- **REVUE-260** (commit `08a0d1f`, PR #150) - reviewer-tools constraint + soft out-of-diff audit (cherry-picked from stale GitHub PR onto fresh branch off main; ran `/bmad-code-review` before merge)
-- **REVUE-261** (commit `a59aa83`, PR #151) - Vex in-loop via split Phase 3 (cherry-picked from stale GitHub PR; two `/bmad-code-review` passes closed 18 findings before merge)
-- **REVUE-265** (commit `db0c810`, PR #152) - DeepSeek-V4-Pro spike with PROMOTE recommendation; harness at `scripts/smoke_openrouter_deepseek_test.py`, evaluation doc at `docs/research/deepseek-v4-pro-evaluation.md`
-- **REVUE-262** (commit `5d177b6`, PR #153) - per-model registry + dispatcher gate; `ModelConfig` dataclass, `models_registry.yml` with 4 entries (Sonnet, Haiku, Qwen, DeepSeek - DeepSeek added per REVUE-265 PROMOTE)
-- **REVUE-264** (commit `305bb94`, PR #154) - `revue list-models` CLI (human/JSON/Markdown), `docs/configuration/per-model-knobs.md`, README "Supported Models" section
-- **REVUE-263** (commit `5c4bb02`, PR #155) - per-model knobs applied in `ai_client.py` + `tool_loop.py`; `tool_choice_first_turn` and `max_tokens_default` flow from registry
-- **REVUE-266** filed (Task, epic REVUE-87, label `mvp`) - DeepSeek production A/B dogfood; revised with 8 gap fixes
-- Formal Jira issue-links wired for REVUE-266: `Relates` to REVUE-265/262/263/264/241
+Chronological, with commit hashes:
+
+- `fa1f196` Task 6 - extract `packaging/revue-ci/`, retire `src/revue/`
+  tree; drop dead Nuitka build code under repo-root `build/`.
+- `0e1e838` Task 7 - pipeline rewrite for 3-package atomic publish
+  (revue_core -> revue-ci -> revue skill); fail-fast publish chain;
+  tag-release sed bumps all three pyprojects atomically.
+- `392809a` Task 8 - optional `revue_core_min_version` field added to
+  the skill manifest schema (backwards-compatible).
+- `71c3580` Task 9 - restore per-platform revue-ci Nuitka build
+  (responding to Daniel's review feedback about dropped macOS/Linux
+  builds); rewrite `docs/distribution/revue-skill-packaging.md` with
+  3-package overview and Mermaid diagrams.
+- `c50d933` Task 10 - fresh-venv integration smoke test under
+  `tests/integration/test_fresh_venv_install.py`, gated by
+  `@pytest.mark.slow`.
+- `c458864` Task 11 - dedicated leaf-package constraint test at
+  `packaging/revue_core/tests/test_leaf_constraint.py` (AST walk +
+  side-effect check; precise, no string-match false positives).
+- `a09ccdc` Task 12 - pipeline + manifest contract tests:
+  `test_three_package_publish.py` and `revue_core_min_version` cases
+  in `test_manifest_schema_validates.py`.
+- `0c6e233` fix - drop stale `revue_core.tests` reference in
+  `test_pipeline.py` that surfaced during the final full-suite run.
+- `b96916a` hardening (advisor feedback) - wire fresh-venv smoke into
+  CI `&run-tests` step so the test isn't dormant; tighten
+  `read_revue_core_constraint()` regex to anchor at the
+  `dependencies = [...]` block so a future optional-deps entry can't
+  drift the pinned version baked into the compiled wheel METADATA.
 
 ## What We Built (Session Highlights)
 
-### Phase A - Per-model registry (REVUE-262/263/264/265)
+### revue_core (`packaging/revue_core/`)
 
-Data-driven model dispatch replaces what would otherwise have become a provider if/elif chain. `src/revue/core/models_registry.yml` is the source of truth; `_revue/models_registry.yml` is a symlink so the `/revue-local` skill reads the same file. `ModelConfig` is a frozen dataclass with `MappingProxyType` extras for forward-compat. The dispatcher gate validates both `ai_config.model` and `ai_config.synthesis_model` at config-load time - runs unconditionally, no opt-in. Tier `supported` entries are hard-gated on `schema_strict: true`; customer-added `tier: unsupported` entries pass silently.
+The leaf package. 182 modules of shared orchestration moved out of
+`src/revue/`. Per-platform Nuitka-compiled wheel for IP protection. pyproject now
+declares the real runtime deps (`jsonschema`, `PyYAML`, `tomli_w`,
+`httpx`, `anthropic`, `openai`) - earlier extraction left them
+implicit, which surfaced during the fresh-venv install. Constraint:
+must not import from `revue_skill` or `revue_ci`. Enforced by AST
+walk + side-effect check; the latter catches the lazy-upward-import
+escape hatch where a top-level grep passes but `from x import y`
+inside a function body still creates the cycle on use.
 
-`tool_choice_first_turn` ("auto" / "required") closes the Qwen/DeepSeek auto-skip gap without affecting Anthropic's loop. Anthropic path untouched.
+### revue-ci (`packaging/revue-ci/`)
 
-CLI surface: `revue list-models` prints both built-in registry AND user overrides (with inline annotation), with `--json` and `--markdown` flags.
+CI / CLI entry point package. `revue-ci = revue_ci.cli:main` console
+script. Depends on `revue_core~=0.1.0`. Ships as a per-platform
+Nuitka-compiled wheel (macOS ARM64 + Linux x86_64), mirroring the
+skill wheel build shape. `cli.py` is the only compile target; revue_core
+itself remains a runtime dependency (Nuitka-compiled wheel on PyPI).
 
-### Phase B - `/revue-local` parity (REVUE-259/260/261)
+NOTE: The Nuitka build scripts at `packaging/revue-ci/build/` were
+mirrored from the skill wheel pattern but never executed against a real
+Nuitka toolchain in this branch - first real run is the tag pipeline.
+Expect possible iteration on these scripts the first time a `v*` tag is
+cut.
 
-`/revue-local` Mode 2 now produces output qualitatively equivalent to the production review pipeline at zero Anthropic spend.
-- Three-state envelope contract enforced via `_classify_agent_output()` wrapping `classify_terminal_state` (REVUE-259).
-- Phase 1 prompt injects an explicit reviewer-tools constraint; Phase 3 audits out-of-diff file references and warns via stderr (REVUE-260).
-- Vex verdicts + post-processor chain run via subprocess Python (3a + 3c); LLM step externalised to orchestrator Agent forks (3b). Byte-equivalence test pins Vex prompt to production `_DEFAULT_SYSTEM_PROMPT`. OCP hook in `pipeline.py:build_consolidation_postprocessors()` means a future REVUE-245 grounding filter is auto-surfaced as a divergence (REVUE-261).
+### revue skill (`packaging/revue/`)
 
-### REVUE-266 - DeepSeek production A/B follow-up
+Vendor pipeline rewired to copy source-of-truth from
+`packaging/revue_core/src/revue_core/`. `tools/sources.yaml` paths and
+the import-rewrite rules updated accordingly. Pre-commit hook at
+`.githooks/pre-commit` auto-runs `vendor_sources.py --clean` on every
+staged source-of-truth change and fails the commit on drift; the same
+file gates direct commits to `main` and `develop`. Manifest schema
+extended with optional `revue_core_min_version` so future installers
+can refuse to load against an older coexisting `revue_core`.
 
-Filed and sharpened. Registry/docs promotion already shipped in REVUE-262/264; this ticket closes the explicit out-of-scope items from REVUE-265 (production A/B with real users, comparison vs Qwen/Sonnet on Revue's internal corpus). Revised description now contains:
-- Five `(PR, parent_sha, head_sha)` corpus triples pinned
-- `git checkout <parent_sha>` replay procedure
-- Bash `trap` wrapper for drop counting (no Revue code changes)
-- Six-metric extraction approach from stdout/stderr/usage_tracker
-- Four-label TP/FP/HC/HW triage rubric with blind-triage discipline
-- Quantitative DEFAULT/ALTERNATIVE/DEMOTE thresholds in AC5
-- One-calendar-week time cap post-2026-06-01
-- ~10-11 hour effort estimate flagged
+### Pipeline rewrite (`bitbucket-pipelines.yml`)
+
+Tag pipeline flow:
+
+```
+Run Tests
+  -> Build revue_core macOS (Nuitka)
+  -> Build revue_core Linux (Nuitka)
+  -> Build revue-ci macOS (Nuitka)
+  -> Build revue-ci Linux (Nuitka)
+  -> Build skill macOS (Nuitka)
+  -> Build skill Linux (Nuitka)
+  -> Publish revue_core -> PyPI
+  -> Publish revue-ci -> PyPI
+  -> Publish skill -> PyPI
+```
+
+Fail-fast left to right via step sequencing. Each publish step
+`exit 1`s when its dist/ is empty rather than skipping silently.
+Tag-release step bumps all three `pyproject.toml` versions in one
+commit so the released triple ships with coherent versions and the
+`~=` constraint resolves on the next `pip install`. The PR-pipeline
+`&run-tests` step now runs the fresh-venv smoke (`pytest
+tests/integration/ -m slow`) so the test isn't dormant.
+
+### Test surfaces added
+
+- `packaging/revue_core/tests/test_leaf_constraint.py` - AST walk +
+  side-effect check.
+- `packaging/revue/tests/test_three_package_publish.py` - build /
+  publish order, per-step `exit 1`, twine + PYPI_API_TOKEN per
+  publish, tag-release sed covering all three pyprojects, on-disk
+  presence of revue-ci build scripts.
+- `packaging/revue/tests/test_manifest_schema_validates.py` extended
+  with `revue_core_min_version` cases (optional, semver-only,
+  schema declares the field correctly).
+- `tests/integration/test_fresh_venv_install.py` - fresh venv,
+  install all three packages in dependency order, smoke-import each,
+  exercise `revue-ci --help`. Marked `slow`. Wired into CI.
 
 ## Remaining Work - Next Steps
 
-1. **REVUE-266 execution** - blocked on Anthropic spend-cap recovery (2026-06-01) so the Sonnet baseline runs are funded. First action when picked up: `git checkout 0324bd66` (REVUE-259 parent SHA) and replay with `claude-sonnet-4-5-20250929` configured in `.revue.yml`. See ticket's `Replay Procedure` section.
-2. **Stale chore PRs #114 + #120** - "Revue lessons learned from PR #X" chore branches sitting open from earlier sessions. Triage decision needed: merge, close, or update. Not blocking.
-3. **Plan artifact** - `/Users/langostin/.claude/plans/composed-humming-clock.md` should be marked complete (Phase A + B both done). Not a code change; housekeeping only.
+1. **Check PR #160 review comments.** First action: pull comments
+   via the bitbucket-pr-review skill or `gh api`-equivalent for
+   Bitbucket. URL: https://bitbucket.org/cbscd/revue/pull-requests/160
+2. **Configure PyPI Trusted Publisher rights for `revue-core` +
+   `revue-ci`.** External prerequisite, listed in the dist doc. First
+   action: confirm whether the existing `PYPI_API_TOKEN` has
+   project-level rights for both new project names, or request new
+   tokens. No code change if rights are added to the existing token.
+3. **Dry-run the revue_core + revue-ci Nuitka builds locally before
+   tagging.** Both packages own
+   `packaging/<pkg>/build/{build_nuitka,build_wheel}.py` that have not
+   run end-to-end against a real Nuitka toolchain in this branch — first
+   real exercise is the tag pipeline. First action: `pip install nuitka
+   ordered-set zstandard` into a venv and run each pair (`build_nuitka.py`
+   then `build_wheel.py`) for `revue_core/` and `revue-ci/`. revue_core
+   compiles 65+ modules in parallel and should produce a wheel under
+   `packaging/revue_core/dist/wheels/`. Iterate on errors locally before
+   the tag pipeline meets them in CI.
+4. **Stale PRs #114, #120** (pre-session) - the "Revue lessons
+   learned" chore branches. Triage and close or rebase. First action:
+   `gh api repos/cbscd/revue/pulls/114` (or BB equivalent) to read
+   their state.
+5. **Task 13 follow-up (post-launch only).** No action required now.
+   Documented in memory `project_revue_310_no_deprecation.md`.
 
 ## Key Architectural Decisions (Session)
 
-1. **Hard gate on schema_strict for `tier: supported`** - all built-in registry entries must support strict JSON schema. Customer-added `tier: unsupported` entries pass silently. Rationale: prevents shipping a "supported" model that drops findings under contract violations.
-2. **`tool_choice_first_turn` as a per-model knob, not a per-call argument** - Qwen/DeepSeek need `required` on turn 1; Anthropic's loop never touches it. Encoded in the registry so dispatch is data-driven; closes the OCP gap (no provider if/elif).
-3. **`/revue-local` Phase 3 split into 3a/3b/3c** - LLM work externalised to orchestrator Agent forks. Subprocess Python builds prompts (3a) and applies verdicts (3c); orchestrator runs the LLM step (3b) at zero Anthropic spend. Byte-equivalence test against production `_DEFAULT_SYSTEM_PROMPT` is the contract anchor.
-4. **`build_consolidation_postprocessors()` registry hook in `pipeline.py`** - closes OCP gap; future post-processors (REVUE-245 grounding filter) auto-divergence-checked by local skill.
-5. **DeepSeek added to registry as `tier: supported` in REVUE-262** based on REVUE-265's empirical PROMOTE recommendation (not deferred to a follow-up). Production A/B is REVUE-266 - the registry promotion is the cheap part; the production verdict is the expensive part.
-6. **Formal Jira issue-link relationships are mandatory** - textual Dependencies section is not enough. Saved as `feedback_jira_formal_links.md`. POST `/rest/api/2/issueLink` for every referenced ticket; prefer `Relates` over `is blocked by` when blockers are already Done.
+1. **revue_core ships Nuitka-compiled per platform (CORRECTED 2026-05-20).**
+   The earlier session decision to publish revue_core as a pure-Python
+   wheel was wrong — Daniel flagged during PR #160 review that revue_core
+   is project IP and must never ship as plain `.py` on PyPI. The branch
+   now owns `packaging/revue_core/build/{build_nuitka,build_wheel}.py`
+   matching the revue-ci shape; the tag pipeline builds revue_core on
+   macOS ARM64 + Linux x86_64 before the dependents. Editable dev
+   installs (`pip install -e packaging/revue_core/`) still use plain
+   source. The IP-protection requirement is captured in CLAUDE.md.
+2. **revue-ci publishes per-platform Nuitka wheels, not pure-Python.**
+   Reversed mid-session after Daniel flagged that the dropped
+   `&build-macos` / `&build-linux` symmetry should be restored. The
+   compile target is just `cli.py`; revue_core stays a runtime dep.
+3. **Task 13 (revue v0.6.x DeprecationWarning patch) marked N/A.**
+   No public users exist; a deprecation cycle is only meaningful with
+   real consumers to migrate. A separate ticket will handle migration
+   messaging post-launch if needed. Documented in memory + story file.
+4. **Three pyprojects bump atomically.** The tag-release sed updates
+   all three `pyproject.toml`s in one commit so revue-ci and revue
+   can pin `revue_core~={NEXT_VERSION}` and the constraint resolves
+   on the next `pip install`. Releases ship a coherent triple.
 
 ## Session Stats
-- Duration: ~10h
-- Stories: 7 merged (REVUE-259/260/261/262/263/264/265), 1 filed (REVUE-266)
-- Commits to main: 7 (squash merges, all via `/bitbucket-merge-pr`)
-- Tests: 1789 passing (1751 baseline + 38 new across the 7 tickets)
-- PRs opened+merged: #149, #150, #151, #152, #153, #154, #155
-- Jira tickets created: REVUE-262, REVUE-263, REVUE-264, REVUE-265, REVUE-266
-- Memory rules saved: `feedback_jira_formal_links.md`
-- Party mode agents used: Quinn (QA), Winston (Architect), John (PM), Paige (Tech Writer)
+
+- Duration: ~6h GMT
+- Stories: 1 completed (REVUE-310; Tasks 6-14 minus N/A 13)
+- Commits: 9
+- Tests: 1964 passing
+- PRs opened: #160
+- Party mode agents used: none - solo autonomous run; advisor
+  consulted twice (before substantive work, before declaring done)
 
 ## Continuation Prompt (Next Session)
 
 ```
-Read docs/team/HANDOFF.md first. The 7-ticket per-model registry + /revue-local parity work
-is fully merged to main (HEAD 5c4bb02, 1789 tests). REVUE-266 (DeepSeek production A/B
-dogfood) is filed with 8-gap-closed acceptance criteria; ready to pick when Anthropic
-spend cap resets on 2026-06-01. First execution step is `git checkout 0324bd66` then
-replay with claude-sonnet-4-5-20250929 - see REVUE-266 "Replay Procedure" section.
-Stale chore PRs #114 + #120 need triage. Plan at /Users/langostin/.claude/plans/
-composed-humming-clock.md needs marking complete.
+Continuing from the REVUE-310 overnight run.
+- PR #160 open, Jira at Code Review, 1964 tests passing.
+- Branch HEAD b96916a on feat/REVUE-310-revue-core-extraction.
+- First action: check PR #160 review comments via the
+  bitbucket-pr-review skill or BB API.
+- Pre-merge verifications outstanding: PyPI Trusted Publisher rights
+  for revue-core + revue-ci; first revue-ci Nuitka build runs on the
+  first v* tag - expect to debug iteratively.
+- Read docs/team/HANDOFF.md for full context.
 ```

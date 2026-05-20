@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from revue.comments.position_adapter import PositionResult, PositionStatus
+from revue_core.comments.position_adapter import PositionResult, PositionStatus
 
 
 class PositionAdapter(Protocol):
