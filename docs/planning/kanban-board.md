@@ -1,4 +1,4 @@
-# Kanban Board — Revue.io
+# Kanban Board — Revue
 **Last Updated:** 2026-03-28 22:31 GMT
 **Source of Truth:** Taiga — http://localhost:9000/project/revueio/kanban
 **⚠️ This file is a mirror. If Taiga is available, prefer Taiga. Update this file whenever a story is closed.**
@@ -96,7 +96,7 @@
 - [x] **[67]** Documentation site — getting started guide and .revue.yml reference *(M, ~2 days)* ✅
 - [ ] **[68]** Conversion analytics dashboard — Free→Indie→Pro funnel, reviews/month buckets, referral source tracking *(M, ~2 days)*
 - [x] **[69]** GitHub Action + GitLab Component install documentation — quickstart guides + .revue.yml reference *(S, ~1 day)* ✅
-- [x] **[70]** Bitbucket repository setup — create revue.io repo on Bitbucket, push existing codebase, configure branch protection and access *(S, ~1 day)* ✅ Done — git@bitbucket.org:cbscd/revue.git
+- [x] **[70]** Bitbucket repository setup — create Revue repo on Bitbucket, push existing codebase, configure branch protection and access *(S, ~1 day)* ✅ Done — git@bitbucket.org:cbscd/revue.git
 - [ ] **[71]** Nuitka build pipeline — compile orchestrator core (`pipeline`, `agent_runner`, `cleo_router`, `nova_consolidator`, `sage_*`, `shared_analysis`, `contradiction_*`) to native `.so` binaries; agent `.md`/`.yaml` definitions distributed as-is (readable by design); build matrix: Linux x86_64, ARM64 + macOS ARM64; package as platform-specific `.whl` (Free/Indie/Pro) and Docker image (Enterprise) *(M, ~3–5 days)*
 - [x] **[72]** Runtime license key validation — POST /api/license/validate on orchestrator startup, 72h offline grace period, hard stop on invalid key *(M, ~2–3 days)* ✅
 

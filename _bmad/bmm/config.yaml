@@ -3,7 +3,7 @@
 # Version: 6.2.2
 # Date: 2026-04-04T15:54:33.516Z
 
-project_name: revue.io
+project_name: revue
 user_skill_level: intermediate
 planning_artifacts: "{project-root}/_bmad-output/planning-artifacts"
 implementation_artifacts: "{project-root}/_bmad-output/implementation-artifacts"

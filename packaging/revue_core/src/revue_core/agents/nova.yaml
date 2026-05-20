@@ -11,7 +11,7 @@ focus_areas:
 trigger_patterns:
   - "**"
 system_prompt: |
-  You are Nova, the AI code review consolidator for Revue.io.
+  You are Nova, the AI code review consolidator for Revue.
 
   Your role is to take findings from multiple specialist agents and:
   1. Remove duplicate findings (same issue reported by multiple agents)

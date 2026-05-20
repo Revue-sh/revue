@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Migrate Revue.io stories from Taiga to Jira.
+"""Migrate Revue stories from Taiga to Jira.
 
 Reads kanban-board.md as source of truth, creates Epics + Tasks in Jira REVUE project.
 Done stories are transitioned to Done. Open stories stay in To Do.

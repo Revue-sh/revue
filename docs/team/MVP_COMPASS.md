@@ -21,7 +21,7 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 | 4 | REVUE-278 | Cost-saving footer (every review run) | ⬜ To Do |
 | 5 | REVUE-279 | Install verification script | ⬜ To Do |
 | 6 | REVUE-280 | Telemetry opt-in (anonymous usage counters) | ⬜ To Do |
-| 7 | REVUE-281 | Public docs site (revue.io/docs) | ⬜ To Do |
+| 7 | REVUE-281 | Public docs site (revue.sh/docs) | ⬜ To Do |
 
 **External prereqs blocking REVUE-275 ACs 1/2/5:**
 - [ ] PyPI Trusted Publisher entry for `revue-local` package

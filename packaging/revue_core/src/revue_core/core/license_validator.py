@@ -1,5 +1,5 @@
 """
-License key validation for Revue.io.
+License key validation for Revue.
 
 Validates the REVUE_LICENSE_KEY against the Revue API on orchestrator startup.
 Supports a 72-hour offline grace period via a local cache.
@@ -136,7 +136,7 @@ def validate(
         raise LicenseError(
             "No Revue license key found. Set the REVUE_LICENSE_KEY environment "
             "variable or add it to your .revue.yml. "
-            "Get a key at https://revue.io/signup"
+            "Get a key at https://revue.sh/signup"
         )
 
     try:
@@ -150,7 +150,7 @@ def validate(
             raise LicenseError(
                 "Revue API is unreachable and no local license cache was found. "
                 "Please check your network connection and try again. "
-                "If this persists, contact support at https://revue.io/support"
+                "If this persists, contact support at https://revue.sh/support"
             )
         age_hours = (time.time() - cached["cached_at"]) / 3600
         if age_hours > 72:
@@ -193,7 +193,7 @@ def _call_api(
         raise LicenseError(
             f"License key is invalid or has been revoked (HTTP {resp.status_code}). "
             f"Response: {resp.text[:200]}. "
-            "Please check your REVUE_LICENSE_KEY or visit https://revue.io/account"
+            "Please check your REVUE_LICENSE_KEY or visit https://revue.sh/account"
         )
     if resp.status_code != 200:
         raise _APIUnreachable(f"Unexpected status {resp.status_code}")
@@ -203,7 +203,7 @@ def _call_api(
         msg = data.get("message", "License key rejected by Revue API.")
         raise LicenseError(
             f"License validation failed: {msg} "
-            "Visit https://revue.io/account to manage your license."
+            "Visit https://revue.sh/account to manage your license."
         )
     return data
 

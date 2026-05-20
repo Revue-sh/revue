@@ -1,6 +1,6 @@
-name: 'Revue.io AI Code Review'
+name: 'Revue AI Code Review'
 description: 'Multi-agent AI code review for pull requests. Runs Cleo, Zara, Kai, Maya, Leo, Nova and Sage to review your diff and post inline comments.'
-author: 'Revue.io'
+author: 'Revue'
 
 branding:
   icon: 'eye'
@@ -8,7 +8,7 @@ branding:
 
 inputs:
   revue_token:
-    description: 'Revue.io workspace API token (from app.revue.io/settings/tokens)'
+    description: 'Revue workspace API token (from app.revue.sh/settings/tokens)'
     required: false
     default: ''
   ai_api_key:
@@ -66,7 +66,7 @@ runs:
       with:
         python-version: ${{ inputs.python_version }}
 
-    - name: Install Revue.io
+    - name: Install Revue
       shell: bash
       run: pip install revue-io --quiet
 

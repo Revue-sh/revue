@@ -390,8 +390,8 @@ class BitbucketAdapter(PlatformAdapter):
             payload: dict[str, Any] = {
                 "key": "revue-io",
                 "state": state,
-                "name": "Revue.io AI Review",
-                "description": description or f"Revue.io review {state.lower()}",
+                "name": "Revue AI Review",
+                "description": description or f"Revue review {state.lower()}",
                 "url": "https://revue-io.fly.dev",
             }
             sha_encoded = urllib.parse.quote(commit_sha, safe="")

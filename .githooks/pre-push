@@ -1,5 +1,5 @@
 #!/bin/sh
-# Pre-push hook for revue.io.
+# Pre-push hook for Revue.
 #
 # Blocks direct pushes to main / develop on the Bitbucket primary remote.
 # Mirror remotes (github, gitlab) are allowed to push main for sync.

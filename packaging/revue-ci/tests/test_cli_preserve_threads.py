@@ -1007,7 +1007,7 @@ def test_revision_increments_from_live_comment_when_no_local_state(tmp_path) -> 
     from revue_ci.cli import _post_to_bitbucket
 
     existing_summary_body = (
-        "## 🤖 Revue.io — Code Review (Review #3)\n\nPrevious review content."
+        "## 🤖 Revue — Code Review (Review #3)\n\nPrevious review content."
     )
     existing_comments = [
         {"id": "summary-99", "content": {"raw": existing_summary_body}}

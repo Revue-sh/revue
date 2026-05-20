@@ -1,4 +1,4 @@
-# Revue.io — Sprint Plan
+# Revue — Sprint Plan
 **Version:** 1.0  
 **Date:** March 2026  
 **Status:** Active  

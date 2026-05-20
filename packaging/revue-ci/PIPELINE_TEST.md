@@ -2,6 +2,6 @@
 
 This file exists solely to trigger a PR pipeline run to verify:
 - Run Tests step installs correctly and pytest passes
-- Revue.io AI Code Review step runs from local source and posts comments
+- Revue AI Code Review step runs from local source and posts comments
 
 Safe to delete after confirmation.

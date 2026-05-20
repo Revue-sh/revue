@@ -7,14 +7,14 @@ Add Revue AI code review to your GitHub repository in about five minutes.
 ## Prerequisites
 
 - A GitHub repository with Actions enabled
-- A [Revue account](https://revue.io/signup) and license key
+- A [Revue account](https://revue.sh/signup) and license key
 - An API key for your chosen AI provider (Anthropic or OpenAI)
 
 ---
 
 ## Step 1 — Sign up and get your license key
 
-1. Go to [https://revue.io/signup](https://revue.io/signup) and create an account.
+1. Go to [https://revue.sh/signup](https://revue.sh/signup) and create an account.
 2. Choose a plan (Free gives you 25 reviews/month; Indie/Pro give unlimited reviews).
 3. Copy your **REVUE_LICENSE_KEY** from the dashboard.
 
@@ -82,7 +82,7 @@ jobs:
 ## Step 4 — Create `.revue.yml` in your repository root
 
 ```yaml
-# .revue.yml — Revue.io configuration
+# .revue.yml — Revue configuration
 version: "1"
 
 ai:
@@ -125,19 +125,19 @@ output:
 - Make sure the secret name matches exactly (case-sensitive).
 
 ### "License key is invalid or has been revoked"
-- Log in to [https://revue.io/account](https://revue.io/account) and verify your key.
+- Log in to [https://revue.sh/account](https://revue.sh/account) and verify your key.
 - Free-tier keys are valid for 30 days; renew them in the dashboard.
 
 ### "You have used all of your free reviews"
-- Upgrade at [https://revue.io/upgrade](https://revue.io/upgrade) for unlimited reviews.
+- Upgrade at [https://revue.sh/upgrade](https://revue.sh/upgrade) for unlimited reviews.
 
 ### "Revue API is unreachable and the offline grace period has expired"
-- GitHub Actions runners must be able to reach `api.revue.io` on port 443.
+- GitHub Actions runners must be able to reach `api.revue.sh` on port 443.
 - Check if your org has IP allow-listing or egress restrictions.
 
 ### "API is unreachable" on first run
 - Your runner may not have internet access. Check your Actions network settings.
-- Self-hosted runners: ensure outbound HTTPS to `api.revue.io` is allowed.
+- Self-hosted runners: ensure outbound HTTPS to `api.revue.sh` is allowed.
 
 ### No comments posted on the PR
 - Confirm the workflow has `pull-requests: write` permission.

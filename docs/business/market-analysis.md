@@ -1,4 +1,4 @@
-# Revue.io — Market Analysis
+# Revue — Market Analysis
 **Version:** 1.0  
 **Date:** March 2026  
 **Status:** Draft
@@ -245,4 +245,4 @@ CodeRabbit charges ~$12/dev/month and is reportedly growing fast with a freemium
 
 ---
 
-*Next document: Revue.io PRD →*
+*Next document: Revue PRD →*

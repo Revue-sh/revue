@@ -1,4 +1,4 @@
-# Revue.io Code Review Template
+# Revue Code Review Template
 # Add to your .gitlab-ci.yml:
 #   include:
 #     - local: ci-templates/gitlab-ci/revue-review.yml

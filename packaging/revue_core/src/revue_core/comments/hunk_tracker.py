@@ -424,7 +424,7 @@ class HunkTracker:
 # Matches the Markdown fingerprint sentinel embedded by BodyBuilder:
 #   [//]: # (revue:fp:<16-char hex>)
 _FP_SENTINEL_RE = re.compile(r"\[//\]: # \(revue:fp:([a-f0-9]+)\)")
-_REVUE_SUMMARY_MARKER = "## 🤖 Revue.io"
+_REVUE_SUMMARY_MARKER = "## 🤖 Revue"
 
 
 def _apply_location_entry(

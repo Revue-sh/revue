@@ -47,7 +47,7 @@ _FINDING_SEV_RE = re.compile(rf"\*\*(?:{SEVERITY_EMOJI_ALT})\s*\[(HIGH|MEDIUM|LO
 # Matches the fingerprint sentinel embedded in Revue comments.
 _FP_SENTINEL_RE = re.compile(r"\[//\]: # \(revue:fp:([a-f0-9]+)\)")
 # Matches the Revue summary header
-_REVUE_SUMMARY_MARKER = "## 🤖 Revue.io — Code Review"
+_REVUE_SUMMARY_MARKER = "## 🤖 Revue — Code Review"
 _REVISION_RE = re.compile(r"Review #(\d+)")
 
 # ---------------------------------------------------------------------------

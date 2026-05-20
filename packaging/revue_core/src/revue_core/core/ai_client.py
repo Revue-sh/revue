@@ -698,7 +698,7 @@ class OpenRouterClient:
             base_url="https://openrouter.ai/api/v1",
             timeout=_TIMEOUT,
             default_headers={
-                "HTTP-Referer": "https://revue.io",
+                "HTTP-Referer": "https://revue.sh",
                 "X-Title": "Revue AI Code Review",
             },
         )

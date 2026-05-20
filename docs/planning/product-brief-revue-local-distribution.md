@@ -20,9 +20,9 @@ Revue's strategic pivot (PRD §1) shifts the primary customer surface from a CI/
 
 This brief addresses the gaps the PRD explicitly leaves open:
 
-- **Distribution channel** — recommended: **GitHub-based distribution with a one-line installer hosted at `revue.io/install`**, paired with a curated registry index at `revue.io/skills`. Anthropic's first-party skill registry (when it stabilises) becomes a downstream syndication target, not the primary channel. Avoids Anthropic lock-in at the distribution layer, mirroring the AI-model-agnostic principle in PRD §6.4.
+- **Distribution channel** — recommended: **GitHub-based distribution with a one-line installer hosted at `revue.sh/install`**, paired with a curated registry index at `revue.sh/skills`. Anthropic's first-party skill registry (when it stabilises) becomes a downstream syndication target, not the primary channel. Avoids Anthropic lock-in at the distribution layer, mirroring the AI-model-agnostic principle in PRD §6.4.
 - **Licence enforcement in fully-local execution** — recommended: **signed JWT licence keys with a single daily online check against the licence server, cached for 24h, identical rules for every tier; server-side usage ledger as the authoritative free-tier counter**. The threat model is anti-piracy (unauthorised redistribution of a paywall-stripped fork), not "untrusted skill execution". See §6.
-- **Cost-saving dashboard** — recommended: **dual surface**. Per-session summary in CLI output (immediate gratification), aggregate spend-delta view in the `revue.io` web app (monthly trend). Telemetry uses one anonymous event per `/revue-local` invocation — never source, never diffs. See §7.
+- **Cost-saving dashboard** — recommended: **dual surface**. Per-session summary in CLI output (immediate gratification), aggregate spend-delta view in the `Revue` web app (monthly trend). Telemetry uses one anonymous event per `/revue-local` invocation — never source, never diffs. See §7.
 
 Phase 2 of the roadmap (PRD §12) executes against this brief.
 
@@ -84,7 +84,7 @@ The single highest-leverage moment in an AI-coding workflow is the gap between *
 | G3 | Customer AI-spend reduction (`/revue-local` users vs CI-only baseline) | **MVP:** instrumented; baseline cohort established. **6-month:** ≥ 40% reduction (mirrors PRD §3.5 two-stage phrasing) | Spend-delta dashboard: reviews caught locally × typical per-review API cost from PRD §11.2 TCO table. Baseline cohort = customers with ≥ 30 reviews in both 90-day windows |
 | G4 | Time-to-first-review (install → first finding rendered) | ≤ 5 minutes for the 75th percentile | Installer emits install timestamp; first-review timestamp from first-invocation usage-emit |
 | G5 | Free → Indie conversion among `/revue-local` users | ≥ 7% within 90 days (vs PRD §11.3 baseline of ≥ 5% for CI-only users) | Stripe + licence-key correlation |
-| G6 | Skill-discoverability rank | Top-3 result on `revue.io/skills`, top-10 on Anthropic skill registry within 90 days of Anthropic listing | Manual quarterly check |
+| G6 | Skill-discoverability rank | Top-3 result on `revue.sh/skills`, top-10 on Anthropic skill registry within 90 days of Anthropic listing | Manual quarterly check |
 
 ### 3.2 Non-goals (explicit)
 
@@ -115,9 +115,9 @@ Three distribution channels are viable. Each is evaluated on the same six dimens
 | Pros | Single best surface for Claude Code users. Low friction for that audience. |
 | Cons | Vendor lock-in at the distribution layer; non-Claude-Code users not served; ship date dependent on Anthropic. |
 
-### 4.2 Option B — Revue-hosted skill registry (`revue.io/skills`)
+### 4.2 Option B — Revue-hosted skill registry (`revue.sh/skills`)
 
-**Shape.** Revue runs its own skill index at `revue.io/skills`. Customers install via a Revue installer command (`curl -sSL https://install.revue.io | bash`, or `pipx install revue-local`). The index lists `/revue-local` and any future Revue skills.
+**Shape.** Revue runs its own skill index at `revue.sh/skills`. Customers install via a Revue installer command (`curl -sSL https://install.revue.sh | bash`, or `pipx install revue-local`). The index lists `/revue-local` and any future Revue skills.
 
 | Dimension | Assessment |
 |-----------|------------|
@@ -131,42 +131,42 @@ Three distribution channels are viable. Each is evaluated on the same six dimens
 
 ### 4.3 Option C — GitHub-based distribution (clone-and-install)
 
-**Shape.** The skill lives in a public GitHub repo (`revue-io/revue-local`). Customers install by running a one-line installer that clones the repo into the right location for their AI tool and writes the necessary config. The installer is hosted at `revue.io/install` (CDN-fronted shell script). The repo is the *authoritative source*; the installer is the *thin convenience layer*.
+**Shape.** The skill lives in a public GitHub repo (`revue-io/revue-local`). Customers install by running a one-line installer that clones the repo into the right location for their AI tool and writes the necessary config. The installer is hosted at `revue.sh/install` (CDN-fronted shell script). The repo is the *authoritative source*; the installer is the *thin convenience layer*.
 
 | Dimension | Assessment |
 |-----------|------------|
 | Discoverability | Solid — GitHub stars, README SEO, and the broader Awesome-X list ecosystem give organic surface area. Pairs naturally with launch-post content. |
 | Time-to-ship | High — no platform-specific approval queues, no third-party gate. Phase 2.a ship target unblocked. |
-| Paywall enforcement | Same as Option B — installer + skill validate against Revue API. The source being open does not weaken enforcement: the licence-key check is the active artefact a pirate fork would have to rip out, and the official channel (signed release + revue.io/skills index) is what honest customers consume (see §6). |
+| Paywall enforcement | Same as Option B — installer + skill validate against Revue API. The source being open does not weaken enforcement: the licence-key check is the active artefact a pirate fork would have to rip out, and the official channel (signed release + revue.sh/skills index) is what honest customers consume (see §6). |
 | Lock-in risk | None — GitHub is provider-neutral relative to the AI vendor stack. Worst case (GitHub policy change), the repo migrates to GitLab/Codeberg with no skill-level disruption. |
 | AI-agnostic compatibility | Native — installer detects the user's AI tool (Claude Code / Cursor / Windsurf) and writes the right config. |
 | Pros | Discoverability, time-to-ship, AI-vendor neutrality, transparency (open install script builds trust). |
 | Cons | The skill code is open, which means a forked-and-stripped clone is technically possible — addressed in §6 via the anti-piracy mix (active licence check, vendor-controlled channels, signed releases, official-version signalling). |
 
-> **Note on `revue.io/*` URLs throughout this brief.** All references to `revue.io/install`, `revue.io/activate`, `revue.io/skills`, `revue.io/dashboard` etc. describe the **post-MVP steady-state shape**. The `revue.io` domain is not purchased until MVP launch (per memory `project_api_revue_io_gap.md`). Until then, the same install script content is served from `raw.githubusercontent.com/cbscd/revue/main/scripts/install.sh`, the licence-validation endpoint from a pre-existing fly.dev URL, and the curated skill catalogue from the GitHub repo's `README.md`. The DNS swap at MVP launch is a one-line content update across these surfaces — no behavioural change to customers.
+> **Note on `revue.sh/*` URLs throughout this brief.** All references to `revue.sh/install`, `revue.sh/activate`, `revue.sh/skills`, `revue.sh/dashboard` etc. describe the **post-MVP steady-state shape**. The `revue.sh` domain is not purchased until MVP launch (per memory `project_api_revue_io_gap.md`). Until then, the same install script content is served from `raw.githubusercontent.com/cbscd/revue/main/scripts/install.sh`, the licence-validation endpoint from a pre-existing fly.dev URL, and the curated skill catalogue from the GitHub repo's `README.md`. The DNS swap at MVP launch is a one-line content update across these surfaces — no behavioural change to customers.
 
 ### 4.4 Recommendation
 
-**Recommended channel: Option C (GitHub-based distribution) as primary, Option B (`revue.io/skills` registry index) as the curated catalogue surface, Option A (Anthropic registry) as downstream syndication when stable.**
+**Recommended channel: Option C (GitHub-based distribution) as primary, Option B (`revue.sh/skills` registry index) as the curated catalogue surface, Option A (Anthropic registry) as downstream syndication when stable.**
 
 Concretely:
 
-1. **Primary install path:** `curl -fsSL https://revue.io/install.sh | bash` post-MVP, or the equivalent GitHub-raw URL pre-MVP (see §5.2). The installer is a thin bootstrapper that delegates to `uv tool install revue-local` (with `pipx` as a fallback path), detects the user's AI tool, writes config, and prompts for licence-key activation. Updates flow through `uv tool upgrade` — no bespoke updater to maintain.
-2. **Discovery surface:** `revue.io/skills` lists `/revue-local` with a copy-paste install command and links to the GitHub repo. This is also where the cost-saving dashboard (§7) lives, so the page does double duty.
+1. **Primary install path:** `curl -fsSL https://revue.sh/install.sh | bash` post-MVP, or the equivalent GitHub-raw URL pre-MVP (see §5.2). The installer is a thin bootstrapper that delegates to `uv tool install revue-local` (with `pipx` as a fallback path), detects the user's AI tool, writes config, and prompts for licence-key activation. Updates flow through `uv tool upgrade` — no bespoke updater to maintain.
+2. **Discovery surface:** `revue.sh/skills` lists `/revue-local` with a copy-paste install command and links to the GitHub repo. This is also where the cost-saving dashboard (§7) lives, so the page does double duty.
 3. **Downstream syndication:** when Anthropic's skill registry is stable enough to warrant the integration cost, Revue submits `/revue-local` there as well. The registry entry points back to the canonical installer; the GitHub repo remains the source of truth.
 
 **Why this combination wins on the load-bearing criteria:**
 
 - **AI-vendor neutrality** (mirrors PRD §6.4). The primary channel does not couple distribution to Anthropic.
 - **Time-to-ship.** No third-party approval queue gates Phase 2.a.
-- **Discoverability.** GitHub + a curated revue.io index + (later) Anthropic registry covers three discovery surfaces, not one.
+- **Discoverability.** GitHub + a curated Revue index + (later) Anthropic registry covers three discovery surfaces, not one.
 - **Paywall enforcement is independent of channel** (see §6) — the same enforcement model works across all three.
 
 ### 4.5 Channel rollout sequencing
 
 | Phase | Channel | Trigger to advance |
 |-------|---------|---------------------|
-| Phase 2.a | GitHub primary + `revue.io/skills` index | Ships at Phase 2.a launch |
+| Phase 2.a | GitHub primary + `revue.sh/skills` index | Ships at Phase 2.a launch |
 | Phase 2.b | Add Cursor/Windsurf installer paths to the same primary installer | Phase 2.b polish window |
 | Phase 2.c | Submit to Anthropic skill registry as downstream syndication | Anthropic registry has documented submission process + paywall-compatible model |
 
@@ -176,7 +176,7 @@ Concretely:
 
 ### 5.1 Design goals
 
-- **One command.** Copy-paste from `revue.io/skills` into a terminal; install completes in under 60 seconds on a warm cache.
+- **One command.** Copy-paste from `revue.sh/skills` into a terminal; install completes in under 60 seconds on a warm cache.
 - **Detect, don't ask.** The installer auto-detects which AI-coding tool the user runs (Claude Code, Cursor, Windsurf) by probing for known config paths. Falls back to a multiple-choice prompt only when detection is ambiguous.
 - **Idempotent.** Re-running the installer upgrades in place without breaking existing config.
 - **Honest about what is changed.** The installer prints the exact files it will create or modify, and the exact lines it will append to existing files, *before* doing so. The user can `-y` to skip the confirmation in scripted contexts.
@@ -184,10 +184,10 @@ Concretely:
 
 ### 5.2 One-command install
 
-**Post-MVP (once `revue.io` is purchased and DNS lands):**
+**Post-MVP (once `revue.sh` is purchased and DNS lands):**
 
 ```bash
-curl -fsSL https://revue.io/install.sh | bash
+curl -fsSL https://revue.sh/install.sh | bash
 ```
 
 **Pre-MVP / dogfood phase (GitHub-hosted, identical script content):**
@@ -245,7 +245,7 @@ Additionally, every `/revue-local` invocation piggy-backs on the daily licence c
    - For Cursor: writes `.cursor/rules/revue-local.mdc` (project-local) or `~/.cursor/rules/revue-local.mdc` (global), depending on user choice.
    - For Windsurf: writes the equivalent `windsurfrules` entry.
 4. **Prompts for licence-key activation.**
-   - Default flow: opens `https://revue.io/activate?installer=<install-id>` in the user's browser. The browser flow returns a JWT licence key, which the installer writes to `~/.revue/licence` (chmod 600).
+   - Default flow: opens `https://revue.sh/activate?installer=<install-id>` in the user's browser. The browser flow returns a JWT licence key, which the installer writes to `~/.revue/licence` (chmod 600).
    - Headless flow: `revue-local activate --key <KEY>` for CI and scripted installs.
    - Skip flow: the user can defer activation; the skill enters Free-tier mode (PRD §11.2) on first invocation and prompts to activate.
 5. **Auto-detects (or offers to create) `.revue.yml`.**
@@ -271,7 +271,7 @@ You're on the Free tier — 25 reviews/month included.
 Reviews caught locally save you the CI-side AI inference cost.
 
 Estimated saving this month so far: $0.00 (run your first review to start)
-See your dashboard: https://revue.io/dashboard
+See your dashboard: https://revue.sh/dashboard
 ```
 
 After this one-time panel, subsequent invocations print only the cost-saving footer (see §7.4) below findings.
@@ -308,8 +308,8 @@ The threat model for `/revue-local` is **anti-piracy / anti-circumvention**, not
 The standard tools against this threat are well-known and Revue uses the standard mix:
 
 1. **An active licence-key check that a pirated fork must explicitly remove.** Not obfuscation — just a check whose absence is what a fork has to ship. The work to maintain the patch across upstream updates is friction that scales over time.
-2. **Distribution channels Revue controls.** The one-line installer is hosted at `revue.io/install`. The curated catalogue lives at `revue.io/skills`. The GitHub repo is canonical; release artefacts are signed. Honest customers, given a choice between `revue.io/install` and `random-fork/install.sh`, pick the official channel.
-3. **Clear "this is the official version" signalling.** Signed release tarballs (Sigstore / cosign), a published version manifest at `revue.io/skills/manifest.json` listing the current canonical SHA, and `revue-local --version` reporting against the manifest. A pirated fork either keeps the manifest URL (in which case `--version` flags it as stale / unofficial) or replaces it (which makes the fork distinguishable on inspection).
+2. **Distribution channels Revue controls.** The one-line installer is hosted at `revue.sh/install`. The curated catalogue lives at `revue.sh/skills`. The GitHub repo is canonical; release artefacts are signed. Honest customers, given a choice between `revue.sh/install` and `random-fork/install.sh`, pick the official channel.
+3. **Clear "this is the official version" signalling.** Signed release tarballs (Sigstore / cosign), a published version manifest at `revue.sh/skills/manifest.json` listing the current canonical SHA, and `revue-local --version` reporting against the manifest. A pirated fork either keeps the manifest URL (in which case `--version` flags it as stale / unofficial) or replaces it (which makes the fork distinguishable on inspection).
 
 These three together are the recommended mix. They do not require treating the skill as untrusted; they do not require server-delivered agent prompts; they do not require a Nuitka-compiled enforcement binary. They are commensurate with the actual threat.
 
@@ -334,7 +334,7 @@ No change to pricing, tier caps, or feature gating. The skill enforces the same 
 2. **First `/revue-local` invocation of the day** triggers an online licence-validity check against `POST /api/v2/licence/validate` (payload: `{ licence_jwt, workspace_id, machine_fingerprint }`).
 3. **On success**, the skill caches `{ valid_until: now + 24h, tier, reviews_remaining_this_period, agents_allowed }` locally. The 24h-from-validation-timestamp window is preferred over a calendar-day boundary because it makes the customer experience predictable across time zones and travel — a successful check at 23:50 local time should not expire ten minutes later. Subsequent `/revue-local` invocations within that 24h window run without a network round-trip for licence validation.
 4. **On failure** (network unreachable, server unreachable, invalid response), the skill continues to run *if* a previous successful check is still inside its 24h window. The cached "valid" stays in force until it expires.
-5. **After 24h without any successful check**, `/revue-local` blocks usage and surfaces a clear error message: *"Licence validation unavailable for >24h — restore network connectivity or contact support@revue.io."* No partial-functionality fallback, no degraded mode; the skill simply refuses to run a review until a fresh check succeeds.
+5. **After 24h without any successful check**, `/revue-local` blocks usage and surfaces a clear error message: *"Licence validation unavailable for >24h — restore network connectivity or contact support@revue.sh."* No partial-functionality fallback, no degraded mode; the skill simply refuses to run a review until a fresh check succeeds.
 6. **No tier-specific grace logic.** The same rules apply to Free, Indie, Pro, and Enterprise. One mechanism, one code path.
 
 **Rationale (load-bearing — keep verbatim).** Network access is a prerequisite for using Claude Code itself. If the customer cannot reach our licence server, they cannot reach Anthropic's API either — so requiring network for licence checks does not introduce a new offline-mode requirement. A daily check + 24h cache is the minimum-viable mechanism: one network call per day, full offline tolerance for short blips, hard block only after a full day without connectivity. Simpler than tier-graded grace, easier to communicate, single code path.
@@ -352,7 +352,7 @@ The Free tier (25 reviews/month) is enforced as follows:
 1. Each completed review emits a usage record (§6.3). The skill displays the remaining balance returned by the server.
 2. When `reviews_remaining_this_period` hits 0, the next daily validation returns `{ tier: "Free", reviews_remaining: 0, paywall: true }`. The skill responds by:
    - Refusing to start a multi-agent review.
-   - Printing a paywall message with a one-click upgrade URL (`revue.io/upgrade?from=local-skill&workspace=...`).
+   - Printing a paywall message with a one-click upgrade URL (`revue.sh/upgrade?from=local-skill&workspace=...`).
    - Exiting non-zero so the host AI agent surfaces the paywall in its next response.
 3. Within the 24h cache window, the skill counts reviews against the cached balance and refuses to proceed when the cache shows 0 remaining, even if the server has not yet been re-contacted. The next successful daily check reconciles cache against server.
 
@@ -419,7 +419,7 @@ The privacy posture is identical to the CI orchestrator (PRD §4.2): the Revue s
    ```
    Printed below the findings, one block, three lines max. Always visible, never burying the cost narrative.
 
-2. **Web dashboard** (`https://revue.io/dashboard`, monthly trend):
+2. **Web dashboard** (`https://revue.sh/dashboard`, monthly trend):
    - Headline number: total estimated saving this billing period.
    - Sparkline: reviews caught locally per day.
    - Comparison band: estimated CI-only spend vs estimated `/revue-local`-augmented spend.
@@ -480,7 +480,7 @@ Rules:
   if you decide not to fix them.
 
 Why this matters: every issue Revue catches here is one fewer CI review
-cycle billed against your AI subscription. See revue.io/dashboard for
+cycle billed against your AI subscription. See revue.sh/dashboard for
 your saving.
 ```
 
@@ -569,7 +569,7 @@ review. The skill itself runs inside your existing Claude Code, Cursor,
 or Windsurf session — no Revue-side per-call billing.
 ```
 
-### 9.2 Website hero (`revue.io`)
+### 9.2 Website hero (`revue.sh`)
 
 ```
 Stop paying twice for the same AI bug.
@@ -684,12 +684,12 @@ Three sub-phases inside the PRD's Phase 2. Each sub-phase has scope, exit criter
 **Scope.**
 
 - Skill bundle published at `github.com/revue-io/revue-local` (public).
-- Signed release artefacts (Sigstore/cosign) and a published version manifest at `revue.io/skills/manifest.json` (per §6.1 anti-piracy mix).
-- One-command installer at `revue.io/install` (Claude Code path only).
-- Licence JWT issuance from `revue.io/activate` browser flow.
+- Signed release artefacts (Sigstore/cosign) and a published version manifest at `revue.sh/skills/manifest.json` (per §6.1 anti-piracy mix).
+- One-command installer at `revue.sh/install` (Claude Code path only).
+- Licence JWT issuance from `revue.sh/activate` browser flow.
 - Server-side daily-validate, usage-emit, and free-tier counting endpoints (`/api/v2/licence/validate`, `/api/v2/usage/emit`).
 - CLI cost-saving footer (printed below findings every invocation).
-- `revue.io/skills` index page with copy-paste install command.
+- `revue.sh/skills` index page with copy-paste install command.
 - Cost-care messaging rolled to README + website hero + pricing-page header (§9.1, §9.2, §9.3).
 
 **Exit criteria.**
@@ -714,7 +714,7 @@ Three sub-phases inside the PRD's Phase 2. Each sub-phase has scope, exit criter
 - Cursor installer path (write `.cursor/rules/revue-local.mdc`).
 - Windsurf installer path (write `windsurfrules`).
 - `revue-local doctor` diagnostic command.
-- Web dashboard at `revue.io/dashboard` — monthly aggregate, sparkline, share-link generator.
+- Web dashboard at `revue.sh/dashboard` — monthly aggregate, sparkline, share-link generator.
 - Launch post and ongoing-content rollout (§9.4).
 - Refinement of the saving-calculation middle term (replace `1.0` default with telemetry-derived probability if data warrants).
 - Soft-paywall UX inside the skill (the upgrade prompt copy in §9.6).
@@ -769,7 +769,7 @@ GitHub stars + a Revue-hosted index do not guarantee discovery. The most likely 
 
 A long `/revue-local` invocation consumes the customer's Claude Code session budget. For users on Anthropic's lower-tier Claude Code plans, a multi-agent review may exhaust their hourly quota. Mitigations:
 
-- Document the session-budget cost honestly in `revue.io/skills` (estimated message-count per review).
+- Document the session-budget cost honestly in `revue.sh/skills` (estimated message-count per review).
 - Provide a `--lite` flag that runs Maya-only for fast iterations.
 - Surface the customer's quota status if Claude Code exposes it; otherwise print a duration estimate before starting long reviews.
 
@@ -788,7 +788,7 @@ Per §6.1, the threat is somebody forking the public repo, stripping the licence
 **Mitigations** if the risk becomes material (evidence: low conversion rate inconsistent with install telemetry, or direct sightings of unofficial forks gaining traction):
 
 - Tighten the version-manifest signalling: make `revue-local --version` surface a prominent "unofficial build" banner when the running SHA does not match the published manifest.
-- Use the installer-served channels (`revue.io/install`, `revue.io/skills`) as the canonical SEO surfaces, so the official version dominates search rankings against any fork.
+- Use the installer-served channels (`revue.sh/install`, `revue.sh/skills`) as the canonical SEO surfaces, so the official version dominates search rankings against any fork.
 - Reach out to the AI-coding-tool vendors (Anthropic, Cursor, Codeium) to delist known infringing forks from their respective discovery surfaces.
 
 None of these are built in Phase 2 beyond the baseline manifest and signed releases. Heavier mitigations wait on evidence of material revenue impact.
@@ -829,7 +829,7 @@ Restated from §3.1 with the measurement plumbing now specified.
 | G3 | Customer AI-spend reduction (`/revue-local` vs CI-only) | ≥ 40% | Spend-delta dashboard, per §7 |
 | G4 | Time-to-first-review (install → first finding) | ≤ 5 minutes (75th percentile) | Installer install-timestamp + first-review timestamp from first-invocation usage-emit |
 | G5 | Free → Indie conversion among `/revue-local` users | ≥ 7% within 90 days | Stripe + licence-key cohort analysis |
-| G6 | Discoverability rank | Top-3 on `revue.io/skills`, top-10 on Anthropic registry (when listed) | Manual quarterly check |
+| G6 | Discoverability rank | Top-3 on `revue.sh/skills`, top-10 on Anthropic registry (when listed) | Manual quarterly check |
 | G7 | Skill-driven NPS | ≥ 50 | In-skill prompt after the 10th invocation: "Recommend Revue to a colleague? (0–10)" |
 | G8 | Paywall hit-to-upgrade ratio | ≥ 15% of Free-tier exhaustion events convert to Indie within 14 days | Stripe + paywall event correlation |
 
@@ -842,16 +842,16 @@ Targets are validated quarterly. If G3 (the cost-savings claim) is consistently 
 | Term | Definition |
 |------|-----------|
 | `/revue-local` | The Claude Code (and Cursor, Windsurf) skill the customer's AI-coding agent invokes inside its own workflow, before the AI commits code. Runs Revue's full multi-agent review pipeline (Cleo, Zara, Kai, Maya, Leo, Nova, Sage, Vex) in the customer's existing AI session, against the same `.revue.yml` the CI track uses. |
-| Skill registry | A discovery + install surface for AI-agent skills. Three are in scope: Anthropic's first-party registry (when stable), Revue's curated index at `revue.io/skills`, and GitHub as the primary distribution surface. |
+| Skill registry | A discovery + install surface for AI-agent skills. Three are in scope: Anthropic's first-party registry (when stable), Revue's curated index at `revue.sh/skills`, and GitHub as the primary distribution surface. |
 | Customer-side execution context | Code that runs on the customer's machine, inside the customer's AI session, consuming the customer's AI subscription. The skill executes here; the Revue server does not. |
 | AI-workflow integration | The act of instructing a customer's AI-coding agent (Claude Code, Cursor, Windsurf, etc.) — via `CLAUDE.md`, `.cursor/rules`, or `windsurfrules` — to invoke `/revue-local` at a specific point in its loop (pre-commit). |
 | Pre-commit AI review | A multi-agent review of a staged-but-uncommitted diff, invoked by the AI agent that wrote the diff, before it commits. The Layer 2 product in the 4-layer model (PRD §2.2). Distinct from a git `pre-commit` hook, which runs in `.git/hooks/` outside the AI session. |
 | BYOK | Bring Your Own Key. Customer provides their own AI provider API key (OpenRouter, Anthropic, OpenAI, Azure, custom). Revue never stores or sees it. For `/revue-local`, the "key" is the customer's existing Claude Code (or Cursor / Windsurf) subscription — no separate API key is needed for inference, only the Revue licence JWT. |
-| Licence JWT | A signed JSON Web Token issued by `revue.io/activate`. Encodes `tier`, `seat_id`, `workspace_id`, `agents_allowed`, `iat`, `exp`. Verified offline by the skill; revalidated online once per day against the Revue licence server (§6.3). |
+| Licence JWT | A signed JSON Web Token issued by `revue.sh/activate`. Encodes `tier`, `seat_id`, `workspace_id`, `agents_allowed`, `iat`, `exp`. Verified offline by the skill; revalidated online once per day against the Revue licence server (§6.3). |
 | Daily licence check | The first `/revue-local` invocation of each 24h window calls `POST /api/v2/licence/validate`. On success the result is cached for 24h. After 24h without a successful check, the skill blocks usage. Same rules every tier (§6.3). |
 | Cost-saving dashboard | The dual-surface (CLI footer + web aggregate) view of estimated customer AI-spend reduction from running `/revue-local`. Built entirely from already-collected licence + usage metadata; never ingests source code or diffs. |
 | Wire-up | The act of writing `/revue-local` into the customer's AI agent's rules file (`CLAUDE.md`, `.cursor/rules/`, `windsurfrules`). The installer offers to do this; the customer can also do it manually. |
-| Version manifest | A signed JSON document published at `revue.io/skills/manifest.json` listing the canonical release SHA, signature, and version metadata for `/revue-local`. Used by `revue-local --version` and by the installer to verify the user is running an official build (§6.1 anti-piracy mix). |
+| Version manifest | A signed JSON document published at `revue.sh/skills/manifest.json` listing the canonical release SHA, signature, and version metadata for `/revue-local`. Used by `revue-local --version` and by the installer to verify the user is running an official build (§6.1 anti-piracy mix). |
 
 ---
 
@@ -859,7 +859,7 @@ Targets are validated quarterly. If G3 (the cost-savings claim) is consistently 
 
 | Date | Pass | Summary |
 |------|------|---------|
-| 2026-05-17 | v1.0 — initial draft | Distribution recommendation (GitHub primary + revue.io/skills + Anthropic syndication); licensing modelled as "untrusted skill" with session-start handshake, server-delivered agent prompts, Nuitka-compiled enforcement binary, tier-graded offline grace (Free/Indie/Pro online-only, Enterprise 72h). |
+| 2026-05-17 | v1.0 — initial draft | Distribution recommendation (GitHub primary + revue.sh/skills + Anthropic syndication); licensing modelled as "untrusted skill" with session-start handshake, server-delivered agent prompts, Nuitka-compiled enforcement binary, tier-graded offline grace (Free/Indie/Pro online-only, Enterprise 72h). |
 | 2026-05-18 | v1.1 — corrections | Two corrections applied: (1) "untrusted skill" framing dropped — Claude Code runs skills as instructed and the runtime-trust problem is not real; §6 reframed around anti-piracy / paywall-circumvention with an active licence check, vendor-controlled distribution channels, and signed releases + version manifest as the standard mix. (2) Licence validation simplified to a single daily online check + 24h cache with identical rules for every tier; the tier-graded offline grace and Enterprise 72h carve-out removed. Downstream references updated in §1 executive summary, §4.3, §5.6, §7.4, §7.6, §10.1, §11.4, §13. The server-delivered-prompts mechanism and the Nuitka enforcement-binary requirement are dropped from the build scope. |
 
 ---

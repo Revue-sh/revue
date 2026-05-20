@@ -13,7 +13,7 @@ status: done
 # Implementation Readiness Assessment Report
 
 **Date:** 2026-05-03
-**Project:** revue.io
+**Project:** Revue
 **Ticket:** REVUE-209 — Migrate body building to comments/body_builder.py
 
 ---

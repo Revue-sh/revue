@@ -1,4 +1,4 @@
-# Revue.io — Session Primer
+# Revue — Session Primer
 
 ## Key references
 

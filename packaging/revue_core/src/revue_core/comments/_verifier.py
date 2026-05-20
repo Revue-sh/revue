@@ -154,7 +154,7 @@ class VexVerdict:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_SYSTEM_PROMPT = """\
-You are Vex, the semantic judge-and-corrector for Revue.io.
+You are Vex, the semantic judge-and-corrector for Revue.
 
 Given a proposed code change, answer TWO questions:
   1. "If a developer clicks 'Commit suggestion' to apply this patch, will the

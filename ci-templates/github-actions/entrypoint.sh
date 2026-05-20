@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Revue.io action entrypoint
+# Revue action entrypoint
 # Runs the Revue review pipeline and posts findings to the PR.
 # Called by action.yml — do not invoke directly.
 set -euo pipefail
@@ -24,7 +24,7 @@ fi
 
 # ── 2. Run Revue review ─────────────────────────────────────────────────────
 
-echo "::group::Revue.io — running review"
+echo "::group::Revue — running review"
 
 REVUE_ARGS=(
   review

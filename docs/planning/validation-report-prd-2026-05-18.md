@@ -1,4 +1,4 @@
-# PRD Validation Report — Revue.io v2.0
+# PRD Validation Report — Revue v2.0
 
 **Report date:** 2026-05-18
 **PRD under review:** `docs/planning/prd.md` (v2.0, dated May 2026)

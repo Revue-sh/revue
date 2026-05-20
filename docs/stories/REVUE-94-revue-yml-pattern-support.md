@@ -13,14 +13,14 @@ As a Revue user, I want to define allowed and disallowed patterns in `.revue.yml
 
 ## Background
 
-Across review runs for REVUE-83, REVUE-84, and REVUE-86, four recurring false positives were identified that stem from intentional design decisions in the revue.io codebase:
+Across review runs for REVUE-83, REVUE-84, and REVUE-86, four recurring false positives were identified that stem from intentional design decisions in the Revue codebase:
 
 1. **`_def` attribute access on `LoadedAgent`** — flagged as accessing a private/internal attribute, but this is intentional because `LoadedAgent` has no public API for definition access.
 2. **Inline lazy `httpx` import in `pr_description_adapter`** — flagged as a non-standard import pattern. Originally intentional for lazy loading; has since been replaced with a module-level import.
 3. **`test_vcs_adapter.py` deletion** — flagged as removing test coverage, but the tests were consolidated into `test_vcs_adapters.py` (plural), so coverage still exists.
 4. **Bare `except` in `_inject_pr_context`** — flagged as overly broad exception handling, but this is intentional because the PR context injection must never crash the review loop.
 
-These false positives add noise to every review, reducing trust in findings and wasting reviewer time triaging known patterns. The `.revue.yml` config file already has a `noise_filters` section (currently only `disable` and `low_confidence_threshold`). This story extends it with `allowed_patterns` and `disallowed_patterns`, injects them into agent system prompts, and populates the revue.io project config with the four known patterns above. The REVUE-89 schema includes `allowed_patterns` and `disallowed_patterns` tables plus a `finding_pattern_matches` junction table for tracking which findings matched which patterns.
+These false positives add noise to every review, reducing trust in findings and wasting reviewer time triaging known patterns. The `.revue.yml` config file already has a `noise_filters` section (currently only `disable` and `low_confidence_threshold`). This story extends it with `allowed_patterns` and `disallowed_patterns`, injects them into agent system prompts, and populates the Revue project config with the four known patterns above. The REVUE-89 schema includes `allowed_patterns` and `disallowed_patterns` tables plus a `finding_pattern_matches` junction table for tracking which findings matched which patterns.
 
 ## Acceptance Criteria
 
@@ -30,7 +30,7 @@ The YAML parser recognises two new keys under `noise_filters`: `allowed_patterns
 **AC2 — Patterns injected into agent system prompts before review:**
 When the review agent is initialised, all `allowed_patterns` from `.revue.yml` are appended to the agent system prompt under a clearly delimited section (e.g., `## Allowed Patterns — Do Not Flag`). Each entry includes the pattern text and its rationale. Similarly, `disallowed_patterns` are appended under a `## Disallowed Patterns — Always Flag` section. The injection happens before the first LLM call, ensuring the agent sees the patterns for every finding it generates.
 
-**AC3 — `revue.io/.revue.yml` populated with the four known false-positive patterns:**
+**AC3 — `revue.sh/.revue.yml` populated with the four known false-positive patterns:**
 The project's own `.revue.yml` is updated with four `allowed_patterns` entries under `noise_filters`:
 1. `_def attribute access on LoadedAgent` — rationale: "Internal implementation detail, no public API"
 2. `Inline lazy httpx import in pr_description_adapter` — rationale: "Intentional lazy loading pattern, now replaced with module-level import"

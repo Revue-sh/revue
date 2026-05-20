@@ -51,7 +51,7 @@ pipelines:
   pull-requests:
     "**":
       - step:
-          name: "Revue.io AI Code Review"
+          name: "Revue AI Code Review"
           script:
             - pip install revue-io --quiet
             - |
@@ -107,5 +107,5 @@ agents:
 ## Step 6 — Open a pull request
 
 1. Push a branch and open a pull request.
-2. The **Revue.io AI Code Review** step runs automatically.
+2. The **Revue AI Code Review** step runs automatically.
 3. Revue posts a summary comment on the PR and sets a commit status (pass/fail).

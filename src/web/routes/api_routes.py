@@ -82,7 +82,7 @@ async def validate_license(body: ValidateRequest) -> JSONResponse:
         if lic.reviews_limit is not None and lic.reviews_used_this_month >= lic.reviews_limit:
             return JSONResponse({
                 "valid": False,
-                "message": "Review limit reached. Upgrade at https://revue.io/upgrade",
+                "message": "Review limit reached. Upgrade at https://revue.sh/upgrade",
             })
 
         # Calculate reviews_left

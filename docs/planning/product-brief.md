@@ -1,5 +1,5 @@
 ---
-title: "Product Brief: revue.io"
+title: "Product Brief: Revue"
 status: "complete"
 created: "2026-04-20"
 updated: "2026-04-20"
@@ -13,7 +13,7 @@ inputs:
   - README.md
 ---
 
-# Product Brief: Revue.io
+# Product Brief: Revue
 
 ## Executive Summary
 

@@ -1,11 +1,11 @@
 ---
 name: run-tests
 model: haiku
-description: Run the revue.io test suite. Use when the user asks to run tests, check tests, or verify a change. Invoked as /run-tests (full suite) or /run-tests <target> [<target> ...] where target is a file or file::test_name relative to src/revue/tests/.
+description: Run the Revue test suite. Use when the user asks to run tests, check tests, or verify a change. Invoked as /run-tests (full suite) or /run-tests <target> [<target> ...] where target is a file or file::test_name relative to src/revue/tests/.
 allowed-tools: Bash
 ---
 
-Run the revue.io pytest suite from `src/`.
+Run the Revue pytest suite from `src/`.
 
 ## Scripts
 

@@ -145,7 +145,7 @@ async def test_docs_markdown_rendered_as_html(client: AsyncClient):
 async def test_docs_page_title_set(client: AsyncClient):
     resp = await client.get("/docs/agents")
     assert b"Agent Catalogue" in resp.content
-    assert b"Revue.io Docs" in resp.content
+    assert b"Revue Docs" in resp.content
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-# Revue.io — GitHub Actions Integration
+# Revue — GitHub Actions Integration
 
 Add automated multi-agent AI code reviews to every PR in 2 minutes.
 
@@ -15,7 +15,7 @@ Add automated multi-agent AI code reviews to every PR in 2 minutes.
 2. Create `.github/workflows/revue-review.yml` in your repo:
 
 ```yaml
-name: Revue.io Code Review
+name: Revue Code Review
 
 on:
   pull_request:
@@ -50,7 +50,7 @@ jobs:
 | `ai_provider` | No | `openrouter` | `openrouter` \| `anthropic` \| `openai` \| `azure` \| `custom` |
 | `ai_model` | No | `deepseek/deepseek-v4-pro` | Model name for the chosen provider |
 | `ai_base_url` | No | — | Custom base URL for Azure or self-hosted gateways |
-| `revue_token` | No | — | Revue.io workspace token (from app.revue.io/settings/tokens) for analytics |
+| `revue_token` | No | — | Revue workspace token (from app.revue.sh/settings/tokens) for analytics |
 | `mode` | No | `multi-agent` | `multi-agent` \| `single-agent` |
 | `config_path` | No | `.revue.yml` | Path to your Revue config file |
 | `min_confidence` | No | `70` | Minimum Sage fix-suggestion confidence (0–100) |
@@ -63,7 +63,7 @@ jobs:
 |---|---|
 | `findings_count` | Total findings posted |
 | `critical_count` | Critical-severity findings |
-| `review_url` | Link to full report on app.revue.io (requires `revue_token`) |
+| `review_url` | Link to full report on app.revue.sh (requires `revue_token`) |
 
 ---
 

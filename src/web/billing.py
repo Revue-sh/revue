@@ -1,4 +1,4 @@
-"""Stripe billing integration for Revue.io.
+"""Stripe billing integration for Revue.
 
 Handles:
 - Checkout session creation (upgrade flow)

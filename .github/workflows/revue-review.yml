@@ -1,4 +1,4 @@
-name: Revue.io Code Review
+name: Revue Code Review
 
 on:
   pull_request:

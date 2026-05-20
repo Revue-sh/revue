@@ -33,7 +33,7 @@ bash "$SKILL_DIR/scripts/bb_pr_review.sh" [pr_number] [--logs [step_pattern]] [w
 |----------|---------|-------------|
 | `pr_number` | auto-detect from branch | PR number to inspect |
 | `--logs` | omit for comments-only | Also fetch and print the named step's log |
-| `step_pattern` | `Revue.io AI Code Review` | Substring match against step name |
+| `step_pattern` | `Revue AI Code Review` | Substring match against step name |
 | `workspace/repo` | `cbscd/revue` | Repo slug |
 
 ### Examples
@@ -67,7 +67,7 @@ Severity: 🔴 2 HIGH  🟡 13 MEDIUM  🔵 15 LOW  ℹ️ 2 INFO
 --- Unresolved inline (no reply yet) ---
   [#787738167] cleo_router.py:357 🟡 [MEDIUM]  Substring matching creates false positives...
 
-=== LOG: Revue.io AI Code Review ===     ← only when --logs is passed
+=== LOG: Revue AI Code Review ===     ← only when --logs is passed
 + git clone ...
 [revue] Starting AI code review...
 ...
@@ -93,7 +93,7 @@ The log API does not accept sort-by-build-number; the script works around it:
 Parse the user's message for:
 - A PR number (`#82`, `PR 82`, `82`)
 - Whether logs are requested ("fetch logs", "with logs", "pipeline logs")
-- A specific step name if mentioned (default: `Revue.io AI Code Review`)
+- A specific step name if mentioned (default: `Revue AI Code Review`)
 
 ### Step 2 — Run the script
 

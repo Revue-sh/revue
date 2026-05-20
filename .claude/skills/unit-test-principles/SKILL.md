@@ -1,6 +1,6 @@
 ---
 name: unit-test-principles
-description: Unit testing standards for revue.io. Load before writing any unit tests to apply the 5 quality principles — naming, AAA structure, behaviour not implementation, isolation, and realistic data. Also provides a pre-completion checklist and project-specific pitfall reference.
+description: Unit testing standards for Revue. Load before writing any unit tests to apply the 5 quality principles — naming, AAA structure, behaviour not implementation, isolation, and realistic data. Also provides a pre-completion checklist and project-specific pitfall reference.
 ---
 
 # Unit Test Principles

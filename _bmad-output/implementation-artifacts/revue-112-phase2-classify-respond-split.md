@@ -104,7 +104,7 @@ The key architectural change is: **classify moves to the TOP of `pipeline.run()`
 ### Uncommitted changes (commit first — T5.1)
 - `src/revue/cli.py`: `print("[revue] ✅ Review cycle complete.")` before `return 0`
 - `src/revue/core/pipeline.py`: `💬` emoji on reply tracking log lines
-- `src/revue/core/usage_tracker.py`: TODO comment about api.revue.io NXDOMAIN
+- `src/revue/core/usage_tracker.py`: TODO comment about api.revue.sh NXDOMAIN
 
 ---
 

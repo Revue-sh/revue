@@ -1,4 +1,4 @@
-# Revue.io GitLab CI/CD Integration
+# Revue GitLab CI/CD Integration
 
 Add automated AI code reviews to your MRs in 2 minutes.
 
@@ -62,6 +62,6 @@ agents:
 
 - **No comments posted**: Check CI job logs. Ensure the API key variable for your provider (`OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `AZURE_OPENAI_API_KEY`) is set and unmasked for the pipeline.
 - **`curl: command not found`**: The template installs `curl` and `jq` via `apt-get`. If your runner uses a non-Debian image, override `before_script` to use the appropriate package manager.
-- **API rate limits**: Free tier allows 100 reviews/month. Upgrade at revue.io/pricing.
+- **API rate limits**: Free tier allows 100 reviews/month. Upgrade at revue.sh/pricing.
 - **Permission errors**: Ensure `CI_JOB_TOKEN` has API access (enabled by default in GitLab 15.9+). For self-managed instances older than 15.9, use a project access token stored as `CI_JOB_TOKEN`.
 - **Inline comments not appearing**: GitLab requires `base_sha` to match the MR diff base. Ensure `CI_MERGE_REQUEST_DIFF_BASE_SHA` is available (set automatically by GitLab in MR pipelines).

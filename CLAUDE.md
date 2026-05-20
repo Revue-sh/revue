@@ -1,4 +1,4 @@
-# Revue.io
+# Revue
 
 AI-powered multi-agent code review CLI for GitHub, GitLab, and Bitbucket.
 

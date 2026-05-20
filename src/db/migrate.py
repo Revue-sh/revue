@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database migration runner for Revue.io knowledge base.
+Database migration runner for Revue knowledge base.
 
 Usage:
     python3 src/db/migrate.py src/db/migrations/001_initial_schema.sql

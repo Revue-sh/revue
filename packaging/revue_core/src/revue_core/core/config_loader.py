@@ -56,7 +56,7 @@ from .models_registry import (
 # Default .revue.yml content (used by CLI --init in future stories)
 # ---------------------------------------------------------------------------
 
-DEFAULT_REVUE_YML: str = """# .revue.yml — Revue.io configuration
+DEFAULT_REVUE_YML: str = """# .revue.yml — Revue configuration
 version: "1"
 
 # Primary coding language for reviewer priming (optional).

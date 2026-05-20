@@ -12,7 +12,7 @@ status: done
 # Implementation Readiness Assessment Report
 
 **Date:** 2026-05-02
-**Project:** revue.io
+**Project:** Revue
 **Ticket:** REVUE-208 — Comment posting contracts (models and stub modules)
 
 ---

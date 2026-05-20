@@ -374,7 +374,7 @@ output:
 ## Complete example
 
 ```yaml
-# .revue.yml — Revue.io configuration
+# .revue.yml — Revue configuration
 version: "1"
 
 ai:

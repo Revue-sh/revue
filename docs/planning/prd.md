@@ -1,4 +1,4 @@
-# Revue.io — Product Requirements Document
+# Revue — Product Requirements Document
 **Version:** 2.0  
 **Date:** May 2026  
 **Status:** Draft — strategic pivot revision (cost-driven)  
@@ -412,7 +412,7 @@ revue-review:
 
 **Direct (any CI platform):**
 ```bash
-curl -sSL https://install.revue.io | bash
+curl -sSL https://install.revue.sh | bash
 revue review --provider=gitlab --pr=123 --config=.revue.yml
 ```
 
@@ -663,7 +663,7 @@ notifications:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `REVUE_LICENSE_KEY` | Yes | Revue licence key (from revue.io/account) |
+| `REVUE_LICENSE_KEY` | Yes | Revue licence key (from revue.sh/account) |
 | `OPENROUTER_API_KEY` | Yes (default path) | OpenRouter API key — required for the DeepSeek default; swap for `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` if opting into those providers |
 | `REVUE_PROVIDER` | No | Default: `openrouter`. Override values: `anthropic`, `openai`, `azure`, `custom` |
 | `REVUE_MODEL` | No | Default: `deepseek/deepseek-v4-pro`. Override per registry entry |
@@ -772,7 +772,7 @@ A consolidated summary posted to the PR/MR:
 ---
 *Agents: Zara 🔒 · Kai ⚡ · Maya ✨ · Leo 🏗️ · Sage 🧠*
 *AI: DeepSeek-V4-Pro (OpenRouter) · Team: auto → team-security-focus*
-*[View full report](https://app.revue.io/reviews/abc123)*
+*[View full report](https://app.revue.sh/reviews/abc123)*
 ```
 
 ### 10.3 `/revue-local` Output Format
@@ -979,7 +979,7 @@ A conversion tracking dashboard (Epic E6) will provide the data needed to make t
 
 1. **`/revue-local` distribution mechanics (NEW — v2.0 pivot):** How is `/revue-local` packaged, distributed, installed, licensed, and paywall-gated as a customer-facing Claude Code skill? → Covered in `docs/planning/revue-local-distribution-brief.md` (TBC — brief not yet authored); this PRD specifies *what* and *why*, the brief specifies *how it ships*. Outstanding sub-questions: skill registry choice (Anthropic's vs Revue-hosted vs GitHub-based), one-command install pattern, licence-key validation inside the skill, free-tier enforcement in a customer-side execution context.
 2. **Cost-saving dashboard methodology:** How do we measure customer AI-bill reduction credibly? → Proposal: instrument `/revue-local` to count "issues caught locally" and multiply by typical per-review CI cost (DeepSeek per-review × team's review frequency). Dashboard surfaces both raw count and estimated dollar saving. Compare against the customer's actual OpenRouter/Anthropic monthly spend if they grant read-only access. **Owner:** PM. **Target resolution:** before the Phase 2 cost-saving dashboard ticket enters sprint planning. Gates the §3.5 ≥40% AI-spend headline KPI.
-3. **Agent Marketplace:** Should community-contributed agents be hosted on revue.io or distributed via GitHub? → Recommend GitHub-hosted with a curated index on revue.io.
+3. **Agent Marketplace:** Should community-contributed agents be hosted on Revue or distributed via GitHub? → Recommend GitHub-hosted with a curated index on Revue.
 4. **Cross-model review:** Priority for Phase 2 or 3? → High value differentiator; deferred to Phase 3 now that `/revue-local` productisation is the Phase 2 spearhead.
 5. **Sage v2 auto-commit:** When Sage pushes a fix autonomously — same commit on same branch, or a new commit? → New commit on same branch, clearly attributed to Revue (e.g. `[revue] fix: parameterise SQL query`).
 6. **Confidentiality of findings:** Should review comments be private (visible only to the PR author) or public by default? → Public by default, configurable.

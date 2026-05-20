@@ -1,4 +1,4 @@
-# Revue.io Knowledge Base — Database
+# Revue Knowledge Base — Database
 
 **Story:** [REVUE-89](https://urukia.atlassian.net/browse/REVUE-89)  
 **Schema Version:** 2  

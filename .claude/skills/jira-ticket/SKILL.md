@@ -5,7 +5,7 @@ description: Fetch, list, search, create, update, and transition Jira tickets fo
 allowed-tools: Bash
 ---
 
-Access Jira tickets for the revue.io project via the Atlassian REST API.
+Access Jira tickets for the Revue project via the Atlassian REST API.
 
 ## Configuration
 

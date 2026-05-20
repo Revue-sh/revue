@@ -1,6 +1,6 @@
 # Revue Scripts
 
-Internal tooling for the Revue.io development team.
+Internal tooling for the Revue development team.
 
 ---
 

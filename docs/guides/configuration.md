@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Revue.io is configured via a `.revue.yml` file in the project root. All keys are optional except `version`.
+Revue is configured via a `.revue.yml` file in the project root. All keys are optional except `version`.
 
 For the full schema reference, see [revue-yml-reference.md](revue-yml-reference.md).
 

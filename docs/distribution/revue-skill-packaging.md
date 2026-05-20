@@ -155,7 +155,7 @@ revue install-skill --skip-verify --target-dir /tmp/skills  # skill installer
 ## Manifest schema
 
 `packaging/revue/manifest.schema.json` documents the version manifest
-served at `https://revue.io/skills/manifest.json` (pre-MVP fallback:
+served at `https://revue.sh/skills/manifest.json` (pre-MVP fallback:
 `https://raw.githubusercontent.com/cbscd/revue/main/manifest.json`).
 
 The install script fetches this manifest, validates it against the schema,

@@ -42,7 +42,7 @@ definitions:
     # AI self-review on every PR — runs the revue-ci CLI against the PR diff.
     # -----------------------------------------------------------------------
     - step: &revue-review
-        name: "Revue.io AI Code Review"
+        name: "Revue AI Code Review"
         image: python:3.12
         caches:
           - ci-venv
@@ -263,7 +263,7 @@ pipelines:
                 exit 0
               fi
               git config user.name "Revue CI"
-              git config user.email "ci@revue.io"
+              git config user.email "ci@revue.sh"
               # BITBUCKET_API_TOKEN is a workspace/repo access token — x-token-auth is required as the git credential username.
               git remote set-url origin "https://x-token-auth:${BITBUCKET_API_TOKEN}@bitbucket.org/${BITBUCKET_REPO_FULL_NAME}"
               # Bump version in all three pyproject.tomls AND update the cross-package

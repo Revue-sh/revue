@@ -1,6 +1,6 @@
 # Architecture Guidelines
 
-**Project:** Revue.io  
+**Project:** Revue  
 **Philosophy:** Modular Monolith with Microservices-Ready Design  
 **Updated:** 2026-03-31
 

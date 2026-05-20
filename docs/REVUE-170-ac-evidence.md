@@ -13,10 +13,10 @@
 | Step | Pipeline | Status | Key evidence |
 |------|----------|--------|-------------|
 | Run Tests | Bitbucket Pipeline #514 | ✅ SUCCESSFUL | `1000 passed in 6.75s` |
-| Revue.io AI Code Review | Bitbucket Pipeline #514 | ✅ SUCCESSFUL | `Review posted to PR #82 — 8 new, 18 preserved inline comment(s)` |
+| Revue AI Code Review | Bitbucket Pipeline #514 | ✅ SUCCESSFUL | `Review posted to PR #82 — 8 new, 18 preserved inline comment(s)` |
 
 **Evidence type key:**  
-🟢 **Live CI log** — observed in Bitbucket Pipeline #514, step "Revue.io AI Code Review"  
+🟢 **Live CI log** — observed in Bitbucket Pipeline #514, step "Revue AI Code Review"  
 🔷 **Unit test assertion** — passing test in the Run Tests step (1000/1000)  
 🟡 **Production code** — implementation satisfies the AC by construction  
 

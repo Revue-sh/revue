@@ -277,7 +277,7 @@ def _create_client(api_key: str, title: str) -> Any:
         base_url="https://openrouter.ai/api/v1",
         timeout=90.0,
         default_headers={
-            "HTTP-Referer": "https://revue.io",
+            "HTTP-Referer": "https://revue.sh",
             "X-Title": f"Revue AI Code Review ({title})",
         },
     )

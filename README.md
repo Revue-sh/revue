@@ -1,6 +1,6 @@
-# Revue.io
+# Revue
 
-AI-powered code review for GitLab and Bitbucket. Revue.io uses multi-agent orchestration to provide security, performance, architecture, and code-quality analysis on every pull request.
+AI-powered code review for GitLab and Bitbucket. Revue uses multi-agent orchestration to provide security, performance, architecture, and code-quality analysis on every pull request.
 
 ## Quick Start
 
@@ -8,7 +8,7 @@ See [docs/quickstart-gitlab.md](docs/quickstart-gitlab.md) or [docs/quickstart-g
 
 ## Configuration
 
-Revue.io is configured via a `.revue.yml` file in your project root. Key sections:
+Revue is configured via a `.revue.yml` file in your project root. Key sections:
 
 - **`ai`**: Provider, model, and API key settings
 - **`review`**: Diff limits, confidence thresholds, ignore patterns

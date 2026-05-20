@@ -1,9 +1,9 @@
-name: Revue.io AI Code Review
+name: Revue AI Code Review
 image: revueio/revue-pipe:latest
 
 inputs:
   - name: REVUE_TOKEN
-    description: "Revue.io workspace API token (from app.revue.io/settings/tokens)"
+    description: "Revue workspace API token (from app.revue.sh/settings/tokens)"
     required: false
     default: ""
 

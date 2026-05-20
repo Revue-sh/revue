@@ -1,4 +1,4 @@
-# Revue.io — Enterprise Sales Playbook
+# Revue — Enterprise Sales Playbook
 **Version:** 1.0
 **Date:** March 2026
 **Status:** Draft

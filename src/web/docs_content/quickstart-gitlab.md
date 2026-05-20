@@ -7,14 +7,14 @@ Add Revue AI code review to your GitLab repository in about five minutes.
 ## Prerequisites
 
 - A GitLab repository with CI/CD enabled
-- A [Revue account](https://revue.io/signup) and license key
+- A [Revue account](https://revue.sh/signup) and license key
 - An API key for your chosen AI provider (Anthropic or OpenAI)
 
 ---
 
 ## Step 1 — Sign up and get your license key
 
-1. Go to [https://revue.io/signup](https://revue.io/signup) and create an account.
+1. Go to [https://revue.sh/signup](https://revue.sh/signup) and create an account.
 2. Choose a plan (Free gives you 25 reviews/month; Indie/Pro give unlimited reviews).
 3. Copy your **REVUE_LICENSE_KEY** from the dashboard.
 
@@ -86,7 +86,7 @@ revue-review:
 ## Step 4 — Create `.revue.yml` in your repository root
 
 ```yaml
-# .revue.yml — Revue.io configuration
+# .revue.yml — Revue configuration
 version: "1"
 
 ai:
@@ -130,14 +130,14 @@ output:
 - If protected, the variable is only available on protected branches. Uncheck **Protected** to allow it on all branches.
 
 ### "License key is invalid or has been revoked"
-- Log in to [https://revue.io/account](https://revue.io/account) and check your key.
+- Log in to [https://revue.sh/account](https://revue.sh/account) and check your key.
 - Regenerate the key in the dashboard if needed, then update the CI/CD variable.
 
 ### "You have used all of your free reviews"
-- Upgrade at [https://revue.io/upgrade](https://revue.io/upgrade) for unlimited reviews.
+- Upgrade at [https://revue.sh/upgrade](https://revue.sh/upgrade) for unlimited reviews.
 
 ### "Revue API is unreachable and the offline grace period has expired"
-- GitLab runners must be able to reach `api.revue.io` on port 443.
+- GitLab runners must be able to reach `api.revue.sh` on port 443.
 - Self-managed GitLab: check your runner's egress firewall rules.
 
 ### No comments posted on the MR

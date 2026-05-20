@@ -1,6 +1,6 @@
 # revue-local
 
-Run the [Revue](https://revue.io) AI code-review pipeline locally as a [Claude Code](https://claude.com/claude-code) skill.
+Run the [Revue](https://revue.sh) AI code-review pipeline locally as a [Claude Code](https://claude.com/claude-code) skill.
 
 - **No platform API credentials needed.** Reviews run against your local diff.
 - **DeepSeek-V4-Pro by default** via OpenRouter — typically ~79–88% lower TCO than Anthropic Sonnet for the same review.
@@ -38,7 +38,7 @@ and prints findings inline. Nothing is posted to GitHub / GitLab / Bitbucket.
 
 ## Documentation
 
-- Concepts: <https://revue.io/docs/revue-local>
+- Concepts: <https://revue.sh/docs/revue-local>
 - Packaging internals: `docs/distribution/revue-local-packaging.md` in this repo
 
 ## Licence

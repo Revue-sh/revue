@@ -1,5 +1,5 @@
 """
-Usage tracking for Revue.io free tier enforcement.
+Usage tracking for Revue free tier enforcement.
 
 Checks reviews_left before starting a review and fires a fire-and-forget
 tracking call after completion.
@@ -14,7 +14,7 @@ import httpx
 
 from revue_core.core.logging_channels import Log
 
-# Set REVUE_APP_HOST to the production domain once purchased (e.g. revue.io or revue.dev).
+# Set REVUE_APP_HOST to the production domain once purchased (e.g. revue.sh or revue.dev).
 # Defaults to the Fly.io host used during the pre-MVP period.
 _HOST = os.getenv("REVUE_APP_HOST", "revue-io.fly.dev")
 TRACK_URL = f"https://{_HOST}/usage/track"

@@ -19,7 +19,7 @@ unit-tests:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
 
-# ── Revue.io AI Code Review ───────────────────────────────────────────────────
+# ── Revue AI Code Review ───────────────────────────────────────────────────
 revue-review:
   stage: review
   image: python:3.12-slim

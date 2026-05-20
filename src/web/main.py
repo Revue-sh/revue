@@ -20,7 +20,7 @@ async def lifespan(application: FastAPI):
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title="Revue.io", docs_url=None, redoc_url=None, lifespan=lifespan)
+    application = FastAPI(title="Revue", docs_url=None, redoc_url=None, lifespan=lifespan)
     application.include_router(auth_router)
     application.include_router(billing_router)
     application.include_router(dashboard_router)

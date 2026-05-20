@@ -240,7 +240,7 @@ noise_filters:
 **Acceptance Criteria:**
 - AC1: `.revue.yml` schema extended with `noise_filters`
 - AC2: Patterns injected into agent system prompts before review
-- AC3: `revue.io/.revue.yml` populated with four patterns above
+- AC3: `revue.sh/.revue.yml` populated with four patterns above
 - AC4: Comparison run shows FP reduction for known patterns
 - AC5: Customer docs updated (README + docs/configuration.md)
 

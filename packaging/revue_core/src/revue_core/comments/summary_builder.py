@@ -133,7 +133,7 @@ def build_enhanced_summary(
     stars = _star_rating(total, high, medium, low, info, rating_cfg)
 
     lines = [
-        f"## 🤖 Revue.io — Code Review (Review #{revision})",
+        f"## 🤖 Revue — Code Review (Review #{revision})",
         "",
         f"**Overall:** {stars} · {verdict_icon} {verdict_text}  ",
         f"**Last updated:** {last_updated_at}",

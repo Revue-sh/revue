@@ -1152,7 +1152,7 @@ def _post_to_platform(
     _revision = (_existing_summary.revision + 1) if _existing_summary else 1
     _last_updated = "just now"
 
-    _REVUE_SUMMARY_MARKER = "## 🤖 Revue.io — Code Review"
+    _REVUE_SUMMARY_MARKER = "## 🤖 Revue — Code Review"
 
     _REVISION_RE = re.compile(r"Review #(\d+)")
 

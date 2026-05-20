@@ -448,7 +448,7 @@ def test_github_get_existing_comments() -> None:
 
 def test_github_get_issue_comments() -> None:
     """get_issue_comments fetches from /issues/{pr_id}/comments, not /pulls/."""
-    body = json.dumps([{"id": 42, "body": "## 🤖 Revue.io — Code Review (Review #1)"}]).encode()
+    body = json.dumps([{"id": 42, "body": "## 🤖 Revue — Code Review (Review #1)"}]).encode()
     adapter = GitHubAdapter(token="tok", repo="org/repo")
 
     with patch("urllib.request.urlopen", return_value=_make_resp(body)) as mock_open:

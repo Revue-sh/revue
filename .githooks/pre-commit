@@ -1,5 +1,5 @@
 #!/bin/sh
-# Pre-commit hook for revue.io.
+# Pre-commit hook for Revue.
 #
 # 1. Block direct commits to main / develop.
 # 2. Auto-regenerate packaging/revue/src/revue_skill/vendored/ when any of its

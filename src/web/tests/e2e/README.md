@@ -1,6 +1,6 @@
 # E2E Tests (Playwright)
 
-End-to-end tests for the Revue.io web app using Playwright.
+End-to-end tests for the Revue web app using Playwright.
 
 ## Setup
 

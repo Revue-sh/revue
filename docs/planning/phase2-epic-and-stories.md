@@ -68,20 +68,20 @@ E-P2A (MVD)
 **E-P2A-S1: Skill bundle packaging & signed releases (Sigstore/cosign)**
 - **AC1:** Skill bundled as a Python wheel published to PyPI as `revue-local`
 - **AC2:** Each release artefact signed via Sigstore; verification documented in install script
-- **AC3:** Version manifest published at `revue.io/skills/manifest.json` (lists current version + sha256 + signature URL) — pre-MVP uses GitHub raw URL with identical schema
+- **AC3:** Version manifest published at `revue.sh/skills/manifest.json` (lists current version + sha256 + signature URL) — pre-MVP uses GitHub raw URL with identical schema
 - **AC4:** Skill bundle includes agent prompts (loaded by the binary at runtime; not server-delivered)
 - **AC5:** Repo `github.com/revue-io/revue-local` public, includes signed-release CI workflow
 
 **E-P2A-S2: One-command install flow (Claude Code path)**
-- **AC1:** `curl -fsSL https://revue.io/install.sh | bash` (post-MVP) installs `revue-local` via `uv tool install`, falls back to `pipx`
+- **AC1:** `curl -fsSL https://revue.sh/install.sh | bash` (post-MVP) installs `revue-local` via `uv tool install`, falls back to `pipx`
 - **AC2:** Pre-MVP variant points at `https://raw.githubusercontent.com/cbscd/revue/main/scripts/install.sh` with identical script content
 - **AC3:** Installer is idempotent — re-running upgrades in place
 - **AC4:** Installer auto-detects Claude Code and writes `~/.claude/commands/revue-local.md` (skill descriptor)
 - **AC5:** Installer auto-detects `.revue.yml` in workspace and reuses it; falls back to defaults if missing
-- **AC6:** Doc page at `revue.io/install` shows the one-command snippet + manual `uv tool install` path
+- **AC6:** Doc page at `revue.sh/install` shows the one-command snippet + manual `uv tool install` path
 
-**E-P2A-S3: Licence JWT issuance — `revue.io/activate` browser flow**
-- **AC1:** Browser flow at `revue.io/activate` accepts licence key, returns JWT with workspace_id + tier + issuance_ts + expiry_ts
+**E-P2A-S3: Licence JWT issuance — `revue.sh/activate` browser flow**
+- **AC1:** Browser flow at `revue.sh/activate` accepts licence key, returns JWT with workspace_id + tier + issuance_ts + expiry_ts
 - **AC2:** JWT stored in `~/.config/revue/licence.jwt` with 0600 perms
 - **AC3:** CLI command `revue-local activate <key>` performs headless activation against `/api/v2/licence/activate`
 - **AC4:** Activation errors (invalid key, exhausted seat) return actionable messages; never silently fail
@@ -111,7 +111,7 @@ E-P2A (MVD)
 
 **E-P2A-S7: Cost-care messaging rollout (README + website hero + pricing page)**
 - **AC1:** Repo README opens with: "Revue cuts your AI API spend by ~79–88% on code review..." (matches PRD §1)
-- **AC2:** `revue.io` hero swaps to cost-savings headline + TCO table teaser
+- **AC2:** `revue.sh` hero swaps to cost-savings headline + TCO table teaser
 - **AC3:** Pricing page header carries the savings narrative; pricing tiers show "vs. Anthropic baseline" delta column
 - **AC4:** Launch post draft prepared (publication gated on Phase 2.b)
 - **AC5:** Copy reviewed against `feedback_customer_cost_messaging` memory rules
@@ -134,13 +134,13 @@ E-P2A (MVD)
 **E-P2B-S1: Cursor installer path**
 - **AC1:** Installer detects Cursor (presence of `~/.cursor/`) and writes `.cursor/rules/revue-local.mdc`
 - **AC2:** Rule file invokes `/revue-local` before commit per Cursor's rules schema
-- **AC3:** Doc page at `revue.io/install#cursor` shows manual setup if auto-detect fails
+- **AC3:** Doc page at `revue.sh/install#cursor` shows manual setup if auto-detect fails
 - **AC4:** E2E test on a clean Cursor profile verifies wire-up
 
 **E-P2B-S2: Windsurf installer path**
 - **AC1:** Installer detects Windsurf (presence of `windsurfrules` or `~/.windsurf/`) and writes `windsurfrules` snippet
 - **AC2:** Snippet invokes `/revue-local` before commit per Windsurf's rules schema
-- **AC3:** Doc page at `revue.io/install#windsurf` shows manual setup if auto-detect fails
+- **AC3:** Doc page at `revue.sh/install#windsurf` shows manual setup if auto-detect fails
 
 **E-P2B-S3: `revue-local doctor` diagnostic command**
 - **AC1:** `revue-local doctor` checks: licence JWT presence + freshness, `.revue.yml` validity, AI workflow detection (Claude Code/Cursor/Windsurf), network reachability to `/api/v2/licence/validate`
@@ -148,7 +148,7 @@ E-P2A (MVD)
 - **AC3:** Exits non-zero if any check fails (suitable for CI debugging)
 
 **E-P2B-S4: Web cost-saving dashboard — monthly aggregate view**
-- **AC1:** `revue.io/dashboard` accepts licence JWT (header or query string) and renders the workspace's saving aggregate for the current month
+- **AC1:** `revue.sh/dashboard` accepts licence JWT (header or query string) and renders the workspace's saving aggregate for the current month
 - **AC2:** Monthly view shows: reviews run, findings raised, $-saved vs CI baseline, sparkline over trailing 30 days
 - **AC3:** Server aggregates usage records from `/api/v2/usage/emit` keyed by workspace_id
 - **AC4:** Page loads in under 2 seconds for 95th percentile workspaces
@@ -186,9 +186,9 @@ E-P2A (MVD)
 
 **E-P2C-S1: Anthropic skill registry submission**
 - **AC1:** `/revue-local` submitted to Anthropic skill registry with required metadata (description, install command, version)
-- **AC2:** Anthropic-registry install path routes through `revue.io/install.sh` (no duplicate skill bundle)
+- **AC2:** Anthropic-registry install path routes through `revue.sh/install.sh` (no duplicate skill bundle)
 - **AC3:** Submission reviewed and accepted; published URL recorded
-- **AC4:** Telemetry distinguishes Anthropic-registry installs from `revue.io/skills` direct installs
+- **AC4:** Telemetry distinguishes Anthropic-registry installs from `revue.sh/skills` direct installs
 
 **E-P2C-S2: OpenRouter billing-API integration (opt-in)**
 - **AC1:** Customer can connect their OpenRouter account read-only via OAuth in the dashboard
@@ -208,8 +208,8 @@ E-P2A (MVD)
 
 **E-P2C-S5: Self-hosted telemetry sink for Enterprise**
 - **AC1:** Enterprise tier supports `usage_endpoint` override in `.revue.yml`
-- **AC2:** When overridden, skill POSTs `/api/v2/usage/emit` payloads to customer-hosted sink instead of `revue.io`
-- **AC3:** Daily-validate still hits `revue.io` (anti-piracy constraint preserved)
+- **AC2:** When overridden, skill POSTs `/api/v2/usage/emit` payloads to customer-hosted sink instead of `revue.sh`
+- **AC3:** Daily-validate still hits `revue.sh` (anti-piracy constraint preserved)
 - **AC4:** Customer-side sink reference implementation (Docker compose) published
 
 **E-P2C-S6: Per-seat workspace dashboard (multi-licence-per-team)**
@@ -279,7 +279,7 @@ E-P2A (MVD)
 ### Stories
 
 **E-CAA-S1: Custom-agent YAML schema**
-- **AC1:** Schema published at `revue.io/agent-schema.json` (JSON Schema draft-07)
+- **AC1:** Schema published at `revue.sh/agent-schema.json` (JSON Schema draft-07)
 - **AC2:** Fields: id, persona, trigger_patterns, prompt_template, severity_mapping
 - **AC3:** Schema validation in the skill before pipeline dispatch
 - **AC4:** Tier gate — schema loader rejects custom-agent definitions on Free and Indie tiers with a clear "upgrade to Pro to author custom agents" message; Pro and Enterprise pass through unchanged
@@ -331,7 +331,7 @@ E-P2A (MVD)
 
 **E-NA-S4: Review analytics dashboard — trend view**
 - **Blocked by:** REVUE-89, REVUE-90, REVUE-91 (REVUE-87 epic Postgres KB) — formal Jira issue-links required, not just textual mention
-- **AC1:** Dashboard `revue.io/dashboard/analytics` shows trailing-90-day trends: review volume, false-positive rate, agent-quality scores
+- **AC1:** Dashboard `revue.sh/dashboard/analytics` shows trailing-90-day trends: review volume, false-positive rate, agent-quality scores
 - **AC2:** Trend data sourced from Postgres knowledge base (REVUE-87 epic) — no stopgap aggregator
 - **AC3:** Per-agent breakdown available
 - **AC4:** Story does not start until REVUE-89/90/91 are merged; if REVUE-87 epic slips past Phase 2.b cutoff, E-NA-S4 slips with it (acceptable — P2 priority)

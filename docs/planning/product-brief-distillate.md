@@ -1,12 +1,12 @@
 ---
-title: "Product Brief Distillate: revue.io"
+title: "Product Brief Distillate: Revue"
 type: llm-distillate
-source: "product-brief-revue.io.md"
+source: "product-brief-revue.sh.md"
 created: "2026-04-20"
 purpose: "Token-efficient context for downstream PRD creation"
 ---
 
-# Revue.io — Detail Pack
+# Revue — Detail Pack
 
 ## Origin & Motivation
 
@@ -152,7 +152,7 @@ purpose: "Token-efficient context for downstream PRD creation"
 
 ## Domain & Infrastructure
 
-- Domain `revue.io` **not yet purchased** — will buy at MVP launch
+- Domain `revue.sh` **not yet purchased** — will buy at MVP launch
 - Current staging URL: `revue-io.fly.dev` — use as placeholder in all docs and code until
   domain is live; swap is a single find-and-replace across the codebase
 - Licence validation and usage tracking: `POST /api/license/validate` on Revue's cloud API
@@ -178,12 +178,12 @@ purpose: "Token-efficient context for downstream PRD creation"
 
 - Independent bug-rate research: should commission controlled study (single-agent vs
   multi-agent on real diffs) to replace AI-generated market analysis figure
-- Domain purchase timing: `revue.io` — buy at launch; until then, `revue-io.fly.dev`
+- Domain purchase timing: `revue.sh` — buy at launch; until then, `revue-io.fly.dev`
 - Free tier limit adjustment trigger: if <3% Free→Indie conversion in 90 days, lower to
   15 reviews/month; if >7%, hold at 25
 - Sage confidence threshold: 90% default — should this be configurable at team level?
   (PRD recommendation: yes, via `.revue.yml`)
 - Bitbucket support level: confirmed as launch platform by Daniel but PRD marks it Phase 2
   — PRD should be updated to reflect actual launch scope
-- Agent marketplace: community agents hosted on revue.io vs GitHub? PRD recommendation:
-  GitHub-hosted with curated index on revue.io
+- Agent marketplace: community agents hosted on revue.sh vs GitHub? PRD recommendation:
+  GitHub-hosted with curated index on revue.sh

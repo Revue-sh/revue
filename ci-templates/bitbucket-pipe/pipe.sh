@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Revue.io Bitbucket Pipe entrypoint
+# Revue Bitbucket Pipe entrypoint
 # Fetches the PR diff via the Bitbucket API, runs the Revue review pipeline,
 # and posts inline findings + a summary comment back to the PR.
 set -euo pipefail
@@ -38,7 +38,7 @@ if [[ -z "${PR_ID}" ]]; then
   exit 1
 fi
 
-echo "Revue.io — reviewing PR #${PR_ID} in ${WORKSPACE}/${REPO_SLUG} (commit ${COMMIT_SHA})"
+echo "Revue — reviewing PR #${PR_ID} in ${WORKSPACE}/${REPO_SLUG} (commit ${COMMIT_SHA})"
 
 # ── 3. Post INPROGRESS status ────────────────────────────────────────────────
 
@@ -54,13 +54,13 @@ post_status() {
     -d "{
       \"key\": \"revue-io\",
       \"state\": \"${state}\",
-      \"name\": \"Revue.io AI Review\",
+      \"name\": \"Revue AI Review\",
       \"description\": \"${description}\",
       \"url\": \"https://revue-io.fly.dev\"
     }" > /dev/null || true
 }
 
-post_status "INPROGRESS" "Revue.io review running..."
+post_status "INPROGRESS" "Revue review running..."
 
 # ── 4. Fetch PR diff from Bitbucket API ─────────────────────────────────────
 
@@ -88,7 +88,7 @@ echo "Diff fetched: ${DIFF_LINES} lines"
 
 # ── 5. Run Revue review ─────────────────────────────────────────────────────
 
-echo "Running Revue.io review..."
+echo "Running Revue review..."
 
 REVUE_ARGS=(
   review
@@ -149,7 +149,7 @@ except Exception:
 ")
 fi
 
-echo "Revue.io — ${FINDINGS_COUNT} findings (${CRITICAL_COUNT} critical)"
+echo "Revue — ${FINDINGS_COUNT} findings (${CRITICAL_COUNT} critical)"
 
 # ── 7. Post final commit status ──────────────────────────────────────────────
 

@@ -6,7 +6,7 @@
 #
 #   pr_number    — optional; auto-detected from current git branch if omitted
 #   --logs       — also fetch and print the log for the matching pipeline step
-#   step_pattern — substring to match step name (default: "Revue.io AI Code Review")
+#   step_pattern — substring to match step name (default: "Revue AI Code Review")
 #   workspace/repo — defaults to cbscd/revue
 #
 # Examples:
@@ -21,7 +21,7 @@ source ~/.zshenv
 # ── Argument parsing ──────────────────────────────────────────────────────────
 PR=""
 FETCH_LOGS=false
-LOG_STEP_PATTERN="Revue.io AI Code Review"
+LOG_STEP_PATTERN="Revue AI Code Review"
 REPO="cbscd/revue"
 
 while [[ $# -gt 0 ]]; do

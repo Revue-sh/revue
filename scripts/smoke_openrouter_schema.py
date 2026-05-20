@@ -268,7 +268,7 @@ def run_smoke_test(model: str) -> int:
         base_url="https://openrouter.ai/api/v1",
         timeout=60.0,
         default_headers={
-            "HTTP-Referer": "https://revue.io",
+            "HTTP-Referer": "https://revue.sh",
             "X-Title": "Revue AI Code Review (smoke test)",
         },
     )
