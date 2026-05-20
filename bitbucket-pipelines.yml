@@ -266,11 +266,14 @@ pipelines:
               git config user.email "ci@revue.io"
               # BITBUCKET_API_TOKEN is a workspace/repo access token — x-token-auth is required as the git credential username.
               git remote set-url origin "https://x-token-auth:${BITBUCKET_API_TOKEN}@bitbucket.org/${BITBUCKET_REPO_FULL_NAME}"
-              # Bump version in all three pyproject.tomls — they are released atomically
-              # against a single tag so revue-ci + revue can pin revue_core~=NEXT_VERSION.
+              # Bump version in all three pyproject.tomls AND update the cross-package
+              # revue_core pins in revue-ci and revue — they are released atomically
+              # against a single tag, so the downstream pins track NEXT_VERSION.
               sed -i "s/^version = \"[^\"]*\"/version = \"${NEXT_VERSION}\"/" packaging/revue_core/pyproject.toml
               sed -i "s/^version = \"[^\"]*\"/version = \"${NEXT_VERSION}\"/" packaging/revue-ci/pyproject.toml
               sed -i "s/^version = \"[^\"]*\"/version = \"${NEXT_VERSION}\"/" packaging/revue/pyproject.toml
+              sed -i "s/\"revue_core~=[^\"]*\"/\"revue_core~=${NEXT_VERSION}\"/" packaging/revue-ci/pyproject.toml
+              sed -i "s/\"revue_core~=[^\"]*\"/\"revue_core~=${NEXT_VERSION}\"/" packaging/revue/pyproject.toml
               git add packaging/revue_core/pyproject.toml packaging/revue-ci/pyproject.toml packaging/revue/pyproject.toml
               git commit -m "chore(release): v${NEXT_VERSION}"
               git tag "v${NEXT_VERSION}"
