@@ -294,13 +294,19 @@ pipelines:
   tags:
     'v*':
       - step: *run-tests
-      # --- Build all wheels (revue_core leaf first, then dependents) ---
-      - step: *build-revue-core-macos
-      - step: *build-revue-core-linux
-      - step: *build-revue-ci-macos
-      - step: *build-revue-ci-linux
-      - step: *build-skill-macos
-      - step: *build-skill-linux
+      # --- Build all wheels in parallel ---
+      # Each Nuitka build is independent at compile time (each step runs its own
+      # `pip install -e packaging/revue_core/` from source). macOS×3 will queue
+      # on the single self-hosted runner; Linux×3 truly parallelize on cloud
+      # Docker workers. Listed macOS-first for readability — order inside a
+      # parallel block has no effect on scheduling.
+      - parallel:
+          - step: *build-revue-core-macos
+          - step: *build-revue-ci-macos
+          - step: *build-skill-macos
+          - step: *build-revue-core-linux
+          - step: *build-revue-ci-linux
+          - step: *build-skill-linux
       # --- Atomic publish chain — fail-fast left to right ---
       # revue_core must publish before revue-ci / revue, since both pin it.
       # If revue_core publish fails, dependents are skipped via step ordering

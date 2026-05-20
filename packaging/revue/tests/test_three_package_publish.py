@@ -23,8 +23,24 @@ PIPELINES_FILE = REPO_ROOT / "bitbucket-pipelines.yml"
 
 
 def _tag_step_names() -> list[str]:
+    """Flatten the tag pipeline's step list — including steps nested inside a
+    `parallel:` block — into a single ordered list of step names. The order
+    within a parallel block is preserved from the YAML; execution-wise those
+    steps run concurrently, but we still need a total order to express the
+    "builds-block precedes publishes-block" invariant.
+    """
     doc = yaml.safe_load(PIPELINES_FILE.read_text(encoding="utf-8"))
-    return [s.get("step", {}).get("name", "") for s in doc["pipelines"]["tags"]["v*"]]
+    names: list[str] = []
+    for entry in doc["pipelines"]["tags"]["v*"]:
+        if "step" in entry:
+            names.append(entry["step"].get("name", ""))
+        elif "parallel" in entry:
+            parallel = entry["parallel"]
+            inner = parallel if isinstance(parallel, list) else parallel.get("steps", [])
+            for sub in inner:
+                if "step" in sub:
+                    names.append(sub["step"].get("name", ""))
+    return names
 
 
 def _first_index_matching(names: list[str], substr: str) -> int:
@@ -36,19 +52,42 @@ def _first_index_matching(names: list[str], substr: str) -> int:
     )
 
 
-def test_three_packages_build_in_dependency_order() -> None:
-    """revue_core builds before revue-ci, which builds before the skill.
-
-    Step names follow `Build <platform> — <pkg>` so we match on the package
-    name suffix rather than the full leading substring.
+def test_all_builds_precede_all_publishes() -> None:
+    """Every Nuitka build step must appear before every Publish step in the
+    tag pipeline. Builds may run in a `parallel:` block (REVUE-323), but the
+    publish chain that follows must wait for the whole block to finish so
+    that every published package has both platform wheels available.
     """
     names = _tag_step_names()
-    i_core = _first_index_matching(names, "revue_core")
-    i_ci = _first_index_matching(names, "revue-ci")
-    i_skill = _first_index_matching(names, "revue skill")
-    assert i_core < i_ci < i_skill, (
-        f"build order must be revue_core → revue-ci → revue skill; "
-        f"got positions core={i_core}, revue-ci={i_ci}, skill={i_skill}"
+    build_indices = [i for i, n in enumerate(names) if n.lower().startswith("build ")]
+    publish_indices = [i for i, n in enumerate(names) if n.lower().startswith("publish ")]
+    assert build_indices, f"tag pipeline has no Build steps; names={names}"
+    assert publish_indices, f"tag pipeline has no Publish steps; names={names}"
+    assert max(build_indices) < min(publish_indices), (
+        "all Build steps must precede all Publish steps in the tag pipeline. "
+        f"Builds at {build_indices}, publishes at {publish_indices}; names={names}"
+    )
+
+
+def test_tag_pipeline_uses_parallel_build_block() -> None:
+    """Codify the REVUE-323 layout: the 6 Nuitka build steps live inside a
+    single `parallel:` block so cloud Linux runners build concurrently.
+    Without this block, the pipeline reverts to ~30 min sequential builds.
+    """
+    doc = yaml.safe_load(PIPELINES_FILE.read_text(encoding="utf-8"))
+    entries = doc["pipelines"]["tags"]["v*"]
+    parallel_blocks = [e["parallel"] for e in entries if "parallel" in e]
+    assert len(parallel_blocks) == 1, (
+        f"expected exactly one `parallel:` block in the tag pipeline; "
+        f"found {len(parallel_blocks)}"
+    )
+    block = parallel_blocks[0]
+    inner = block if isinstance(block, list) else block.get("steps", [])
+    inner_names = [s["step"].get("name", "") for s in inner if "step" in s]
+    build_names = [n for n in inner_names if n.lower().startswith("build ")]
+    assert len(build_names) == 6, (
+        f"parallel block must hold the 6 Nuitka build steps (3 packages × 2 "
+        f"platforms); got {len(build_names)}: {build_names}"
     )
 
 
