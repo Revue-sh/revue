@@ -157,7 +157,7 @@ def test_create_billing_portal_session(monkeypatch):
     assert url == "https://billing.stripe.com/session/test"
     mock_create.assert_called_once_with(
         customer="cus_test123",
-        return_url="https://revue-io.fly.dev/dashboard",
+        return_url="https://revue.sh/dashboard",
     )
 
 

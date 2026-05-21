@@ -2130,8 +2130,8 @@ def test_vex_summary_log_persists_guard_downgrade_into_metrics(monkeypatch) -> N
 def test_infrastructure_agents_survive_license_filter_when_absent_from_agents_allowed():
     """Cleo/Nova/Vex must survive even when the license server omits them.
 
-    The license API at revue-io.fly.dev returned ``agents_allowed`` lists that
-    predate Vex. Without this guarantee, Vex was filtered out at the license
+    The license API (previously on the legacy Fly host, now on revue.sh)
+    returned ``agents_allowed`` lists that predate Vex. Without this guarantee, Vex was filtered out at the license
     stage, the warning ``Vex system prompt not found in routed_agents``
     fired in CI, and Vex ran on the degraded built-in default prompt.
     """

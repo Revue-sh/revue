@@ -4,6 +4,15 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+## Deferred from: code review of spec-revue-314-revue-sh-domain (2026-05-21)
+
+- **D1** — `VALIDATE_URL` resolved at module import time in `packaging/revue_core/src/revue_core/core/license_validator.py:26`. Late env-var mutations are ignored. Pattern matches `usage_tracker._HOST` (project-wide convention); consider unifying on call-time resolution if any subsystem ever needs runtime overrides.
+- **D2** — `importlib.reload` test pattern in `packaging/revue-ci/tests/core/test_license_validator.py:71-75` has no teardown — leaves the module in its last-reloaded state. Low risk today (all tests in the class reload before assertion); convert to a pytest fixture if the file grows.
+- **D3** — RESOLVED in cycle 2 of REVUE-314: both `REVUE_VALIDATE_URL` (license validator) and `REVUE_APP_HOST` (usage tracker → TRACK_URL/UPGRADE_URL) are removed. The threat-model rule: env-var URL overrides are forbidden for endpoints Revue controls (license, usage, billing) because they create license-bypass / key-exfiltration surface; they remain allowed for endpoints the *operator* controls (LLM gateway, SCM). Do not reintroduce either env var without renegotiating that rule.
+- **D4** — TDD audit-trail: REVUE-314 Commit 1 (`c1d7e2e`) co-commits the new test class and the `os.getenv` change rather than splitting into a red-then-green pair. Acceptance contract is met; the workflow audit-trail is not. Cosmetic; flag if a stricter TDD policy ever lands.
+
+---
+
 ## Deferred from: code review of revue-237-revuelogger-named-channels (2026-05-08)
 
 - **D1** — `Channel._log()` holds a reference to `inspect.currentframe()` without `del frame` in a `finally` block — creates reference cycles in CPython; GC handles it but PyPy/Jython runtimes may not. Add `del frame` / `del caller_frame` in finally.

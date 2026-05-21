@@ -6,7 +6,6 @@ tracking call after completion.
 """
 from __future__ import annotations
 
-import os
 import threading
 from typing import Optional
 
@@ -14,11 +13,12 @@ import httpx
 
 from revue_core.core.logging_channels import Log
 
-# Set REVUE_APP_HOST to the production domain once purchased (e.g. revue.sh or revue.dev).
-# Defaults to the Fly.io host used during the pre-MVP period.
-_HOST = os.getenv("REVUE_APP_HOST", "revue-io.fly.dev")
-TRACK_URL = f"https://{_HOST}/usage/track"
-UPGRADE_URL = f"https://{_HOST}/upgrade"
+# Hardcoded — never env-var configurable. See memory/project_license_validator_hardcoded.md:
+# an attacker-set REVUE_APP_HOST would redirect TRACK_URL POSTs (which contain the raw
+# license key in plaintext) and silence quota telemetry. URL must be baked into the
+# Nuitka-compiled binary so the compilation is the enforcement boundary.
+TRACK_URL = "https://revue.sh/usage/track"
+UPGRADE_URL = "https://revue.sh/upgrade"
 
 
 # ---------------------------------------------------------------------------

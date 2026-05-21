@@ -246,17 +246,17 @@ No new services to operate.
 
 **GitLab CI:**
 ```bash
-curl -sSL https://install.revue-io.fly.dev | bash
+curl -sSL https://install.revue.sh | bash
 revue review --provider=gitlab --pr=$CI_MERGE_REQUEST_IID
 ```
 
 **Bitbucket Pipelines:**
 ```bash
-curl -sSL https://install.revue-io.fly.dev | bash
+curl -sSL https://install.revue.sh | bash
 revue review --provider=bitbucket --pr=$BITBUCKET_PR_ID
 ```
 
-Create a free workspace at [revue-io.fly.dev](https://revue-io.fly.dev) to get your `REVUE_TOKEN`.
+Create a free workspace at [revue.sh](https://revue.sh) to get your `REVUE_TOKEN`.
 Free tier available immediately. All agents on Indie and above.
 
-**→ Start free at [revue-io.fly.dev](https://revue-io.fly.dev)**
+**→ Start free at [revue.sh](https://revue.sh)**

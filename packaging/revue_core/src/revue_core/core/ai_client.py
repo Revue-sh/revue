@@ -732,8 +732,20 @@ class OpenRouterClient:
                 token_usage.input_tokens,
                 token_usage.output_tokens,
             )
+            content = resp.choices[0].message.content or ""
+            if not content.strip():
+                # REVUE-314 cycle 3 — deepseek-v4-pro on OpenRouter occasionally returns
+                # 200 OK with empty content (provider-side filter, truncation, or transient
+                # routing failure). Surface finish_reason so future greps can distinguish
+                # truncation (length) vs filter (content_filter) vs clean-stop-with-no-text
+                # (stop) vs upstream error. The Vex layer retries once on empty.
+                finish_reason = getattr(resp.choices[0], "finish_reason", "?")
+                Log.nova.warning(
+                    "[openrouter] empty content — finish_reason=%s content_len=%d completion_tokens=%s",
+                    finish_reason, len(content), token_usage.output_tokens,
+                )
             return CompletionResult(
-                text=resp.choices[0].message.content or "",
+                text=content,
                 usage=token_usage,
             )
 

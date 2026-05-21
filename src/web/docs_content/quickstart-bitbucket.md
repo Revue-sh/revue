@@ -7,7 +7,7 @@ Add Revue AI code review to your Bitbucket repository in about five minutes.
 ## Prerequisites
 
 - A Bitbucket Cloud repository with Pipelines enabled
-- A [Revue account](https://revue-io.fly.dev/signup) and license key
+- A [Revue account](https://revue.sh/signup) and license key
 - An API key for your chosen AI provider (Anthropic or OpenAI)
 - A Bitbucket API token (Settings → Personal Bitbucket settings → API tokens)
 
@@ -15,7 +15,7 @@ Add Revue AI code review to your Bitbucket repository in about five minutes.
 
 ## Step 1 — Sign up and get your license key
 
-1. Go to [https://revue-io.fly.dev/signup](https://revue-io.fly.dev/signup) and create an account.
+1. Go to [https://revue.sh/signup](https://revue.sh/signup) and create an account.
 2. Copy your **REVUE_LICENSE_KEY** from the dashboard.
 
 ---

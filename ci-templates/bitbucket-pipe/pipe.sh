@@ -56,7 +56,7 @@ post_status() {
       \"state\": \"${state}\",
       \"name\": \"Revue AI Review\",
       \"description\": \"${description}\",
-      \"url\": \"https://revue-io.fly.dev\"
+      \"url\": \"https://revue.sh\"
     }" > /dev/null || true
 }
 

@@ -23,7 +23,7 @@ from revue_core.core.logging_channels import Log
 # Constants
 # ---------------------------------------------------------------------------
 
-VALIDATE_URL = "https://revue-io.fly.dev/api/license/validate"
+VALIDATE_URL = "https://revue.sh/api/license/validate"
 CACHE_PATH = Path("/tmp/.revue_license_cache.json")
 CACHE_TTL_SECONDS = 72 * 3600  # 72 hours
 

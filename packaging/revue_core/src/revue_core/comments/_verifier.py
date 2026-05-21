@@ -313,15 +313,31 @@ class VexVerifier:
         # the same review reuse the same prefix.
         cache_key = f"vex-{finding.file_path}"
 
-        result = self._client.complete(
-            [{"role": "user", "content": prompt}],
-            system=system_blocks,
-            max_tokens=512,
-            temperature=0.0,
-            agent_name="vex",
-            cache_key=cache_key,
-        )
-        return _parse_verdict(getattr(result, "text", "") or "")
+        # Bounded retry on empty content: deepseek/deepseek-v4-pro on OpenRouter
+        # occasionally returns 200 OK with empty content (provider-side filter,
+        # truncation, transient routing). One retry recovers most cases; if it's
+        # still empty, fall open to ``apply`` (same as before). Retry budget is
+        # scoped tightly to the empty failure mode — malformed-but-non-empty
+        # responses fall through immediately as before.
+        text = ""
+        for attempt in range(2):
+            result = self._client.complete(
+                [{"role": "user", "content": prompt}],
+                system=system_blocks,
+                max_tokens=512,
+                temperature=0.0,
+                agent_name="vex",
+                cache_key=cache_key,
+            )
+            text = (getattr(result, "text", "") or "").strip()
+            if text:
+                break
+            if attempt == 0:
+                Log.nova.warning(
+                    "[vex] empty response on %s:%d — retrying once before fail-open.",
+                    finding.file_path, finding.line_number,
+                )
+        return _parse_verdict(text)
 
     @staticmethod
     def _build_prompt(*, file_content: str, finding: ConsolidatedFinding) -> str:

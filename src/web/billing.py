@@ -20,7 +20,7 @@ Required environment variables:
 Optional:
     STRIPE_PRICE_INDIE_YEARLY   price_...
     STRIPE_PRICE_PRO_YEARLY     price_...
-    APP_BASE_URL                https://revue-io.fly.dev (default)
+    APP_BASE_URL                https://revue.sh (default)
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def create_checkout_session(
             f"Set STRIPE_PRICE_{tier.upper()}_{'MONTHLY' if interval == 'month' else 'YEARLY'}."
         )
 
-    base_url = os.environ.get("APP_BASE_URL", "https://revue-io.fly.dev")
+    base_url = os.environ.get("APP_BASE_URL", "https://revue.sh")
     params: dict = {
         "mode": "subscription",
         "line_items": [{"price": price_id, "quantity": 1}],
@@ -181,7 +181,7 @@ def create_billing_portal_session(
         Billing portal URL.
     """
     stripe = _stripe()
-    base_url = os.environ.get("APP_BASE_URL", "https://revue-io.fly.dev")
+    base_url = os.environ.get("APP_BASE_URL", "https://revue.sh")
     session = stripe.billing_portal.Session.create(
         customer=customer_id,
         return_url=return_url or f"{base_url}/dashboard",

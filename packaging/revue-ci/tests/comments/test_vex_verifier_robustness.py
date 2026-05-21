@@ -352,3 +352,104 @@ def test_prompt_normalises_file_without_trailing_newline() -> None:
     prompt = client.complete.call_args[0][0][0]["content"]
     assert "single_line = 42===VEX_FILE_END===" not in prompt
     assert "\n===VEX_FILE_END===" in prompt
+
+
+# ---------------------------------------------------------------------------
+# REVUE-314 cycle-3 — bounded retry on empty LLM response
+#
+# Background: deepseek/deepseek-v4-pro on OpenRouter occasionally returns a
+# 200 OK with ``choices[0].message.content == ""`` (provider-side filter,
+# truncation, or transient routing failure). The original behaviour was to
+# fall straight through to ``apply`` — safe but lossy. One bounded retry
+# converts most of these into a real verdict at low cost (Vex prompts are
+# small + cached). After one retry, if the second call is also empty, we
+# fall open to ``apply`` as before — never block the pipeline.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_retries_once_when_first_response_is_empty() -> None:
+    """First call returns '', second returns a real verdict — use the second."""
+    # Arrange — first empty, second valid
+    client = MagicMock()
+    client.complete.side_effect = [
+        _completion(""),
+        _completion('{"verdict": "reject_finding", "reason": "looks wrong"}'),
+    ]
+    verifier = VexVerifier(ai_client=client)
+
+    # Act
+    verdict = verifier.verify(file_content="x = 1\n", finding=_consolidated())
+
+    # Assert — verdict comes from the retry, not the fail-open default
+    assert verdict.verdict == "reject_finding"
+    assert verdict.reason == "looks wrong"
+    assert client.complete.call_count == 2
+
+
+def test_verify_retries_once_on_whitespace_only_response() -> None:
+    """Whitespace-only first response is treated like empty — retry once."""
+    # Arrange
+    client = MagicMock()
+    client.complete.side_effect = [
+        _completion("   \n  \t  "),
+        _completion('{"verdict": "drop_cr_keep_prose", "reason": "anchor wrong"}'),
+    ]
+    verifier = VexVerifier(ai_client=client)
+
+    # Act
+    verdict = verifier.verify(file_content="x = 1\n", finding=_consolidated())
+
+    # Assert
+    assert verdict.verdict == "drop_cr_keep_prose"
+    assert client.complete.call_count == 2
+
+
+def test_verify_falls_open_to_apply_when_retry_also_empty() -> None:
+    """Both calls empty — preserve the original fail-open ``apply`` behaviour."""
+    # Arrange — both empty
+    client = MagicMock()
+    client.complete.side_effect = [_completion(""), _completion("")]
+    verifier = VexVerifier(ai_client=client)
+
+    # Act
+    verdict = verifier.verify(file_content="x = 1\n", finding=_consolidated())
+
+    # Assert — fail-open kicks in only after the retry budget is spent
+    assert verdict.verdict == "apply"
+    assert client.complete.call_count == 2
+
+
+def test_verify_does_not_retry_when_first_response_is_non_empty() -> None:
+    """Non-empty first response — no retry, single client call."""
+    # Arrange
+    client = MagicMock()
+    client.complete.return_value = _completion('{"verdict": "apply", "reason": "ok"}')
+    verifier = VexVerifier(ai_client=client)
+
+    # Act
+    verifier.verify(file_content="x = 1\n", finding=_consolidated())
+
+    # Assert — retry is empty-only; the budget is not spent on parse-error or wrong-verdict cases
+    assert client.complete.call_count == 1
+
+
+def test_verify_does_not_retry_when_first_response_is_malformed_but_non_empty() -> None:
+    """Malformed JSON is not the empty-response failure mode — no retry.
+
+    Retry budget is reserved for the documented empty-content failure mode
+    (provider returned 200 with no content). A non-empty malformed response
+    is a different bug class (model output drift) and should fall open
+    immediately to ``apply`` — the same single-call behaviour as before
+    REVUE-314 cycle 3.
+    """
+    # Arrange — clearly malformed but non-empty
+    client = MagicMock()
+    client.complete.return_value = _completion("not json at all, no braces here")
+    verifier = VexVerifier(ai_client=client)
+
+    # Act
+    verdict = verifier.verify(file_content="x = 1\n", finding=_consolidated())
+
+    # Assert — falls open, but on a single call
+    assert verdict.verdict == "apply"
+    assert client.complete.call_count == 1

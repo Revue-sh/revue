@@ -392,7 +392,7 @@ class BitbucketAdapter(PlatformAdapter):
                 "state": state,
                 "name": "Revue AI Review",
                 "description": description or f"Revue review {state.lower()}",
-                "url": "https://revue-io.fly.dev",
+                "url": "https://revue.sh",
             }
             sha_encoded = urllib.parse.quote(commit_sha, safe="")
             url = f"{self.base_url}/repositories/{self.workspace}/{self.repo_slug}/commit/{sha_encoded}/statuses/build"

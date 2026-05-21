@@ -131,3 +131,41 @@ class TestPostUsageInternal:
         with caplog.at_level(logging.WARNING, logger="revue_core.core.usage_tracker"):
             _post_usage({"key": "k", "repo_id": "r", "agents_used": [], "duration_ms": 0}, client)
         assert not caplog.records
+
+
+# ---------------------------------------------------------------------------
+# Hardcoded URL regression pins (REVUE-314 — no env-var override)
+# ---------------------------------------------------------------------------
+
+def test_track_url_is_hardcoded_to_production_revue_sh() -> None:
+    """TRACK_URL must be the literal production endpoint — no env-var indirection.
+
+    A configurable host is a license-bypass / key-exfiltration surface: the POST
+    payload carries the raw REVUE_LICENSE_KEY in plaintext.
+    """
+    from revue_core.core.usage_tracker import TRACK_URL
+
+    assert TRACK_URL == "https://revue.sh/usage/track"
+
+
+def test_upgrade_url_is_hardcoded_to_production_revue_sh() -> None:
+    """UPGRADE_URL must be the literal production endpoint — no env-var indirection."""
+    from revue_core.core.usage_tracker import UPGRADE_URL
+
+    assert UPGRADE_URL == "https://revue.sh/upgrade"
+
+
+def test_usage_tracker_does_not_import_os() -> None:
+    """The module must not import `os` — no env-var-driven URL override allowed.
+
+    Static check (no `importlib.reload`, which would mutate class identity for sibling
+    tests). Regression-pins the removal of the license-bypass / key-exfiltration surface
+    that an env-var override would create. The comment in the source may *describe*
+    the forbidden env var by name; this test asserts no executable code path can read it.
+    """
+    import revue_core.core.usage_tracker as module
+
+    assert not hasattr(module, "os"), (
+        "usage_tracker reintroduced an `os` import — env-var URL overrides are forbidden "
+        "for endpoints Revue controls (license/usage/billing). See spec REVUE-314 cycle 2."
+    )

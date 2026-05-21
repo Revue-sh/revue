@@ -354,3 +354,25 @@ class TestReviewsLeftDisplay:
 
     def test_many_returns_plural(self) -> None:
         assert self._make_info(5).reviews_left_display == "5 reviews remaining"
+
+
+def test_validate_url_points_at_production_revue_sh() -> None:
+    """`VALIDATE_URL` is hardcoded to the production revue.sh endpoint — pins REVUE-314 AC6."""
+    from revue_core.core.license_validator import VALIDATE_URL
+
+    assert VALIDATE_URL == "https://revue.sh/api/license/validate"
+
+
+def test_license_validator_source_has_no_validate_url_env_var() -> None:
+    """Source inspection — `REVUE_VALIDATE_URL` must not appear in this module.
+
+    Pins the absence of the license-bypass surface. The constant must be a bare string
+    literal, never sourced from env (even via `f"https://{_HOST}/api/license/validate"`
+    style indirection).
+    """
+    import inspect
+
+    import revue_core.core.license_validator as module
+    source = inspect.getsource(module)
+
+    assert "REVUE_VALIDATE_URL" not in source

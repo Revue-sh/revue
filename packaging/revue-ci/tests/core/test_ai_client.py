@@ -838,6 +838,57 @@ def test_openrouter_logs_cached_tokens(mock_openai_cls: MagicMock) -> None:
 
 
 @patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_logs_finish_reason_on_empty_content(mock_openai_cls: MagicMock) -> None:
+    """When OpenRouter returns 200 OK with empty content, log finish_reason.
+
+    Background (REVUE-314 cycle 3): deepseek/deepseek-v4-pro on OpenRouter
+    occasionally responds with ``choices[0].message.content == ""``. The
+    previous behaviour silently coerced to ``""`` via ``or ""``, masking the
+    underlying cause (content-filter? truncation? routing failure?). The
+    finish_reason field carries that diagnostic signal and must surface in
+    the WARN log so future greps can distinguish the failure modes.
+    """
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = ""
+    mock_resp.choices[0].finish_reason = "length"
+    mock_resp.usage = MagicMock(prompt_tokens=10, completion_tokens=0)
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openrouter")
+    client = OpenRouterClient(config)
+
+    with patch("revue_core.core.log.Log.nova") as mock_log:
+        result = client.complete([{"role": "user", "content": "test"}])
+        assert result.text == ""
+        warning_calls = [c for c in mock_log.warning.call_args_list
+                         if "[openrouter] empty content" in str(c)]
+        assert warning_calls, f"expected an empty-content warning; got {mock_log.warning.call_args_list!r}"
+        # finish_reason must be in the log so we can grep for truncation vs filter
+        assert "length" in str(warning_calls[0]), (
+            f"finish_reason 'length' missing from log call: {warning_calls[0]!r}"
+        )
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_does_not_log_warning_when_content_non_empty(mock_openai_cls: MagicMock) -> None:
+    """Non-empty content path stays quiet — the empty-content warning is gated."""
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "answer"
+    mock_resp.choices[0].finish_reason = "stop"
+    mock_resp.usage = MagicMock(prompt_tokens=10, completion_tokens=2)
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openrouter")
+    client = OpenRouterClient(config)
+
+    with patch("revue_core.core.log.Log.nova") as mock_log:
+        client.complete([{"role": "user", "content": "test"}])
+        empty_warnings = [c for c in mock_log.warning.call_args_list
+                          if "empty content" in str(c)]
+        assert not empty_warnings, "empty-content warning fired on non-empty response"
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
 def test_custom_logs_cached_tokens(mock_openai_cls: MagicMock) -> None:
     """CustomGatewayClient extracts and logs cached_tokens from prompt_tokens_details."""
     mock_details = MagicMock(cached_tokens=256)
