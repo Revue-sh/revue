@@ -2004,9 +2004,11 @@ class _StubVex:
         *,
         verdict_counts: dict[str, int] | None = None,
         failure_counts: dict[str, int] | None = None,
+        reasoning_missing_count: int = 0,
     ) -> None:
         self._verdict = verdict_counts or {}
         self._failure = failure_counts or {}
+        self._reasoning_missing = reasoning_missing_count
 
     @property
     def verdict_counts(self) -> dict[str, int]:
@@ -2015,6 +2017,10 @@ class _StubVex:
     @property
     def failure_counts(self) -> dict[str, int]:
         return dict(self._failure)
+
+    @property
+    def reasoning_missing_count(self) -> int:
+        return self._reasoning_missing
 
 
 class _StubGuard:

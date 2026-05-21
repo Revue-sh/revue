@@ -1251,3 +1251,395 @@ def test_create_ai_client_forwards_metrics_to_openai_compatible_providers() -> N
     assert client._metrics is collector, (  # type: ignore[attr-defined]
         "create_ai_client did not forward the metrics collector to OpenAIClient"
     )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-324 — Reasoning channel wiring (Vex Option C)
+# ---------------------------------------------------------------------------
+
+def _mock_openrouter_reply(content: str = "ok") -> MagicMock:
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = content
+    mock_resp.usage = None
+    return mock_resp
+
+
+def test_reasoning_assemblers_dict_keys_match_registry_source_of_truth() -> None:
+    """REVUE-324: ai_client._REASONING_ASSEMBLERS keys MUST match
+    models_registry._VALID_REASONING_ASSEMBLERS (lock-step contract).
+    """
+    from revue_core.core.ai_client import _REASONING_ASSEMBLERS
+    from revue_core.core.models_registry import _VALID_REASONING_ASSEMBLERS
+
+    assert set(_REASONING_ASSEMBLERS.keys()) == set(_VALID_REASONING_ASSEMBLERS)
+
+
+def test_assemble_deepseek_v4_reasoning_returns_reasoning_kwarg() -> None:
+    """REVUE-324: the DeepSeek assembler returns ``{reasoning: cfg.reasoning_param}``."""
+    from revue_core.core.ai_client import _assemble_deepseek_v4_reasoning
+    from revue_core.core.models_registry import ModelConfig
+
+    cfg = ModelConfig(
+        model_id="deepseek/deepseek-v4-pro",
+        provider="openrouter",
+        schema_mode="response_format",
+        schema_strict=True,
+        tool_choice_first_turn="required",
+        max_tokens_default=2048,
+        tier="supported",
+        reasoning_assembler="deepseek_v4",
+        reasoning_mode="separate_channel",
+        reasoning_param={"enabled": True, "effort": "high"},
+        schema_mode_when_reasoning="json_object",
+    )
+
+    kwargs = _assemble_deepseek_v4_reasoning(cfg)
+
+    assert kwargs == {"reasoning": {"enabled": True, "effort": "high"}}
+
+
+def test_apply_reasoning_knobs_noop_when_reasoning_disabled() -> None:
+    """REVUE-324: reasoning_enabled=False always returns ({}, None) regardless of cfg."""
+    from revue_core.core.ai_client import _apply_reasoning_knobs
+    from revue_core.core.models_registry import ModelConfig
+
+    cfg = ModelConfig(
+        model_id="deepseek/deepseek-v4-pro",
+        provider="openrouter",
+        schema_mode="response_format",
+        schema_strict=True,
+        tool_choice_first_turn="required",
+        max_tokens_default=2048,
+        tier="supported",
+        reasoning_assembler="deepseek_v4",
+        reasoning_mode="separate_channel",
+        reasoning_param={"enabled": True, "effort": "high"},
+        schema_mode_when_reasoning="json_object",
+    )
+
+    kwargs, schema_mode = _apply_reasoning_knobs(cfg, reasoning_enabled=False)
+
+    assert kwargs == {}
+    assert schema_mode is None
+
+
+def test_apply_reasoning_knobs_noop_when_no_assembler() -> None:
+    """REVUE-324: reasoning_enabled=True with no assembler set returns ({}, None)."""
+    from revue_core.core.ai_client import _apply_reasoning_knobs
+    from revue_core.core.models_registry import ModelConfig
+
+    cfg = ModelConfig(
+        model_id="qwen/qwen3-coder-next",
+        provider="openrouter",
+        schema_mode="response_format",
+        schema_strict=True,
+        tool_choice_first_turn="required",
+        max_tokens_default=2048,
+        tier="supported",
+        reasoning_assembler=None,
+    )
+
+    kwargs, schema_mode = _apply_reasoning_knobs(cfg, reasoning_enabled=True)
+
+    assert kwargs == {}
+    assert schema_mode is None
+
+
+def test_apply_reasoning_knobs_noop_when_cfg_is_none() -> None:
+    """REVUE-324: a missing registry entry (fallback path) also no-ops."""
+    from revue_core.core.ai_client import _apply_reasoning_knobs
+
+    kwargs, schema_mode = _apply_reasoning_knobs(None, reasoning_enabled=True)
+
+    assert kwargs == {}
+    assert schema_mode is None
+
+
+def test_apply_reasoning_knobs_returns_deepseek_kwargs_and_schema() -> None:
+    """REVUE-324: DeepSeek cfg + reasoning_enabled=True returns assembler kwargs +
+    schema_mode_when_reasoning.
+    """
+    from revue_core.core.ai_client import _apply_reasoning_knobs
+    from revue_core.core.models_registry import ModelConfig
+
+    cfg = ModelConfig(
+        model_id="deepseek/deepseek-v4-pro",
+        provider="openrouter",
+        schema_mode="response_format",
+        schema_strict=True,
+        tool_choice_first_turn="required",
+        max_tokens_default=2048,
+        tier="supported",
+        reasoning_assembler="deepseek_v4",
+        reasoning_mode="separate_channel",
+        reasoning_param={"enabled": True, "effort": "high"},
+        schema_mode_when_reasoning="json_object",
+    )
+
+    kwargs, schema_mode = _apply_reasoning_knobs(cfg, reasoning_enabled=True)
+
+    assert kwargs == {"reasoning": {"enabled": True, "effort": "high"}}
+    assert schema_mode == "json_object"
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_complete_deepseek_with_reasoning_enabled_wire_shape(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-324 AC1 / TC11: DeepSeek + reasoning_enabled=True sends
+    ``reasoning={enabled: true, effort: 'high'}`` AND
+    ``response_format={'type': 'json_object'}`` on the wire.
+    """
+    mock_openai_cls.return_value.chat.completions.create.return_value = (
+        _mock_openrouter_reply()
+    )
+
+    config = _make_config(provider="openrouter", model="deepseek/deepseek-v4-pro")
+    client = OpenRouterClient(config)
+    client.complete(
+        [{"role": "user", "content": "verify this"}], reasoning_enabled=True
+    )
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    # OpenAI Python SDK rejects unknown top-level kwargs, so OpenRouter-
+    # specific extensions (``reasoning``) must travel via ``extra_body``.
+    # ``response_format`` is standard OpenAI and stays at the top level.
+    assert call_kwargs["extra_body"]["reasoning"] == {"enabled": True, "effort": "high"}
+    assert "reasoning" not in call_kwargs  # MUST NOT leak at the top level
+    assert call_kwargs["response_format"] == {"type": "json_object"}
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_complete_deepseek_without_reasoning_enabled_wire_shape(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-324 TC12: DeepSeek + reasoning_enabled=False (default) keeps
+    today's wire shape — NO ``reasoning`` and NO ``response_format`` kwargs.
+    Regression guard for the case Vex doesn't request reasoning.
+    """
+    mock_openai_cls.return_value.chat.completions.create.return_value = (
+        _mock_openrouter_reply()
+    )
+
+    config = _make_config(provider="openrouter", model="deepseek/deepseek-v4-pro")
+    client = OpenRouterClient(config)
+    client.complete([{"role": "user", "content": "verify"}])
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    assert "reasoning" not in call_kwargs
+    assert "extra_body" not in call_kwargs
+    assert "response_format" not in call_kwargs
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_complete_qwen_with_reasoning_enabled_wire_shape_unchanged(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-324 AC2 / TC10: Qwen + reasoning_enabled=True (Vex passes True
+    after Commit 3) STILL keeps today's wire shape because Qwen's entry has
+    no assembler. Blast-radius regression guard.
+    """
+    mock_openai_cls.return_value.chat.completions.create.return_value = (
+        _mock_openrouter_reply()
+    )
+
+    config = _make_config(provider="openrouter", model="qwen/qwen3-coder-next")
+    client = OpenRouterClient(config)
+    client.complete(
+        [{"role": "user", "content": "verify"}], reasoning_enabled=True
+    )
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    assert "reasoning" not in call_kwargs
+    assert "extra_body" not in call_kwargs
+    assert "response_format" not in call_kwargs
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openai_client_complete_ignores_reasoning_enabled(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-324 TC6 / AC3: OpenAIClient does not consult the assembler dict.
+
+    Even if a future caller passes ``reasoning_enabled=True``, the
+    OpenAI-direct path must keep today's wire shape — DeepSeek is not
+    reachable via OpenAIClient and we never want to leak DeepSeek-shaped
+    params onto OpenAI's API.
+    """
+    mock_openai_cls.return_value.chat.completions.create.return_value = (
+        _mock_openrouter_reply()
+    )
+
+    config = _make_config(provider="openai", model="gpt-4o")
+    client = OpenAIClient(config)
+    client.complete(
+        [{"role": "user", "content": "hello"}], reasoning_enabled=True
+    )
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    assert "reasoning" not in call_kwargs
+    assert "response_format" not in call_kwargs
+
+
+@patch("revue_core.core.ai_client.anthropic.Anthropic")
+def test_anthropic_client_complete_ignores_reasoning_enabled(
+    mock_anthropic_cls: MagicMock,
+) -> None:
+    """REVUE-324 TC7 / AC10: AnthropicClient does not consult the assembler dict.
+
+    Vex on Anthropic was never broken; Anthropic uses its own ``output_config``
+    grammar, not ``reasoning`` / ``response_format``. Wire shape stays
+    bit-identical.
+    """
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="ok")]
+    mock_msg.usage = MagicMock(
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        input_tokens=10,
+        output_tokens=5,
+    )
+    mock_anthropic_cls.return_value.messages.create.return_value = mock_msg
+
+    config = _make_config(provider="anthropic", model="claude-sonnet-4-5-20250929")
+    client = AnthropicClient(config)
+    client.complete(
+        [{"role": "user", "content": "hi"}], reasoning_enabled=True
+    )
+
+    call_kwargs = mock_anthropic_cls.return_value.messages.create.call_args[1]
+    assert "reasoning" not in call_kwargs
+    assert "response_format" not in call_kwargs
+
+
+@patch("revue_core.core.ai_client.openai.AzureOpenAI")
+def test_azure_client_complete_ignores_reasoning_enabled(
+    mock_azure_cls: MagicMock,
+) -> None:
+    """REVUE-324 TC8 / AC3: AzureOpenAIClient ignores reasoning_enabled."""
+    mock_azure_cls.return_value.chat.completions.create.return_value = (
+        _mock_openrouter_reply()
+    )
+
+    config = _make_config(
+        provider="azure",
+        azure_endpoint="https://myazure.openai.azure.com",
+        azure_deployment="gpt-4o-deploy",
+    )
+    client = AzureOpenAIClient(config)
+    client.complete(
+        [{"role": "user", "content": "hi"}], reasoning_enabled=True
+    )
+
+    call_kwargs = mock_azure_cls.return_value.chat.completions.create.call_args[1]
+    assert "reasoning" not in call_kwargs
+    assert "response_format" not in call_kwargs
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_custom_client_complete_ignores_reasoning_enabled(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-324 TC9 / AC3: CustomGatewayClient ignores reasoning_enabled."""
+    mock_openai_cls.return_value.chat.completions.create.return_value = (
+        _mock_openrouter_reply()
+    )
+
+    config = _make_config(
+        provider="custom",
+        base_url="https://gateway.example.com/v1",
+        model="custom-model",
+    )
+    client = CustomGatewayClient(config)
+    client.complete(
+        [{"role": "user", "content": "hi"}], reasoning_enabled=True
+    )
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    assert "reasoning" not in call_kwargs
+    assert "response_format" not in call_kwargs
+
+
+def test_completion_result_reasoning_details_default_is_none() -> None:
+    """REVUE-324: CompletionResult exposes reasoning_details; default is None
+    so every existing caller's behaviour is unchanged.
+    """
+    result = CompletionResult(text="ok")
+    assert result.reasoning_details is None
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_complete_populates_reasoning_details_from_response(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-324: when the OpenRouter response carries ``reasoning_details``,
+    the field flows through to the returned CompletionResult so the Vex
+    layer can detect the empty-content-with-reasoning case.
+    """
+    mock_resp = MagicMock()
+    mock_resp.choices[0].message.content = "ok"
+    mock_resp.choices[0].message.reasoning_details = [
+        {"type": "reasoning", "text": "thinking"}
+    ]
+    mock_resp.usage = None
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openrouter", model="deepseek/deepseek-v4-pro")
+    client = OpenRouterClient(config)
+    result = client.complete(
+        [{"role": "user", "content": "verify"}], reasoning_enabled=True
+    )
+
+    assert result.reasoning_details == [{"type": "reasoning", "text": "thinking"}]
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_complete_reasoning_details_default_none_when_absent(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-324: when the response does NOT carry reasoning_details (e.g.
+    provider silently dropped the param), the field defaults to None and
+    the verifier's empty-content-without-reasoning path takes over.
+    """
+    mock_resp = MagicMock(spec=["choices", "usage"])
+    mock_resp.choices = [MagicMock(spec=["message", "finish_reason"])]
+    mock_resp.choices[0].message = MagicMock(spec=["content"])
+    mock_resp.choices[0].message.content = ""
+    mock_resp.choices[0].finish_reason = "stop"
+    mock_resp.usage = None
+    mock_openai_cls.return_value.chat.completions.create.return_value = mock_resp
+
+    config = _make_config(provider="openrouter", model="qwen/qwen3-coder-next")
+    client = OpenRouterClient(config)
+    result = client.complete(
+        [{"role": "user", "content": "verify"}], reasoning_enabled=True
+    )
+
+    assert result.reasoning_details is None
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_complete_cache_key_still_forwarded_with_reasoning(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-324: enabling reasoning must not drop the cache_key wire kwarg.
+
+    Vex calls complete() with both cache_key (file-path keyed) and
+    reasoning_enabled=True after Commit 3. Both must arrive on the wire.
+    """
+    mock_openai_cls.return_value.chat.completions.create.return_value = (
+        _mock_openrouter_reply()
+    )
+
+    config = _make_config(provider="openrouter", model="deepseek/deepseek-v4-pro")
+    client = OpenRouterClient(config)
+    client.complete(
+        [{"role": "user", "content": "verify"}],
+        cache_key="vex-src/foo.py",
+        reasoning_enabled=True,
+    )
+
+    call_kwargs = mock_openai_cls.return_value.chat.completions.create.call_args[1]
+    assert call_kwargs["prompt_cache_key"] == "vex-src/foo.py"
+    assert call_kwargs["extra_body"]["reasoning"] == {"enabled": True, "effort": "high"}
+    assert call_kwargs["response_format"] == {"type": "json_object"}

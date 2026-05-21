@@ -25,7 +25,11 @@ import openai
 
 from .ai_config import AIConfig
 from .metrics import MetricsCollector, MetricsEvent, NullMetricsCollector
-from .models_registry import ModelConfig, load_builtin_registry
+from .models_registry import (
+    ModelConfig,
+    load_builtin_registry,
+    _VALID_REASONING_ASSEMBLERS,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -64,6 +68,79 @@ def _resolve_model_config(model_id: str) -> "ModelConfig | None":
             _FALLBACK_MAX_TOKENS,
         )
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# REVUE-324 — Reasoning channel assemblers (Vex Option C)
+# ---------------------------------------------------------------------------
+#
+# Per-model assembler functions build the provider-specific wire-shape kwargs
+# that enable a separate reasoning channel. Today only DeepSeek v4 Pro is
+# wired; other entries inherit the no-op default by not naming an assembler.
+#
+# Keyed by assembler-NAME (referenced from each model's registry entry) —
+# never by provider. Provider-level keying would silently apply DeepSeek-
+# shaped params to every OpenRouter model and break Qwen / Kimi / customer-
+# added entries. The OCP-clean extension is "name a new assembler from a
+# model's registry entry"; that change is additive and blast-radius safe.
+
+
+def _assemble_deepseek_v4_reasoning(cfg: "ModelConfig") -> dict[str, Any]:
+    """Build the OpenRouter request kwargs that enable DeepSeek's separate
+    reasoning channel. ``cfg.reasoning_param`` is passed through verbatim so
+    operators can tune ``effort`` without code changes.
+    """
+    return {"reasoning": dict(cfg.reasoning_param or {})}
+
+
+_REASONING_ASSEMBLERS: dict[str, Callable[["ModelConfig"], dict[str, Any]]] = {
+    "deepseek_v4": _assemble_deepseek_v4_reasoning,
+}
+
+# Lock-step contract: the dict keys MUST match the source-of-truth set in
+# models_registry. The set is what registry-parse-time validation checks
+# against; the dict is what runtime lookups use. If a future change adds
+# one without the other, fail loudly at import time rather than silently
+# at request-build time. Explicit raise rather than ``assert`` so the
+# check survives ``python -O`` (which strips assert statements).
+if set(_REASONING_ASSEMBLERS.keys()) != set(_VALID_REASONING_ASSEMBLERS):
+    raise RuntimeError(
+        "_REASONING_ASSEMBLERS keys diverge from "
+        "models_registry._VALID_REASONING_ASSEMBLERS — keep them in lock-step."
+    )
+
+
+def _apply_reasoning_knobs(
+    cfg: "ModelConfig | None",
+    reasoning_enabled: bool,
+) -> tuple[dict[str, Any], "str | None"]:
+    """Resolve per-call reasoning kwargs and schema-mode override.
+
+    Returns ``({}, None)`` — the no-op — when reasoning is off, the cfg
+    is missing (fallback path), or the cfg names no assembler. Only when
+    BOTH ``reasoning_enabled=True`` AND ``cfg.reasoning_assembler`` is
+    registered does the assembler run.
+
+    The second tuple member (``cfg.schema_mode_when_reasoning``) is
+    returned alongside so the caller can translate it into the
+    provider-specific ``response_format`` shape. Today only OpenRouter
+    consumes this; other OpenAI-compatible clients ignore the
+    ``reasoning_enabled`` kwarg entirely (DeepSeek is not reachable via
+    them).
+    """
+    if (
+        not reasoning_enabled
+        or cfg is None
+        or cfg.reasoning_mode != "separate_channel"
+        or cfg.reasoning_assembler is None
+    ):
+        return {}, None
+    assembler = _REASONING_ASSEMBLERS.get(cfg.reasoning_assembler)
+    if assembler is None:
+        # Belt-and-braces: registry validation should have caught this at
+        # startup. If we get here, the lock-step contract was broken.
+        return {}, None
+    return assembler(cfg), cfg.schema_mode_when_reasoning
 
 
 def _apply_model_knobs(
@@ -135,6 +212,13 @@ class TokenUsage:
 class CompletionResult:
     text: str
     usage: TokenUsage = field(default_factory=TokenUsage)
+    # REVUE-324: when the underlying provider exposes a separate reasoning
+    # channel (e.g. OpenRouter's ``message.reasoning_details`` for DeepSeek
+    # v4 Pro), the client forwards it here so callers can observe the
+    # think-vs-content split. Default ``None`` preserves today's behaviour
+    # for every other client. Consumed for telemetry only — verdict
+    # parsing always reads ``text``.
+    reasoning_details: "list[dict[str, Any]] | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +237,7 @@ class AIClient(Protocol):
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
         agent_name: "str | None" = None,
+        reasoning_enabled: bool = False,
     ) -> CompletionResult: ...
 
 
@@ -422,6 +507,7 @@ class OpenAIClient:
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
         agent_name: "str | None" = None,
+        reasoning_enabled: bool = False,  # REVUE-324: accepted but unused — DeepSeek is not reachable via OpenAI direct
     ) -> CompletionResult:
         def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
@@ -512,6 +598,7 @@ class AnthropicClient:
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,  # accepted but unused — Anthropic uses cache_control
         agent_name: "str | None" = None,
+        reasoning_enabled: bool = False,  # REVUE-324: accepted but unused — Anthropic uses output_config grammar
     ) -> CompletionResult:
         def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
@@ -627,6 +714,7 @@ class AzureOpenAIClient:
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
         agent_name: "str | None" = None,
+        reasoning_enabled: bool = False,  # REVUE-324: accepted but unused — DeepSeek is not reachable via Azure
     ) -> CompletionResult:
         def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
@@ -714,6 +802,7 @@ class OpenRouterClient:
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
         agent_name: "str | None" = None,
+        reasoning_enabled: bool = False,
     ) -> CompletionResult:
         def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {
@@ -724,6 +813,30 @@ class OpenRouterClient:
             }
             if cache_key is not None:
                 kwargs["prompt_cache_key"] = cache_key
+            # REVUE-324: opt-in reasoning channel for DeepSeek (and any future
+            # model whose registry entry names an assembler). For every other
+            # entry — Qwen, Sonnet (not routed here), customer-extended — the
+            # call below is a no-op and the wire shape matches today exactly.
+            #
+            # The assembler's kwargs (e.g. ``{"reasoning": {...}}``) are
+            # OpenRouter extensions, NOT OpenAI standard params. The OpenAI
+            # Python SDK validates kwargs against its schema and rejects
+            # unknown ones, so we route them through ``extra_body`` which
+            # OpenAI passes through to the underlying HTTP request body
+            # verbatim. ``response_format`` IS standard OpenAI, so it stays
+            # at the top level.
+            reasoning_kwargs, schema_override = _apply_reasoning_knobs(
+                self._model_cfg, reasoning_enabled
+            )
+            if reasoning_kwargs:
+                # Defensive merge: preserve any pre-existing ``extra_body``
+                # so future composition does not silently clobber caller state.
+                kwargs["extra_body"] = {
+                    **kwargs.get("extra_body", {}),
+                    **reasoning_kwargs,
+                }
+            if schema_override == "json_object":
+                kwargs["response_format"] = {"type": "json_object"}
             resp = self._client.chat.completions.create(**kwargs)
             token_usage = _build_openai_token_usage(resp.usage, "openrouter")
             Log.nova.debug(
@@ -733,6 +846,22 @@ class OpenRouterClient:
                 token_usage.output_tokens,
             )
             content = resp.choices[0].message.content or ""
+            # REVUE-324: capture the separate reasoning channel when present.
+            # ``message.reasoning_details`` is OpenRouter's documented field for
+            # models that emit chain-of-thought outside ``content``. The Vex
+            # layer uses it to disambiguate "empty content because the model
+            # didn't think" from "empty content because the model put its
+            # thinking somewhere else". Verdict parsing never reads this.
+            raw_reasoning_details = getattr(
+                resp.choices[0].message, "reasoning_details", None
+            )
+            # Normalise to honour the ``CompletionResult.reasoning_details``
+            # type contract: anything not a list collapses to ``None``.
+            reasoning_details: "list[dict[str, Any]] | None" = (
+                raw_reasoning_details
+                if isinstance(raw_reasoning_details, list)
+                else None
+            )
             if not content.strip():
                 # REVUE-314 cycle 3 — deepseek-v4-pro on OpenRouter occasionally returns
                 # 200 OK with empty content (provider-side filter, truncation, or transient
@@ -741,12 +870,14 @@ class OpenRouterClient:
                 # (stop) vs upstream error. The Vex layer retries once on empty.
                 finish_reason = getattr(resp.choices[0], "finish_reason", "?")
                 Log.nova.warning(
-                    "[openrouter] empty content — finish_reason=%s content_len=%d completion_tokens=%s",
+                    "[openrouter] empty content — finish_reason=%s content_len=%d completion_tokens=%s reasoning_details_len=%s",
                     finish_reason, len(content), token_usage.output_tokens,
+                    len(reasoning_details) if isinstance(reasoning_details, list) else None,
                 )
             return CompletionResult(
                 text=content,
                 usage=token_usage,
+                reasoning_details=reasoning_details,
             )
 
         return _with_retry(_call, max_attempts=self._max_attempts)
@@ -808,6 +939,7 @@ class CustomGatewayClient:
         system: "str | list[dict[str, Any]] | None" = None,
         cache_key: "str | None" = None,
         agent_name: "str | None" = None,
+        reasoning_enabled: bool = False,  # REVUE-324: accepted but unused — custom gateways do not share DeepSeek's wire shape
     ) -> CompletionResult:
         def _call() -> CompletionResult:
             kwargs: dict[str, Any] = {

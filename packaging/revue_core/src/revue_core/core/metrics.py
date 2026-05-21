@@ -78,6 +78,12 @@ class VexMetricsData:
     verdict_counts: dict[str, int] = field(default_factory=dict)
     failure_counts: dict[str, int] = field(default_factory=dict)
     guard_downgrade: int = 0
+    # REVUE-324 — reasoning-channel observability (Vex Option C).
+    # ``vex_reasoning_missing`` is incremented when Vex saw empty ``content``
+    # AND populated ``reasoning_details`` — the model thought but never
+    # emitted a verdict. Verdict still fails open to ``apply`` (existing
+    # contract); the counter surfaces silent drift in dogfood runs.
+    vex_reasoning_missing: int = 0
 
 
 class MetricsCollector(Protocol):

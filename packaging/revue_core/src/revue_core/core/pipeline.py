@@ -1302,10 +1302,14 @@ class ReviewPipeline:
         )
         # Persist Vex tallies to metrics.jsonl so a later audit can see
         # rejection rate / failure mix without re-parsing terminal output.
+        # REVUE-324: also persist the reasoning-channel "missing content"
+        # counter so silent drift on DeepSeek's reasoning path is visible
+        # without re-parsing logs.
         self._metrics.record_vex(VexMetricsData(
             verdict_counts=dict(v_counts),
             failure_counts=dict(f_counts),
             guard_downgrade=guard_downgrade,
+            vex_reasoning_missing=int(vex_post_processor.reasoning_missing_count),
         ))
 
     # ------------------------------------------------------------------

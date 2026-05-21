@@ -44,3 +44,15 @@ models:
     tool_choice_first_turn: required
     max_tokens_default: 2048
     tier: supported
+    # REVUE-324 — Vex Option C reasoning channel.
+    # DeepSeek emits visible chain-of-thought into the content channel under
+    # strict json_schema mode, truncating the trailing verdict JSON. Routing
+    # CoT to the separate reasoning channel and relaxing the response_format
+    # to json_object preserves the verdict shape. Scope-gated to DeepSeek
+    # only — every other entry inherits the no-op default.
+    reasoning_assembler: deepseek_v4
+    reasoning_mode: separate_channel
+    reasoning_param:
+      enabled: true
+      effort: high
+    schema_mode_when_reasoning: json_object

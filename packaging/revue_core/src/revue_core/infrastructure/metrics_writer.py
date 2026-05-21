@@ -160,6 +160,9 @@ class JsonlMetricsCollector(MetricsCollector):
                 "verdict_counts": dict(vex.verdict_counts),
                 "failure_counts": dict(vex.failure_counts),
                 "guard_downgrade": vex.guard_downgrade,
+                # REVUE-324: reasoning-channel observability — surfaces the
+                # empty-content-with-reasoning case on the DeepSeek path.
+                "vex_reasoning_missing": vex.vex_reasoning_missing,
             }
 
         # REVUE-246 AC7: include the four-state run verdict + per-status

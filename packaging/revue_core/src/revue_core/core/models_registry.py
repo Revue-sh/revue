@@ -52,6 +52,13 @@ class ModelConfig:
     max_tokens_default: int
     tier: str
     extras: Mapping[str, Any] = field(default_factory=dict)
+    # REVUE-324 — Reasoning channel knobs (Vex Option C).
+    # Defaults are a strict no-op: every existing client keeps today's wire
+    # shape unless the entry opts in by naming an assembler.
+    reasoning_assembler: str | None = None
+    reasoning_mode: str = "none"
+    reasoning_param: Mapping[str, Any] | None = None
+    schema_mode_when_reasoning: str | None = None
 
     def __post_init__(self) -> None:
         # Wrap extras in a read-only view. Use object.__setattr__ to bypass
@@ -94,10 +101,89 @@ _KNOWN_KEYS: frozenset[str] = frozenset({
     "tool_choice_first_turn",
     "max_tokens_default",
     "tier",
+    "reasoning_assembler",
+    "reasoning_mode",
+    "reasoning_param",
+    "schema_mode_when_reasoning",
 })
 
 # Allowed values for the `tier` knob. Anything else is rejected at parse time.
 _VALID_TIERS: frozenset[str] = frozenset({"supported", "unsupported"})
+
+# REVUE-324 — Reasoning channel knobs (Vex Option C).
+#
+# ``_VALID_REASONING_MODES`` is the closed enum for the ``reasoning_mode``
+# knob today. ``"inline"`` and ``"anthropic_thinking"`` are deliberately
+# absent — they're follow-up tickets and accepting them here would
+# silently no-op until matching assemblers are wired, which is worse than
+# failing fast.
+_VALID_REASONING_MODES: frozenset[str] = frozenset({"none", "separate_channel"})
+
+# Closed enum for ``schema_mode_when_reasoning``. Today only ``json_object``
+# is honoured at the wire (ai_client routes it into ``response_format``).
+# Anything else would parse-validate fine and then silently no-op at
+# request-build time; enforcing the enum here fails fast instead.
+_VALID_SCHEMA_MODES_WHEN_REASONING: frozenset[str] = frozenset({"json_object"})
+
+# Providers whose client implementation actually wires ``reasoning_enabled``
+# through to the wire. Today only ``openrouter`` does. A registry entry
+# that sets ``reasoning_mode=separate_channel`` on another provider would
+# accept the config and silently no-op at request time, which is the
+# failure mode the lock-step contract exists to prevent.
+_REASONING_CAPABLE_PROVIDERS: frozenset[str] = frozenset({"openrouter"})
+
+# Allowed leaf-value types for ``reasoning_param`` after dict-mapping
+# normalisation. The payload travels verbatim through ``extra_body`` to
+# the provider's HTTP body, so anything that won't JSON-serialise will
+# fail far from the YAML source.
+_JSON_LEAF_TYPES: tuple = (str, int, bool, float)
+
+# Source of truth for known assembler names. ``ai_client._REASONING_ASSEMBLERS``
+# asserts its dict keys match this frozenset at module load — the two
+# stay in lock-step. Keeping the set here (not in ai_client) avoids a
+# circular import: ai_client.py imports from models_registry.py.
+_VALID_REASONING_ASSEMBLERS: frozenset[str] = frozenset({"deepseek_v4"})
+
+
+def _validate_reasoning_param_shape(
+    model_id: str, payload: dict, _path: str = "reasoning_param"
+) -> None:
+    """Recursively assert ``payload`` is a JSON-safe ``dict[str, …]`` tree.
+
+    Keys must be ``str``; leaf values must be one of ``_JSON_LEAF_TYPES``
+    or nested dicts of the same. Lists are permitted with the same leaf
+    rules. ``None`` is allowed for leaves.
+    """
+    for key, value in payload.items():
+        if not isinstance(key, str):
+            raise ModelRegistryError(
+                f"models.{model_id}.{_path} keys must be strings, "
+                f"got {type(key).__name__}: {key!r}."
+            )
+        sub_path = f"{_path}.{key}"
+        if value is None or isinstance(value, _JSON_LEAF_TYPES):
+            continue
+        if isinstance(value, dict):
+            _validate_reasoning_param_shape(model_id, value, sub_path)
+            continue
+        if isinstance(value, list):
+            for idx, item in enumerate(value):
+                if item is None or isinstance(item, _JSON_LEAF_TYPES):
+                    continue
+                if isinstance(item, dict):
+                    _validate_reasoning_param_shape(
+                        model_id, item, f"{sub_path}[{idx}]"
+                    )
+                    continue
+                raise ModelRegistryError(
+                    f"models.{model_id}.{sub_path}[{idx}] must be a JSON scalar "
+                    f"or dict, got {type(item).__name__}."
+                )
+            continue
+        raise ModelRegistryError(
+            f"models.{model_id}.{sub_path} must be a JSON scalar, dict, or list, "
+            f"got {type(value).__name__}."
+        )
 
 
 def _config_from_mapping(
@@ -151,6 +237,70 @@ def _config_from_mapping(
             f"{{supported, unsupported}}, got {raw_tier!r}."
         )
 
+    # --- REVUE-324: reasoning-channel knob validation (parse-time) ---
+    raw_reasoning_mode = pick("reasoning_mode", "none")
+    if not isinstance(raw_reasoning_mode, str):
+        raise ModelRegistryError(
+            f"models.{model_id}.reasoning_mode must be a string, "
+            f"got {type(raw_reasoning_mode).__name__}: {raw_reasoning_mode!r}."
+        )
+    if raw_reasoning_mode not in _VALID_REASONING_MODES:
+        raise ModelRegistryError(
+            f"models.{model_id}.reasoning_mode must be one of "
+            f"{sorted(_VALID_REASONING_MODES)}, got {raw_reasoning_mode!r}."
+        )
+
+    raw_reasoning_assembler = pick("reasoning_assembler", None)
+    if raw_reasoning_assembler is not None:
+        if not isinstance(raw_reasoning_assembler, str):
+            raise ModelRegistryError(
+                f"models.{model_id}.reasoning_assembler must be a string or null, "
+                f"got {type(raw_reasoning_assembler).__name__}."
+            )
+        if raw_reasoning_assembler not in _VALID_REASONING_ASSEMBLERS:
+            raise ModelRegistryError(
+                f"models.{model_id}.reasoning_assembler {raw_reasoning_assembler!r} "
+                f"is not registered. Known assemblers: "
+                f"{sorted(_VALID_REASONING_ASSEMBLERS)}."
+            )
+
+    raw_reasoning_param = pick("reasoning_param", None)
+    if raw_reasoning_param is not None and not isinstance(raw_reasoning_param, dict):
+        raise ModelRegistryError(
+            f"models.{model_id}.reasoning_param must be a mapping or null, "
+            f"got {type(raw_reasoning_param).__name__}."
+        )
+    if isinstance(raw_reasoning_param, dict):
+        # An empty dict would assemble to ``{"reasoning": {}}`` on the
+        # wire — a misconfiguration that ``validate_selected_model`` used
+        # to surface with the misleading "not set" error (because a prior
+        # truthiness collapse turned ``{}`` into ``None``). Reject at the
+        # YAML source instead.
+        if not raw_reasoning_param:
+            raise ModelRegistryError(
+                f"models.{model_id}.reasoning_param must be a non-empty mapping "
+                f"when present; got an empty dict."
+            )
+        # Keys must be strings, leaf values must be JSON-serialisable
+        # scalars (or nested dicts of the same). The payload is forwarded
+        # verbatim via ``extra_body`` to the provider; non-JSON values
+        # would raise at HTTP-serialisation time, far from the YAML source.
+        _validate_reasoning_param_shape(model_id, raw_reasoning_param)
+
+    raw_schema_mode_when_reasoning = pick("schema_mode_when_reasoning", None)
+    if raw_schema_mode_when_reasoning is not None:
+        if not isinstance(raw_schema_mode_when_reasoning, str):
+            raise ModelRegistryError(
+                f"models.{model_id}.schema_mode_when_reasoning must be a string or "
+                f"null, got {type(raw_schema_mode_when_reasoning).__name__}."
+            )
+        if raw_schema_mode_when_reasoning not in _VALID_SCHEMA_MODES_WHEN_REASONING:
+            raise ModelRegistryError(
+                f"models.{model_id}.schema_mode_when_reasoning must be one of "
+                f"{sorted(_VALID_SCHEMA_MODES_WHEN_REASONING)}, "
+                f"got {raw_schema_mode_when_reasoning!r}."
+            )
+
     return ModelConfig(
         model_id=model_id,
         provider=str(pick("provider", "")),
@@ -160,6 +310,10 @@ def _config_from_mapping(
         max_tokens_default=int(pick("max_tokens_default", 1024)),
         tier=tier_value,
         extras=extras,
+        reasoning_assembler=raw_reasoning_assembler,
+        reasoning_mode=raw_reasoning_mode,
+        reasoning_param=dict(raw_reasoning_param) if raw_reasoning_param is not None else None,
+        schema_mode_when_reasoning=raw_schema_mode_when_reasoning,
     )
 
 
@@ -259,4 +413,34 @@ def validate_selected_model(
             f"schema_strict={cfg.schema_strict!r}; supported models must keep "
             f"schema_strict=true."
         )
+    # REVUE-324: co-requirements on the reasoning-channel knobs.
+    # ``separate_channel`` only makes sense when an assembler name,
+    # schema-mode-override, AND reasoning_param are all set; a partial set
+    # would silently no-op (or emit ``{"reasoning": {}}`` on the wire,
+    # which providers may reject) at request-build time. The provider
+    # must also be in ``_REASONING_CAPABLE_PROVIDERS`` — only OpenRouter
+    # wires ``reasoning_enabled`` through today.
+    if cfg.reasoning_mode == "separate_channel":
+        if cfg.provider not in _REASONING_CAPABLE_PROVIDERS:
+            raise ModelRegistryError(
+                f"model {selected_model_id!r} has reasoning_mode=separate_channel "
+                f"but provider={cfg.provider!r} is not one of "
+                f"{sorted(_REASONING_CAPABLE_PROVIDERS)}; the reasoning channel "
+                f"would silently no-op on this provider."
+            )
+        if cfg.schema_mode_when_reasoning is None:
+            raise ModelRegistryError(
+                f"model {selected_model_id!r} has reasoning_mode=separate_channel "
+                f"but schema_mode_when_reasoning is not set; all three are required."
+            )
+        if cfg.reasoning_assembler is None:
+            raise ModelRegistryError(
+                f"model {selected_model_id!r} has reasoning_mode=separate_channel "
+                f"but reasoning_assembler is not set; all three are required."
+            )
+        if cfg.reasoning_param is None:
+            raise ModelRegistryError(
+                f"model {selected_model_id!r} has reasoning_mode=separate_channel "
+                f"but reasoning_param is not set; all three are required."
+            )
     return cfg

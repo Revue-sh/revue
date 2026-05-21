@@ -292,6 +292,24 @@ class VexVerifier:
     def __init__(self, ai_client: Any, system_prompt: str | None = None) -> None:
         self._client = ai_client
         self._system_prompt = system_prompt or _DEFAULT_SYSTEM_PROMPT
+        # REVUE-324: reasoning-channel observability. The reasoning channel
+        # belongs to the verifier (it observes the response shape on every
+        # call); the post-processor exposes the totals to the pipeline.
+        # process_all runs verify() concurrently up to max_workers, so the
+        # increment must be lock-guarded (REVUE-248 lessons applied).
+        self._reasoning_lock = threading.Lock()
+        self._reasoning_missing_count = 0
+
+    @property
+    def reasoning_missing_count(self) -> int:
+        """Count of Vex calls where ``content`` was empty BUT
+        ``reasoning_details`` was populated — i.e. the model spent its
+        think budget on the separate channel and never emitted a verdict
+        in ``content``. Verdict still fails open to ``apply`` (existing
+        contract); the counter surfaces the silent drift.
+        """
+        with self._reasoning_lock:
+            return self._reasoning_missing_count
 
     def verify(self, *, file_content: str, finding: ConsolidatedFinding) -> VexVerdict:
         prompt = self._build_prompt(file_content=file_content, finding=finding)
@@ -320,16 +338,27 @@ class VexVerifier:
         # scoped tightly to the empty failure mode — malformed-but-non-empty
         # responses fall through immediately as before.
         text = ""
+        # REVUE-324: per-finding (not per-attempt) drift tracking. We observe
+        # the empty-with-reasoning shape across attempts but only count once
+        # per verify() call, even if both retries land in this state. This
+        # matches AC6 wording ("counter increments" — singular per fail-open).
+        observed_empty_with_reasoning = False
+        last_reasoning_len = 0
         for attempt in range(2):
             result = self._client.complete(
                 [{"role": "user", "content": prompt}],
                 system=system_blocks,
-                max_tokens=512,
+                max_tokens=2048,
                 temperature=0.0,
                 agent_name="vex",
                 cache_key=cache_key,
+                reasoning_enabled=True,  # REVUE-324: opt into the separate reasoning channel
             )
             text = (getattr(result, "text", "") or "").strip()
+            reasoning_details = getattr(result, "reasoning_details", None)
+            if not text and isinstance(reasoning_details, list) and reasoning_details:
+                observed_empty_with_reasoning = True
+                last_reasoning_len = len(reasoning_details)
             if text:
                 break
             if attempt == 0:
@@ -337,6 +366,20 @@ class VexVerifier:
                     "[vex] empty response on %s:%d — retrying once before fail-open.",
                     finding.file_path, finding.line_number,
                 )
+        if not text and observed_empty_with_reasoning:
+            # Final fail-open path: increment once per verify() call and
+            # surface the drift so dogfood runs can spot it. The OpenRouter
+            # client logs ``finish_reason`` at its own warning point when
+            # content is empty (ai_client.py), which already disambiguates
+            # "max_tokens exhausted by reasoning" vs "model emitted nothing".
+            with self._reasoning_lock:
+                self._reasoning_missing_count += 1
+            Log.nova.warning(
+                "[vex] empty content with reasoning_details=%d on %s:%d — "
+                "model thought but did not emit a verdict; failing open.",
+                last_reasoning_len,
+                finding.file_path, finding.line_number,
+            )
         return _parse_verdict(text)
 
     @staticmethod
@@ -564,6 +607,15 @@ class VexVerifyPostProcessor:
     def failure_counts(self) -> dict[str, int]:
         with self._counters_lock:
             return dict(self._failure_counts)
+
+    @property
+    def reasoning_missing_count(self) -> int:
+        """REVUE-324: forward the underlying verifier's counter so the
+        pipeline can record it on ``VexMetricsData`` without reaching
+        into private state. Reading is delegated; the counter lives on
+        the verifier because that's where the response shape is observed.
+        """
+        return int(self._verifier.reasoning_missing_count)
 
     def process_all(
         self,

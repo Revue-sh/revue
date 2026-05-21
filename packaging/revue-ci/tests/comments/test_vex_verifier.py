@@ -443,3 +443,202 @@ def test_block_completeness_subsection_directs_vex_to_check_natural_terminators(
         "block terminator (final return, post-loop statement, end-of-block); "
         f"none of {terminator_hints} found in the subsection"
     )
+
+
+# ---------------------------------------------------------------------------
+# REVUE-324 — Reasoning channel (Vex Option C)
+# ---------------------------------------------------------------------------
+
+
+def _completion_with_reasoning(
+    text: str,
+    reasoning_details: "list[dict] | None" = None,
+) -> CompletionResult:
+    return CompletionResult(
+        text=text,
+        usage=TokenUsage(),
+        reasoning_details=reasoning_details,
+    )
+
+
+def test_verify_passes_reasoning_enabled_true_to_complete() -> None:
+    """REVUE-324 TC13 / AC2-via-Vex: Vex always opts into the reasoning
+    channel at the call site. The OpenRouterClient consults the model
+    registry to decide what (if anything) the kwarg actually does — for
+    non-DeepSeek entries it's a no-op (assembler not named).
+    """
+    # Arrange
+    finding = _consolidated(
+        code_replacement=["    return value + 1"],
+        replacement_line_count=1,
+    )
+    client = MagicMock()
+    client.complete.return_value = _completion('{"verdict": "apply", "reason": "ok"}')
+    verifier = VexVerifier(ai_client=client)
+
+    # Act
+    verifier.verify(
+        file_content="def foo(value):\n    return value\n",
+        finding=finding,
+    )
+
+    # Assert — every complete() call on the retry loop must carry reasoning_enabled=True
+    for call in client.complete.call_args_list:
+        assert call.kwargs.get("reasoning_enabled") is True
+
+
+def test_empty_content_with_reasoning_details_falls_open_to_apply() -> None:
+    """REVUE-324 TC14 / AC6: when ``content`` is empty but ``reasoning_details``
+    is populated, the verdict still falls back to ``apply`` — the existing
+    fail-open contract is preserved. The reasoning channel is NEVER mined
+    for a verdict.
+    """
+    # Arrange
+    finding = _consolidated(
+        code_replacement=["    return cached_value"],
+        replacement_line_count=1,
+    )
+    client = MagicMock()
+    # Both retry attempts return empty content + populated reasoning_details.
+    client.complete.return_value = _completion_with_reasoning(
+        text="",
+        reasoning_details=[
+            {"type": "reasoning", "text": "The patch looks fine — verdict apply."}
+        ],
+    )
+    verifier = VexVerifier(ai_client=client)
+
+    # Act
+    verdict = verifier.verify(
+        file_content="def foo():\n    return None\n",
+        finding=finding,
+    )
+
+    # Assert — fail-open to apply, reason mentions the parse failure
+    assert verdict.verdict == "apply"
+    assert verdict.reason  # non-empty fallback reason
+    # Reasoning channel text MUST NOT leak into the verdict reason.
+    assert "verdict apply" not in verdict.reason.lower()
+
+
+def test_empty_content_with_reasoning_details_increments_missing_counter() -> None:
+    """REVUE-324 AC6: the empty-content-with-reasoning case increments
+    the ``reasoning_missing_count`` counter exactly once per verify()
+    call, even when both retry attempts land in the empty-path. Counting
+    per attempt would double-count single findings and break dashboards.
+    """
+    # Arrange
+    finding = _consolidated(
+        code_replacement=["    return value"],
+        replacement_line_count=1,
+    )
+    client = MagicMock()
+    client.complete.return_value = _completion_with_reasoning(
+        text="",
+        reasoning_details=[{"type": "reasoning", "text": "thinking"}],
+    )
+    verifier = VexVerifier(ai_client=client)
+
+    # Act — one verify() call; both retries internally hit the empty path.
+    verifier.verify(file_content="def f():\n    pass\n", finding=finding)
+
+    # Assert — exactly one increment per verify(), not per attempt.
+    assert verifier.reasoning_missing_count == 1
+
+
+def test_empty_content_without_reasoning_details_does_not_increment_missing_counter() -> None:
+    """REVUE-324: empty content with NO reasoning_details is the pre-existing
+    failure mode (provider-side filter or routing). The new counter only
+    fires when reasoning was captured — so this case must NOT increment it.
+    """
+    # Arrange
+    finding = _consolidated(
+        code_replacement=["    return value"],
+        replacement_line_count=1,
+    )
+    client = MagicMock()
+    client.complete.return_value = _completion_with_reasoning(
+        text="",
+        reasoning_details=None,
+    )
+    verifier = VexVerifier(ai_client=client)
+
+    # Act
+    verifier.verify(file_content="def f():\n    pass\n", finding=finding)
+
+    # Assert
+    assert verifier.reasoning_missing_count == 0
+
+
+def test_reasoning_details_present_with_valid_content_does_not_trigger_warning() -> None:
+    """REVUE-324: the happy path — content parses AND reasoning_details is
+    populated — must NOT increment the warning counter. Reasoning is
+    consumed for debug/telemetry only when content parsing fails.
+    """
+    # Arrange
+    finding = _consolidated(
+        code_replacement=["    return value + 1"],
+        replacement_line_count=1,
+    )
+    client = MagicMock()
+    client.complete.return_value = _completion_with_reasoning(
+        text='{"verdict": "apply", "reason": "Safe replacement."}',
+        reasoning_details=[{"type": "reasoning", "text": "checking indent"}],
+    )
+    verifier = VexVerifier(ai_client=client)
+
+    # Act
+    verdict = verifier.verify(
+        file_content="def foo(value):\n    return value\n",
+        finding=finding,
+    )
+
+    # Assert — happy path: counter stays at zero, verdict from content
+    assert verdict.verdict == "apply"
+    assert verifier.reasoning_missing_count == 0
+
+
+def test_reasoning_missing_counter_is_thread_safe_across_concurrent_calls() -> None:
+    """REVUE-324: process_all runs verify() concurrently up to max_workers.
+    The counter increment is a read-modify-write that races without a
+    lock. This test exercises the lock by hammering verify() in a thread
+    pool and asserting the final count equals the call count exactly.
+
+    The per-finding contract (one increment per verify(), not per attempt)
+    means a missed lock-protected increment would land BELOW iterations,
+    and an unlikely over-count would land above. Either failure mode is
+    detected by an exact equality assertion.
+    """
+    # Arrange
+    from concurrent.futures import ThreadPoolExecutor
+
+    finding = _consolidated(
+        code_replacement=["    return value"],
+        replacement_line_count=1,
+    )
+    client = MagicMock()
+    client.complete.return_value = _completion_with_reasoning(
+        text="",
+        reasoning_details=[{"type": "reasoning", "text": "."}],
+    )
+    verifier = VexVerifier(ai_client=client)
+
+    # Act — 32 parallel verify() calls; each lands one increment on the
+    # final fail-open path. Futures are collected and resolved so that
+    # any exception inside verify() (e.g. a deadlock or logic error)
+    # surfaces instead of being silently dropped.
+    iterations = 32
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [
+            pool.submit(
+                verifier.verify,
+                file_content="def f():\n    pass\n",
+                finding=finding,
+            )
+            for _ in range(iterations)
+        ]
+        for future in futures:
+            future.result()
+
+    # Assert — exactly one increment per call, race-free under the lock.
+    assert verifier.reasoning_missing_count == iterations
