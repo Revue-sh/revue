@@ -106,7 +106,7 @@ Controls how Revue processes the diff and filters files.
 |---|---|---|---|
 | `max_diff_lines` | int | `2000` | Hard line limit for the entire diff. If exceeded, Revue stops and suggests breaking the PR into smaller pieces. Range: 1–10000. |
 | `min_confidence` | int | `70` | Suppress findings with AI confidence below this percentage (0–100). |
-| `agent_timeout_seconds` | int | `90` | Per-agent wall-clock timeout in seconds (1–600). Raise to `120` on slow or VPN-constrained networks. |
+| `agent_timeout_seconds` | int | `90` | Per-agent wall-clock timeout in seconds (1–1800). Raise to `120` on slow networks, or up to `1800` for deep reviews on the `/revue-local` surface. |
 | `ignore_patterns` | list[string] | `[]` | Glob patterns for files to skip during review. Applied to `file_path`. |
 | `reviewer_tool_use` | bool | `true` | Enable lazy full-file reads for reviewer agents (Maya, Leo, Kai, Zara). When enabled, agents can call the `read_file` tool to verify claims against the full file context before flagging findings (REVUE-241). Improves accuracy of prose-only findings at the cost of slightly higher token usage. Set to `false` to disable and save tokens. |
 | `max_parallel_agents` | int | `1` | Maximum number of agents to run in parallel. Range: 1–8. Setting to 1 runs agents sequentially (safe default). Increase to reduce wall-clock time at higher API cost. |

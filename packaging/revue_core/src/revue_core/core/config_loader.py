@@ -367,9 +367,9 @@ def validate_config(config: AIConfig) -> list[str]:
             f"min_confidence must be between 0 and 100, got {config.min_confidence}."
         )
 
-    if config.agent_timeout_seconds <= 0 or config.agent_timeout_seconds > 600:
+    if config.agent_timeout_seconds <= 0 or config.agent_timeout_seconds > 1800:
         errors.append(
-            f"agent_timeout_seconds must be between 1 and 600, got {config.agent_timeout_seconds}."
+            f"agent_timeout_seconds must be between 1 and 1800, got {config.agent_timeout_seconds}."
         )
 
     if config.max_parallel_agents < 1 or config.max_parallel_agents > 10:

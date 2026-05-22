@@ -231,6 +231,46 @@ def test_validate_config_confidence_out_of_range() -> None:
 
 
 # ---------------------------------------------------------------------------
+# REVUE-340: agent_timeout_seconds validator cap raised 600 → 1800
+# ---------------------------------------------------------------------------
+
+def test_validate_config_agent_timeout_lower_bound_accepts_1s() -> None:
+    config = AIConfig.from_env()
+    config.agent_timeout_seconds = 1
+    errors = validate_config(config)
+    assert not any("agent_timeout_seconds" in e for e in errors)
+
+
+def test_validate_config_agent_timeout_accepts_600s_unchanged() -> None:
+    config = AIConfig.from_env()
+    config.agent_timeout_seconds = 600
+    errors = validate_config(config)
+    assert not any("agent_timeout_seconds" in e for e in errors)
+
+
+def test_validate_config_agent_timeout_upper_bound_accepts_1800s() -> None:
+    config = AIConfig.from_env()
+    config.agent_timeout_seconds = 1800
+    errors = validate_config(config)
+    assert not any("agent_timeout_seconds" in e for e in errors)
+
+
+def test_validate_config_agent_timeout_rejects_1801s() -> None:
+    config = AIConfig.from_env()
+    config.agent_timeout_seconds = 1801
+    errors = validate_config(config)
+    assert any("agent_timeout_seconds" in e for e in errors)
+    assert any("1800" in e for e in errors if "agent_timeout_seconds" in e)
+
+
+def test_validate_config_agent_timeout_rejects_zero() -> None:
+    config = AIConfig.from_env()
+    config.agent_timeout_seconds = 0
+    errors = validate_config(config)
+    assert any("agent_timeout_seconds" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
 # REVUE-94: Pattern support in noise_filters
 # ---------------------------------------------------------------------------
 
