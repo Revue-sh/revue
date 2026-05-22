@@ -62,7 +62,15 @@ def base_url(_e2e_db):
 
     yield f"http://127.0.0.1:{port}"
 
+    # Force the uvicorn server's background thread to terminate. ``should_exit``
+    # alone is a polite request that returns control to the main loop on the
+    # next tick; the thread's asyncio loop can still be alive afterwards,
+    # which leaves pytest-asyncio unable to spin up new Runners in later
+    # tests ("Cannot run the event loop while another loop is running").
+    # ``force_exit`` aborts pending requests immediately so ``thread.join``
+    # actually completes.
     server.should_exit = True
+    server.force_exit = True
     thread.join(timeout=5)
 
     # Restore

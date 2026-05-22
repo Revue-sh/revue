@@ -41,3 +41,19 @@ async def client(_tmp_db) -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+def pytest_collection_modifyitems(config, items):
+    """Move e2e tests to the END of the collection.
+
+    The e2e suite spins up a uvicorn server in a session-scoped fixture.
+    Uvicorn keeps a background thread with an active asyncio event loop
+    alive for the rest of the session — any pytest-asyncio test running
+    *after* an e2e test then fails with "Cannot run the event loop while
+    another loop is running". The fixture teardown only runs at session
+    end, so the simplest fix is to ensure no async tests run after the
+    e2e suite. Running e2e last means the leaked loop doesn't matter.
+    """
+    e2e_items = [i for i in items if "/e2e/" in str(i.fspath) or "\\e2e\\" in str(i.fspath)]
+    non_e2e_items = [i for i in items if i not in e2e_items]
+    items[:] = non_e2e_items + e2e_items

@@ -97,6 +97,12 @@ The script:
 
 If the script exits non-zero, print the error. **Do not treat a remote-sync failure as a blocker** — the Bitbucket merge already landed; report the error and let the user decide whether to retry.
 
+### Step 5 — Epic progress recap
+
+Bitbucket → Jira automation transitions the merged ticket to **Done** within seconds. Dispatch `/bmad-agent-pm` as a **background sub-agent** with the ticket key and the parent-epic JQL pattern (REST v3 `/search/jql`, JQL `parent=<EPIC-KEY>`). When the agent returns, print its recap verbatim — do not hand-roll the JQL yourself. Format and rules: see `CLAUDE.md → Jira ticket completion — epic progress recap`.
+
+This step is post-merge bookkeeping; if it fails, surface the error but do not retry the merge.
+
 ---
 
 ## Output
@@ -109,6 +115,8 @@ Report to the user:
 ✅ Branch <source-branch> deleted locally
 ✅ GitHub main synced
 ✅ GitLab main synced
+
+<epic progress recap from /bmad-agent-pm>
 ```
 
 If any step fails, report the exact error before stopping.

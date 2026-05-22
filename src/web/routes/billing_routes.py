@@ -24,6 +24,21 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
+# Licence activation page — REVUE-277 Phase 2
+# ---------------------------------------------------------------------------
+
+@router.get("/activate", response_class=HTMLResponse)
+async def activate_page(request: Request) -> HTMLResponse:
+    """Browser activation form. Unauthenticated — anyone with a licence
+    key can land here. The form POSTs to ``/api/v2/licence/activate`` via
+    a small inline script and renders the resulting JWT for the user to
+    copy into ``~/.config/revue/licence.jwt`` (or, for the CLI path,
+    invoke ``revue activate <key>`` instead).
+    """
+    return templates.TemplateResponse(request, "activate.html", {})
+
+
+# ---------------------------------------------------------------------------
 # Billing page — shows upgrade options
 # ---------------------------------------------------------------------------
 

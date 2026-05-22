@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}Activate Revue{% endblock %}
+
+{% block body %}
+<section class="activate-section" style="max-width: 640px; margin: 4rem auto; padding: 2rem;">
+  <h1>Activate Revue</h1>
+  <p>
+    Paste your licence key below to generate the signed JWT that
+    <code>revue</code> uses for offline verification. If you prefer the
+    CLI flow, run <code>revue activate &lt;key&gt;</code> instead — same
+    result, no browser needed.
+  </p>
+
+  <form id="activate-form" autocomplete="off">
+    <label for="licence-key">Licence key</label>
+    <input
+      type="text"
+      id="licence-key"
+      name="key"
+      placeholder="lic_…"
+      required
+      pattern="^lic_[a-f0-9]{32}$"
+      autocomplete="off"
+      spellcheck="false"
+      style="width: 100%; font-family: monospace;"
+    />
+    <input type="hidden" id="machine-fingerprint" name="machine_fingerprint" value="browser" />
+    <button type="submit">Activate</button>
+  </form>
+
+  <div id="activate-result" role="status" aria-live="polite" style="margin-top: 2rem;"></div>
+
+  <script>
+    (function () {
+      const form = document.getElementById("activate-form");
+      const result = document.getElementById("activate-result");
+
+      form.addEventListener("submit", async function (event) {
+        event.preventDefault();
+        result.textContent = "Activating…";
+        const key = document.getElementById("licence-key").value.trim();
+        const machine_fingerprint = document.getElementById("machine-fingerprint").value;
+
+        try {
+          const resp = await fetch("/api/v2/licence/activate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key, machine_fingerprint }),
+          });
+          const body = await resp.json();
+
+          // S10: build the result DOM via createElement + textContent
+          // rather than innerHTML string concatenation. The current
+          // server-side messages are static, but defence-in-depth: any
+          // future change that echoes user input back through body.error,
+          // body.message, or body.tier is automatically XSS-safe under
+          // this rendering path.
+          while (result.firstChild) result.removeChild(result.firstChild);
+
+          function appendHeader(text) {
+            const h = document.createElement("h2");
+            h.textContent = text;
+            result.appendChild(h);
+          }
+          function appendParagraph(parts) {
+            // parts: array of either {text: "..."} or {tag: "strong"|"code", text: "..."}
+            const p = document.createElement("p");
+            for (const part of parts) {
+              if (part.tag) {
+                const el = document.createElement(part.tag);
+                el.textContent = part.text;
+                p.appendChild(el);
+              } else {
+                p.appendChild(document.createTextNode(part.text));
+              }
+            }
+            result.appendChild(p);
+          }
+
+          if (resp.ok) {
+            appendHeader("JWT issued");
+            appendParagraph([
+              { text: "Tier: " },
+              { tag: "strong", text: body.tier || "" },
+            ]);
+            appendParagraph([
+              { text: "Copy the token below to " },
+              { tag: "code", text: "~/.config/revue/licence.jwt" },
+              { text: " (mode 0600):" },
+            ]);
+            const ta = document.createElement("textarea");
+            ta.readOnly = true;
+            ta.style.width = "100%";
+            ta.style.height = "8rem";
+            ta.style.fontFamily = "monospace";
+            ta.textContent = body.jwt || "";
+            result.appendChild(ta);
+          } else {
+            const code = body.error || "unknown_error";
+            const message = body.message || "Activation failed.";
+            appendHeader("Activation failed");
+            appendParagraph([
+              { tag: "strong", text: code },
+              { text: ": " + message },
+            ]);
+          }
+        } catch (err) {
+          while (result.firstChild) result.removeChild(result.firstChild);
+          const h = document.createElement("h2");
+          h.textContent = "Network error";
+          result.appendChild(h);
+          const p = document.createElement("p");
+          p.appendChild(document.createTextNode(
+            "Could not reach the activation endpoint. Try again or use "
+          ));
+          const code = document.createElement("code");
+          code.textContent = "revue activate <key>";
+          p.appendChild(code);
+          p.appendChild(document.createTextNode(" from the CLI."));
+          result.appendChild(p);
+        }
+      });
+    })();
+  </script>
+</section>
+{% endblock %}

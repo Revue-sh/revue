@@ -21,6 +21,7 @@ from typing import Sequence
 from urllib.parse import urlparse
 
 from . import __version__
+from .activate import activate as activate_licence
 from .install import DEFAULT_SKILLS_DIR, install
 from .manifest import ManifestError, validate
 
@@ -99,6 +100,13 @@ def cmd_version(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_activate(args: argparse.Namespace) -> int:
+    """REVUE-277: exchange a licence key for a signed JWT and write it
+    to ``~/.config/revue/licence.jwt``. See ``activate.py`` for the
+    documented exit codes and error envelope."""
+    return activate_licence(args.key)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="revue")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -134,6 +142,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     version_p = sub.add_parser("version", help="print the installed version")
     version_p.set_defaults(func=cmd_version)
+
+    activate_p = sub.add_parser(
+        "activate",
+        help="activate a licence key (REVUE-277): writes ~/.config/revue/licence.jwt",
+    )
+    activate_p.add_argument("key", help="your licence key (lic_…)")
+    activate_p.set_defaults(func=cmd_activate)
 
     return parser
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -537,8 +538,11 @@ def test_update_stripe_customer_id(_tmp_db):
 
 def test_dashboard_upgrade_link_points_to_billing(client):
     """Upgrade CTA on dashboard links to /billing (not 'Coming soon')."""
-    # This is a sync check on the template content
-    with open("templates/dashboard.html") as f:
-        content = f.read()
+    # Resolve the template path relative to this file so the test passes
+    # regardless of the cwd pytest was invoked from.
+    template = (
+        pathlib.Path(__file__).resolve().parent.parent / "templates" / "dashboard.html"
+    )
+    content = template.read_text()
     assert 'href="/billing"' in content
     assert "Coming soon" not in content

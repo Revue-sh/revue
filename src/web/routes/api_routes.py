@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request
@@ -10,6 +11,7 @@ from pydantic import BaseModel
 
 from database import get_db
 from auth import get_session
+from jwt_signing import JWTSigningKeyMissing, sign_licence_jwt
 from models import get_license_by_key, increment_usage, reset_monthly_counter, create_review_run, get_all_runs_for_user, get_analytics
 
 router = APIRouter()
@@ -33,6 +35,27 @@ class ValidateRequest(BaseModel):
     key: str
     repo_id: str = ""
     ci_run_id: str = ""
+
+
+class ActivateRequest(BaseModel):
+    """REVUE-277 Phase 2: payload for POST /api/v2/licence/activate."""
+
+    key: str
+    machine_fingerprint: str
+
+
+# S9: enforce length cap + charset on the client-supplied fingerprint
+# BEFORE it gets signed into a JWT claim. Untrusted input that gets
+# wrapped in a cryptographic envelope is still untrusted input — the
+# server must refuse oversized payloads (1 MB JWTs would let a client
+# bloat our token store and inflate every CLI call) and reject control
+# characters / shell metacharacters that have no place in an opaque
+# fingerprint.
+_FINGERPRINT_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+_INVALID_FINGERPRINT_BODY: dict = {
+    "error": "invalid_fingerprint",
+    "message": "machine_fingerprint must be 1-128 chars from [a-zA-Z0-9_-]",
+}
 
 
 class TrackRequest(BaseModel):
@@ -99,6 +122,65 @@ async def validate_license(body: ValidateRequest) -> JSONResponse:
             "reviews_left": reviews_left,
             "expires_at": "",
         })
+
+
+@router.post("/v2/licence/activate")
+async def activate_licence(body: ActivateRequest) -> JSONResponse:
+    """REVUE-277 AC1+AC4: exchange a licence key for a signed RS256 JWT.
+
+    Success → 200 with ``{jwt, tier}``. The CLI verifies the JWT against
+    the embedded public key, writes it to ``~/.config/revue/licence.jwt``
+    with mode 0600, and uses it for the offline hot-path verification.
+
+    Failure envelope is always ``{error, message}`` with a documented
+    ``error`` code so the CLI can produce actionable messages without
+    string-matching the human-readable text.
+    """
+    # ``fullmatch`` (not ``match``) — default-flag ``$`` matches at
+    # "end-of-string OR just before a trailing newline", which would let
+    # ``"abc\n"`` through and sign the newline into the JWT claim.
+    if not _FINGERPRINT_PATTERN.fullmatch(body.machine_fingerprint):
+        return JSONResponse(_INVALID_FINGERPRINT_BODY, status_code=422)
+
+    with get_db() as conn:
+        lic = get_license_by_key(conn, body.key)
+
+        if lic is None:
+            return JSONResponse(
+                {
+                    "error": "invalid_key",
+                    "message": "Licence key not recognised. "
+                    "Double-check the key from your account at https://revue.sh/account.",
+                },
+                status_code=404,
+            )
+
+        if not lic.is_active:
+            return JSONResponse(
+                {
+                    "error": "inactive_licence",
+                    "message": "This licence is no longer active. "
+                    "Contact support@revue.sh to reactivate.",
+                },
+                status_code=403,
+            )
+
+        try:
+            token = sign_licence_jwt(
+                workspace_id=lic.workspace_id,
+                tier=lic.tier,
+                machine_fingerprint=body.machine_fingerprint,
+            )
+        except JWTSigningKeyMissing as exc:
+            return JSONResponse(
+                {
+                    "error": "server_misconfigured",
+                    "message": str(exc),
+                },
+                status_code=500,
+            )
+
+        return JSONResponse({"jwt": token, "tier": lic.tier})
 
 
 @router.post("/usage/track")
