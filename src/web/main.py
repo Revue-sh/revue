@@ -13,10 +13,10 @@ from routes.docs_routes import router as docs_router
 from routes.api_routes import router as api_router
 
 # Hosts on which paths are rewritten to add the `/api` prefix internally,
-# letting `api.revue.sh/<path>` serve the same handlers as `/api/<path>`
-# on the marketing host. Deployed CLI binaries continue to hit
-# `revue.sh/api/...`, so the marketing-host routes must stay.
-API_SUBDOMAIN_HOSTS = {"api.revue.sh"}
+# letting `api.<env>.revue.sh/<path>` serve the same handlers as
+# `/api/<path>` on the marketing host. Deployed CLI binaries continue
+# to hit `revue.sh/api/...`, so the marketing-host routes must stay.
+API_SUBDOMAIN_HOSTS = {"api.revue.sh", "api.staging.revue.sh"}
 
 # Paths that must remain reachable on the api subdomain WITHOUT the
 # `/api` prefix being added.

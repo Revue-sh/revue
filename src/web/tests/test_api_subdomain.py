@@ -60,3 +60,33 @@ async def test_api_subdomain_does_not_double_prefix(client) -> None:
         headers={"Host": "api.revue.sh"},
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_staging_api_subdomain_rewrites_path(client) -> None:
+    resp = await client.post(
+        "/license/validate",
+        json={},
+        headers={"Host": "api.staging.revue.sh"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_staging_api_subdomain_health_endpoint(client) -> None:
+    resp = await client.get("/health", headers={"Host": "api.staging.revue.sh"})
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_staging_marketing_host_without_prefix_returns_404(client) -> None:
+    # staging.revue.sh is the marketing-equivalent host on staging; it
+    # must NOT trigger the api-subdomain rewrite, so /license/validate
+    # without the /api prefix is a 404.
+    resp = await client.post(
+        "/license/validate",
+        json={},
+        headers={"Host": "staging.revue.sh"},
+    )
+    assert resp.status_code == 404
