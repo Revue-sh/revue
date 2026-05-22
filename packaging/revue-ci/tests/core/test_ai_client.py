@@ -1643,3 +1643,319 @@ def test_openrouter_complete_cache_key_still_forwarded_with_reasoning(
     assert call_kwargs["prompt_cache_key"] == "vex-src/foo.py"
     assert call_kwargs["extra_body"]["reasoning"] == {"enabled": True, "effort": "high"}
     assert call_kwargs["response_format"] == {"type": "json_object"}
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_complete_with_tools_deepseek_reasoning_enabled_forwards_knobs(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-337: complete_with_tools on deepseek/deepseek-v4-pro with
+    reasoning_enabled=True must forward extra_body + schema override to
+    openai_tool_loop, matching the pattern established for complete().
+
+    This test verifies that the tool-loop path receives the reasoning knobs
+    so reviewer agents avoid empty-content failures on DeepSeek.
+    """
+    from types import SimpleNamespace
+
+    # Mock the tool-loop call to capture the kwargs
+    mock_tool_loop_result = SimpleNamespace(
+        text="findings", usage=SimpleNamespace(
+            prompt_tokens=100, completion_tokens=50, total_tokens=150,
+            cache_read_input_tokens=0, cache_creation_input_tokens=0,
+        ), reasoning_details=None,
+    )
+
+    with patch("revue_core.core.tool_loop.openai_tool_loop",
+               return_value=mock_tool_loop_result) as mock_tool_loop:
+        config = _make_config(provider="openrouter", model="deepseek/deepseek-v4-pro")
+        client = OpenRouterClient(config)
+        client.complete_with_tools(
+            [{"role": "user", "content": "review diff"}],
+            tools=[],
+            tool_handlers={},
+            reasoning_enabled=True,
+        )
+
+        # Verify openai_tool_loop was called with reasoning knobs
+        call_kwargs = mock_tool_loop.call_args[1]
+        assert "extra_body" in call_kwargs, "extra_body not forwarded to tool_loop"
+        assert call_kwargs["extra_body"]["reasoning"] == {"enabled": True, "effort": "high"}
+        assert call_kwargs["response_format_override"] == {"type": "json_object"}
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openai_complete_with_tools_reasoning_enabled_no_op(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-337: OpenAI client accepts reasoning_enabled but does not apply it
+    (Anthropic uses output_config grammar instead).
+    """
+    from types import SimpleNamespace
+
+    mock_tool_loop_result = SimpleNamespace(
+        text="findings", usage=SimpleNamespace(
+            prompt_tokens=100, completion_tokens=50, total_tokens=150,
+            cache_read_input_tokens=0, cache_creation_input_tokens=0,
+        ), reasoning_details=None,
+    )
+
+    with patch("revue_core.core.tool_loop.openai_tool_loop",
+               return_value=mock_tool_loop_result) as mock_tool_loop:
+        config = _make_config(provider="openai", model="gpt-4-turbo")
+        client = OpenAIClient(config)
+        client.complete_with_tools(
+            [{"role": "user", "content": "review diff"}],
+            tools=[],
+            tool_handlers={},
+            reasoning_enabled=True,
+        )
+
+        # Verify openai_tool_loop was called WITHOUT reasoning knobs
+        call_kwargs = mock_tool_loop.call_args[1]
+        assert call_kwargs.get("extra_body") is None
+        assert call_kwargs.get("response_format_override") is None
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_azure_complete_with_tools_reasoning_enabled_no_op(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-337: Azure client accepts reasoning_enabled but does not apply it
+    (Anthropic uses output_config grammar instead).
+    """
+    from types import SimpleNamespace
+
+    mock_tool_loop_result = SimpleNamespace(
+        text="findings", usage=SimpleNamespace(
+            prompt_tokens=100, completion_tokens=50, total_tokens=150,
+            cache_read_input_tokens=0, cache_creation_input_tokens=0,
+        ), reasoning_details=None,
+    )
+
+    with patch("revue_core.core.tool_loop.openai_tool_loop",
+               return_value=mock_tool_loop_result) as mock_tool_loop:
+        config = _make_config(provider="azure", model="gpt-4")
+        client = AzureOpenAIClient(config)
+        client.complete_with_tools(
+            [{"role": "user", "content": "review diff"}],
+            tools=[],
+            tool_handlers={},
+            reasoning_enabled=True,
+        )
+
+        # Verify openai_tool_loop was called WITHOUT reasoning knobs
+        call_kwargs = mock_tool_loop.call_args[1]
+        assert call_kwargs.get("extra_body") is None
+        assert call_kwargs.get("response_format_override") is None
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_custom_complete_with_tools_reasoning_enabled_forwards_knobs(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-337: Custom gateway client accepts reasoning_enabled and forwards
+    to openai_tool_loop if the underlying model supports it (via registry config).
+    """
+    from types import SimpleNamespace
+
+    mock_tool_loop_result = SimpleNamespace(
+        text="findings", usage=SimpleNamespace(
+            prompt_tokens=100, completion_tokens=50, total_tokens=150,
+            cache_read_input_tokens=0, cache_creation_input_tokens=0,
+        ), reasoning_details=None,
+    )
+
+    with patch("revue_core.core.tool_loop.openai_tool_loop",
+               return_value=mock_tool_loop_result) as mock_tool_loop:
+        config = _make_config(provider="custom", model="custom-deepseek")
+        client = CustomGatewayClient(config)
+        client.complete_with_tools(
+            [{"role": "user", "content": "review diff"}],
+            tools=[],
+            tool_handlers={},
+            reasoning_enabled=True,
+        )
+
+        # Custom client forwards to openai_tool_loop with model_cfg
+        # (actual knob resolution depends on registry config for custom-deepseek)
+        mock_tool_loop.assert_called_once()
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_complete_with_tools_qwen_no_reasoning_param(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-337: Qwen models on OpenRouter should not emit reasoning param.
+    Verify wire shape is unchanged when reasoning_enabled=True but model
+    is not DeepSeek.
+    """
+    from types import SimpleNamespace
+
+    mock_tool_loop_result = SimpleNamespace(
+        text="findings", usage=SimpleNamespace(
+            prompt_tokens=100, completion_tokens=50, total_tokens=150,
+            cache_read_input_tokens=0, cache_creation_input_tokens=0,
+        ), reasoning_details=None,
+    )
+
+    with patch("revue_core.core.tool_loop.openai_tool_loop",
+               return_value=mock_tool_loop_result) as mock_tool_loop:
+        config = _make_config(provider="openrouter", model="qwen/qwen3-coder-next")
+        client = OpenRouterClient(config)
+        client.complete_with_tools(
+            [{"role": "user", "content": "review diff"}],
+            tools=[],
+            tool_handlers={},
+            reasoning_enabled=True,
+        )
+
+        # Verify openai_tool_loop was called WITHOUT reasoning knobs for Qwen
+        call_kwargs = mock_tool_loop.call_args[1]
+        if "extra_body" in call_kwargs and call_kwargs["extra_body"]:
+            # Qwen should not have reasoning in extra_body
+            assert "reasoning" not in call_kwargs["extra_body"]
+        # Qwen uses json_schema mode, not json_object override
+        if "response_format_override" in call_kwargs:
+            assert call_kwargs["response_format_override"] != {"type": "json_object"}
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_deepseek_reasoning_reaches_sdk_create_wire(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-337 wire test: verify that reasoning knobs survive the full path
+    OpenRouterClient -> _openai_complete_with_tools -> openai_tool_loop ->
+    sdk_client.chat.completions.create.
+
+    The earlier mock test stubbed openai_tool_loop entirely; this one mocks
+    one level deeper (the SDK's chat.completions.create) so we can assert the
+    exact kwargs that hit the wire. If the SDK silently drops extra_body or
+    response_format under tools, this is where we'd catch it.
+    """
+    from types import SimpleNamespace
+
+    sdk_instance = mock_openai_cls.return_value
+    fake_message = SimpleNamespace(
+        content='{"status": "clean"}',
+        tool_calls=None,
+        reasoning_details=None,
+    )
+    fake_choice = SimpleNamespace(message=fake_message, finish_reason="stop")
+    fake_response = SimpleNamespace(
+        choices=[fake_choice],
+        usage=SimpleNamespace(
+            prompt_tokens=10, completion_tokens=5, total_tokens=15,
+            prompt_tokens_details=None,
+        ),
+    )
+    sdk_instance.chat.completions.create.return_value = fake_response
+
+    config = _make_config(provider="openrouter", model="deepseek/deepseek-v4-pro")
+    client = OpenRouterClient(config)
+    client.complete_with_tools(
+        [{"role": "user", "content": "review diff"}],
+        tools=[],
+        tool_handlers={},
+        reasoning_enabled=True,
+    )
+
+    create_kwargs = sdk_instance.chat.completions.create.call_args[1]
+    assert create_kwargs.get("extra_body") == {
+        "reasoning": {"enabled": True, "effort": "high"}
+    }, f"extra_body missing or wrong on the wire: {create_kwargs.get('extra_body')}"
+    assert create_kwargs.get("response_format") == {"type": "json_object"}, \
+        f"response_format override missing on the wire: {create_kwargs.get('response_format')}"
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_deepseek_reasoning_suppresses_tool_choice_required(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """REVUE-337: when reasoning is enabled, `tool_choice="required"` must
+    NOT be sent — DeepSeek thinking mode deadlocks on the combination
+    (reasons, decides no tool needed, then has no legal exit since
+    `required` forbids a content-only reply, so it emits empty content +
+    populated reasoning_details). Confirmed by vllm #33215.
+
+    DeepSeek registry pins `tool_choice_first_turn: required`. With
+    reasoning_enabled=True the tool-loop must drop that nudge and let
+    `tool_choice="auto"` apply (which on the OpenAI wire means: omit the
+    key entirely).
+    """
+    from types import SimpleNamespace
+
+    sdk_instance = mock_openai_cls.return_value
+    fake_message = SimpleNamespace(
+        content='{"status": "clean"}',
+        tool_calls=None,
+        reasoning_details=None,
+    )
+    fake_choice = SimpleNamespace(message=fake_message, finish_reason="stop")
+    fake_response = SimpleNamespace(
+        choices=[fake_choice],
+        usage=SimpleNamespace(
+            prompt_tokens=10, completion_tokens=5, total_tokens=15,
+            prompt_tokens_details=None,
+        ),
+    )
+    sdk_instance.chat.completions.create.return_value = fake_response
+
+    config = _make_config(provider="openrouter", model="deepseek/deepseek-v4-pro")
+    client = OpenRouterClient(config)
+    client.complete_with_tools(
+        [{"role": "user", "content": "review diff"}],
+        tools=[{"name": "read_file", "description": "read a file", "input_schema": {"type": "object"}}],
+        tool_handlers={},
+        reasoning_enabled=True,
+    )
+
+    create_kwargs = sdk_instance.chat.completions.create.call_args[1]
+    assert "tool_choice" not in create_kwargs, (
+        "tool_choice must NOT be set when reasoning is enabled — it "
+        "deadlocks DeepSeek thinking mode (vllm #33215). Got: "
+        f"{create_kwargs.get('tool_choice')}"
+    )
+
+
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openrouter_deepseek_no_reasoning_keeps_tool_choice_required(
+    mock_openai_cls: MagicMock,
+) -> None:
+    """Symmetric guard: when reasoning is OFF, the registry-pinned
+    `tool_choice_first_turn: required` must still apply on iter=0.
+    Confirms the REVUE-337 fix is scoped to the reasoning-enabled path
+    and does not regress REVUE-263's first-turn nudge for non-reasoning
+    callers (e.g. nova, vex when reasoning is opted out)."""
+    from types import SimpleNamespace
+
+    sdk_instance = mock_openai_cls.return_value
+    fake_message = SimpleNamespace(
+        content='{"status": "clean"}',
+        tool_calls=None,
+        reasoning_details=None,
+    )
+    fake_choice = SimpleNamespace(message=fake_message, finish_reason="stop")
+    fake_response = SimpleNamespace(
+        choices=[fake_choice],
+        usage=SimpleNamespace(
+            prompt_tokens=10, completion_tokens=5, total_tokens=15,
+            prompt_tokens_details=None,
+        ),
+    )
+    sdk_instance.chat.completions.create.return_value = fake_response
+
+    config = _make_config(provider="openrouter", model="deepseek/deepseek-v4-pro")
+    client = OpenRouterClient(config)
+    client.complete_with_tools(
+        [{"role": "user", "content": "review diff"}],
+        tools=[{"name": "read_file", "description": "read a file", "input_schema": {"type": "object"}}],
+        tool_handlers={},
+        reasoning_enabled=False,
+    )
+
+    create_kwargs = sdk_instance.chat.completions.create.call_args[1]
+    assert create_kwargs.get("tool_choice") == "required", (
+        "tool_choice='required' must apply on iter=0 when reasoning is "
+        f"OFF (DeepSeek registry default). Got: {create_kwargs.get('tool_choice')}"
+    )

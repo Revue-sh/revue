@@ -162,7 +162,7 @@ review:
   - '*.whl'
   - .claude/**
   max_diff_lines: 15000
-  max_parallel_agents: 2
+  max_parallel_agents: 4
   min_confidence: 70
   retry_on_rate_limit: true
 version: '1'

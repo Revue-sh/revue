@@ -489,6 +489,7 @@ class LoadedAgent:
                     agent_name=self._def.name,
                     max_tokens=self._max_tokens,
                     output_config=output_config_for_three_state(),
+                    reasoning_enabled=True,  # REVUE-337: opt into reasoning channel for reviewer agents
                 )
             except Exception as exc:
                 exc.call_site = call_site  # type: ignore[attr-defined]

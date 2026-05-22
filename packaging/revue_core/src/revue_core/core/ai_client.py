@@ -375,6 +375,8 @@ def _openai_complete_with_tools(
     agent_name: "str | None" = None,
     metrics: "Any | None" = None,
     tool_choice_first_turn: str = "auto",
+    model_cfg: "ModelConfig | None" = None,
+    reasoning_enabled: bool = False,
 ) -> "CompletionResult":
     """Shared tool-loop driver for all OpenAI-compatible clients.
 
@@ -413,6 +415,19 @@ def _openai_complete_with_tools(
                 },
             }
 
+    # REVUE-337: opt-in reasoning channel for reviewer agents, matching the
+    # pattern established for Vex in REVUE-324. Same knobs apply here.
+    extra_body: "dict[str, Any] | None" = None
+    response_format_override: "dict[str, Any] | None" = None
+    if model_cfg is not None:
+        reasoning_kwargs, schema_override = _apply_reasoning_knobs(
+            model_cfg, reasoning_enabled
+        )
+        if reasoning_kwargs:
+            extra_body = reasoning_kwargs
+        if schema_override == "json_object":
+            response_format_override = {"type": "json_object"}
+
     def _call() -> "CompletionResult":
         return _tl.openai_tool_loop(
             sdk_client,
@@ -429,6 +444,8 @@ def _openai_complete_with_tools(
             agent_name=agent_name,
             metrics=metrics,
             tool_choice_first_turn=tool_choice_first_turn,
+            extra_body=extra_body,
+            response_format_override=response_format_override,
         )
 
     return _with_retry(_call, max_attempts=max_attempts)
@@ -545,6 +562,7 @@ class OpenAIClient:
         system: "str | list[dict[str, Any]] | None" = None,
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
+        reasoning_enabled: bool = False,
     ) -> CompletionResult:
         resolved_max_tokens, tool_choice_first_turn = _apply_model_knobs(
             self._model_cfg, max_tokens
@@ -557,6 +575,7 @@ class OpenAIClient:
             output_config=output_config,
             agent_name=agent_name, metrics=self._metrics,
             tool_choice_first_turn=tool_choice_first_turn,
+            model_cfg=self._model_cfg, reasoning_enabled=reasoning_enabled,
         )
 
 
@@ -657,6 +676,7 @@ class AnthropicClient:
         system: "str | list[dict[str, Any]] | None" = None,
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
+        reasoning_enabled: bool = False,  # REVUE-337: accepted but unused — Anthropic uses output_config grammar
     ) -> CompletionResult:
         # REVUE-241 P1: the tool loop must inherit the same retry contract as
         # complete() — without _with_retry a single transient 429 collapses a
@@ -752,7 +772,9 @@ class AzureOpenAIClient:
         system: "str | list[dict[str, Any]] | None" = None,
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
+        reasoning_enabled: bool = False,
     ) -> CompletionResult:
+        # REVUE-337: reasoning_enabled accepted but unused — Azure OpenAI does not route DeepSeek
         # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
         # their 3-attempt retry budget on the new default path.
         # REVUE-263: apply per-model registry knobs (tool_choice_first_turn,
@@ -894,6 +916,7 @@ class OpenRouterClient:
         system: "str | list[dict[str, Any]] | None" = None,
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
+        reasoning_enabled: bool = False,
     ) -> CompletionResult:
         # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
         # their 3-attempt retry budget on the new default path.
@@ -909,6 +932,7 @@ class OpenRouterClient:
             output_config=output_config,
             agent_name=agent_name, metrics=self._metrics,
             tool_choice_first_turn=tool_choice_first_turn,
+            model_cfg=self._model_cfg, reasoning_enabled=reasoning_enabled,
         )
 
 
@@ -977,6 +1001,7 @@ class CustomGatewayClient:
         system: "str | list[dict[str, Any]] | None" = None,
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
+        reasoning_enabled: bool = False,
     ) -> CompletionResult:
         # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
         # their 3-attempt retry budget on the new default path.
@@ -992,6 +1017,7 @@ class CustomGatewayClient:
             output_config=output_config,
             agent_name=agent_name, metrics=self._metrics,
             tool_choice_first_turn=tool_choice_first_turn,
+            model_cfg=self._model_cfg, reasoning_enabled=reasoning_enabled,
         )
 
 

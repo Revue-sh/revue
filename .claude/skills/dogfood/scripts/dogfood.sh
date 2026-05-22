@@ -28,14 +28,15 @@ if [[ ! -s "$DIFF_FILE" ]]; then
 fi
 
 # ── 2. Validate config ────────────────────────────────────────────────────────
-PYTHONPATH="${REPO_ROOT}/src" python3 -m revue.cli validate --config .revue.yml
+# REVUE-310: CLI now lives in packaging/revue-ci/src/revue_ci/cli.py
+PY="${REPO_ROOT}/.venv/bin/python3"
+"$PY" -m revue_ci.cli validate --config .revue.yml
 
 # ── 3. Run review ─────────────────────────────────────────────────────────────
 echo "[dogfood] Starting AI code review..."
 export APP_ENV=staging
-export PYTHONPATH="${REPO_ROOT}/src"
 
-python3 -u src/revue/cli.py review \
+"$PY" -u -m revue_ci.cli review \
     --diff "$DIFF_FILE" \
     --config .revue.yml \
     --comment-style per-issue

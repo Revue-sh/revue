@@ -191,6 +191,7 @@ class _ScriptedClient:
         system: "str | list[dict[str, Any]] | None" = None,
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
+        reasoning_enabled: bool = False,
     ) -> CompletionResult:
         self.complete_with_tools_calls.append({
             "messages": messages,

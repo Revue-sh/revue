@@ -534,6 +534,8 @@ def openai_tool_loop(
     agent_name: "str | None" = None,
     metrics: "Any | None" = None,
     tool_choice_first_turn: str = "auto",
+    extra_body: "dict[str, Any] | None" = None,
+    response_format_override: "dict[str, Any] | None" = None,
 ) -> "CompletionResult":  # type: ignore[name-defined]
     """Run the OpenAI-compatible tool-use loop.
 
@@ -576,6 +578,7 @@ def openai_tool_loop(
     openai_tools = _anthropic_tools_to_openai(tools)
     last_text = ""
     last_usage: Any = None
+    last_reasoning_details: "list[dict[str, Any]] | None" = None
     hit_cap_in_tool_use = False
 
     for iter_idx in range(max_iterations):
@@ -586,21 +589,53 @@ def openai_tool_loop(
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
-        if response_format is not None:
-            kwargs["response_format"] = response_format
+        # Apply response_format — preferring override if set (REVUE-337: for schema_mode_when_reasoning)
+        response_fmt = response_format_override if response_format_override is not None else response_format
+        if response_fmt is not None:
+            kwargs["response_format"] = response_fmt
         # Only the opening turn carries the nudge; subsequent iterations
         # let OpenAI's implicit ``auto`` apply so the model can converge.
         # ``auto`` is the wire-level default — write nothing for it.
-        if iter_idx == 0 and tool_choice_first_turn != "auto":
+        #
+        # REVUE-337: when reasoning is enabled (DeepSeek thinking mode),
+        # ``tool_choice="required"`` creates a deadlock — the model uses
+        # the reasoning channel to decide no tool is needed but then has
+        # no legal exit (``required`` forbids a content-only reply), so it
+        # emits reasoning + empty content + no tool_calls. Confirmed by
+        # vllm #33215. Skip the nudge when reasoning is on; let ``auto``
+        # apply so the model can either call a tool OR respond directly.
+        reasoning_on = bool(extra_body and "reasoning" in extra_body)
+        if iter_idx == 0 and tool_choice_first_turn != "auto" and not reasoning_on:
             kwargs["tool_choice"] = tool_choice_first_turn
+        # REVUE-337: merge extra_body (e.g., reasoning channel params)
+        if extra_body:
+            kwargs["extra_body"] = {**kwargs.get("extra_body", {}), **extra_body}
+        # REVUE-337 AC7: surface wire-level kwargs for triage
+        _log.info(
+            "[tool-loop-wire] agent=%s iter=%d keys=%s extra_body=%s response_format=%s",
+            agent_name or "?", iter_idx, list(kwargs.keys()),
+            kwargs.get("extra_body"), kwargs.get("response_format"),
+        )
         resp = sdk_client.chat.completions.create(**kwargs)
         choice = resp.choices[0]
         message = choice.message
         last_usage = getattr(resp, "usage", None)
+        finish_reason = getattr(choice, "finish_reason", None)
 
         tool_calls = getattr(message, "tool_calls", None) or []
         if not tool_calls:
             last_text = getattr(message, "content", None) or ""
+            # REVUE-337: capture reasoning_details from final response
+            raw_reasoning = getattr(message, "reasoning_details", None)
+            last_reasoning_details = (
+                raw_reasoning if isinstance(raw_reasoning, list) else None
+            )
+            # REVUE-337 AC7: surface finish_reason + reasoning_details_len for triage
+            _log.info(
+                "[tool-loop-final] agent=%s finish_reason=%s content_len=%d reasoning_details_len=%s",
+                agent_name or "?", finish_reason, len(last_text),
+                len(last_reasoning_details) if last_reasoning_details else None,
+            )
             break
 
         # Track when the final iteration still wants to call tools — triggers
@@ -672,13 +707,23 @@ def openai_tool_loop(
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
-        if response_format is not None:
-            finalize_kwargs["response_format"] = response_format
+        # Apply response_format — preferring override if set (REVUE-337: for schema_mode_when_reasoning)
+        finalize_fmt = response_format_override if response_format_override is not None else response_format
+        if finalize_fmt is not None:
+            finalize_kwargs["response_format"] = finalize_fmt
+        # REVUE-337: merge extra_body (e.g., reasoning channel params) to finalize too
+        if extra_body:
+            finalize_kwargs["extra_body"] = {**finalize_kwargs.get("extra_body", {}), **extra_body}
         # Deliberately omit `tools` — forces text-only response.
 
         finalize_resp = sdk_client.chat.completions.create(**finalize_kwargs)
         finalize_choice = finalize_resp.choices[0]
         last_text = getattr(finalize_choice.message, "content", None) or ""
+        # REVUE-337: capture reasoning_details from finalize response
+        raw_finalize_reasoning = getattr(finalize_choice.message, "reasoning_details", None)
+        last_reasoning_details = (
+            raw_finalize_reasoning if isinstance(raw_finalize_reasoning, list) else None
+        )
         finalize_usage = getattr(finalize_resp, "usage", None)
 
         # Observability mirror of the Anthropic path: dedicated outcome line
@@ -746,4 +791,4 @@ def openai_tool_loop(
             )
         )
 
-    return CompletionResult(text=last_text, usage=token_usage)
+    return CompletionResult(text=last_text, usage=token_usage, reasoning_details=last_reasoning_details)
