@@ -1,8 +1,8 @@
 """RS256 JWT signing for licence activation (REVUE-277 Phase 2).
 
 The private key is loaded from the Fly secret named in
-``revue_core.security.jwt_keys.JWT_SIGNING_KEY_ENV_VAR``. The CLI verifies
-the resulting JWT against the public-key constant in the same module.
+``JWT_SIGNING_KEY_ENV_VAR``. The CLI verifies the resulting JWT against
+the ``JWT_PUBLIC_KEY_PEM`` constant in ``revue_core.security.jwt_keys``.
 
 Loading is **lazy** — the env var is read inside ``sign_licence_jwt`` so
 tests can monkeypatch it without restarting the FastAPI app. Reading at
@@ -19,7 +19,13 @@ from typing import Final
 
 import jwt as pyjwt
 
-from revue_core.security.jwt_keys import JWT_ALGORITHM, JWT_SIGNING_KEY_ENV_VAR
+
+# Inlined from ``revue_core.security.jwt_keys`` because the web container
+# does not ship revue_core — importing it at module top crashes uvicorn
+# (REVUE-345). The CLI still uses the revue_core copy for verification;
+# the two must stay in sync.
+JWT_ALGORITHM: Final[str] = "RS256"
+JWT_SIGNING_KEY_ENV_VAR: Final[str] = "JWT_SIGNING_KEY"
 
 
 # 365 days is a deliberate trade-off between forcing online refresh
