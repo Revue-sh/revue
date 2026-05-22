@@ -1,0 +1,146 @@
+Migration inventory:
+  active: instruction files - 1 found
+    - CLAUDE.md
+  active: skills - 63 found
+    - bitbucket-create-pr
+    - bitbucket-delete-comments
+    - bitbucket-merge-pr
+    - bitbucket-pr-review
+    - bitbucket-reply-comment
+    - bmad-advanced-elicitation
+    - bmad-agent-analyst
+    - bmad-agent-architect
+    - bmad-agent-blind-hunter
+    - bmad-agent-builder
+    - bmad-agent-dev
+    - bmad-agent-edge-case-hunter
+    - bmad-agent-pm
+    - bmad-agent-qa
+    - bmad-agent-quick-flow-solo-dev
+    - bmad-agent-sm
+    - bmad-agent-tech-writer
+    - bmad-agent-ux-designer
+    - bmad-bmb-setup
+    - bmad-brainstorming
+    - bmad-check-implementation-readiness
+    - bmad-code-review
+    - bmad-correct-course
+    - bmad-create-architecture
+    - bmad-create-epics-and-stories
+    - bmad-create-prd
+    - bmad-create-story
+    - bmad-create-ux-design
+    - bmad-dev-story
+    - bmad-distillator
+    - bmad-document-project
+    - bmad-domain-research
+    - bmad-edit-prd
+    - bmad-editorial-review-prose
+    - bmad-editorial-review-structure
+    - bmad-generate-project-context
+    - bmad-help
+    - bmad-index-docs
+    - bmad-init
+    - bmad-market-research
+    - bmad-module-builder
+    - bmad-party-mode
+    - bmad-product-brief
+    - bmad-qa-generate-e2e-tests
+    - bmad-quick-dev
+    - bmad-retrospective
+    - bmad-review-adversarial-general
+    - bmad-review-edge-case-hunter
+    - bmad-shard-doc
+    - bmad-sprint-planning
+    - bmad-sprint-status
+    - bmad-technical-research
+    - bmad-validate-prd
+    - bmad-workflow-builder
+    - dogfood
+    - handoff
+    - humaniser
+    - jira-ticket
+    - pair-programming
+    - pr-comments
+    - revue
+    - run-tests
+    - unit-test-principles
+  active: command sources - 3 found
+    provider: source command (3)
+      - prime
+      - terse
+      - verbose
+  inactive: subagents - none found
+Migration surfaces:
+  active: AGENTS.md - 1 instruction file(s) found.
+  active: skills - 66 skill(s) converted.
+  inactive: MCP config - No settings or MCP config found.
+  inactive: subagents - No subagents found.
+Migration report:
+  symlinked: AGENTS.md - Linked to CLAUDE.md.
+  manual_fix_required: .agents/skills/bitbucket-create-pr/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `model`.
+  manual_fix_required: .agents/skills/bitbucket-delete-comments/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `argument-hint`, `disable-model-invocation`, `model`.
+  manual_fix_required: .agents/skills/bitbucket-merge-pr/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `model`.
+  manual_fix_required: .agents/skills/bitbucket-pr-review/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `model`.
+  manual_fix_required: .agents/skills/bitbucket-reply-comment/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `argument-hint`, `disable-model-invocation`, `model`.
+  manual_fix_required: .agents/skills/bmad-advanced-elicitation/SKILL.md - Manual review required for Claude skill fields: `agent_party`.
+  rewritten: .agents/skills/bmad-agent-analyst/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-architect/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-blind-hunter/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-builder/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-dev/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-edge-case-hunter/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-pm/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-qa/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-quick-flow-solo-dev/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-sm/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-tech-writer/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-agent-ux-designer/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-bmb-setup/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-brainstorming/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-check-implementation-readiness/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-code-review/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-correct-course/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-create-architecture/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-create-epics-and-stories/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-create-prd/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-create-story/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-create-ux-design/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-dev-story/SKILL.md - Converted Claude skill.
+  manual_fix_required: .agents/skills/bmad-distillator/SKILL.md - Manual review required for Claude skill fields: `argument-hint`.
+  rewritten: .agents/skills/bmad-document-project/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-domain-research/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-edit-prd/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-editorial-review-prose/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-editorial-review-structure/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-generate-project-context/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-help/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-index-docs/SKILL.md - Converted Claude skill.
+  manual_fix_required: .agents/skills/bmad-init/SKILL.md - Manual review required for Claude skill fields: `argument-hint`.
+  rewritten: .agents/skills/bmad-market-research/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-module-builder/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-party-mode/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-product-brief/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-qa-generate-e2e-tests/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-quick-dev/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-retrospective/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-review-adversarial-general/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-review-edge-case-hunter/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-shard-doc/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-sprint-planning/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-sprint-status/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-technical-research/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-validate-prd/SKILL.md - Converted Claude skill.
+  rewritten: .agents/skills/bmad-workflow-builder/SKILL.md - Converted Claude skill.
+  manual_fix_required: .agents/skills/dogfood/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `model`.
+  manual_fix_required: .agents/skills/handoff/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`.
+  manual_fix_required: .agents/skills/humaniser/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `Edit existing text to remove AI-generated writing patterns. Detects and fixes`, `USE WHEN`, `context`, `model`.
+  manual_fix_required: .agents/skills/jira-ticket/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `model`.
+  rewritten: .agents/skills/pair-programming/SKILL.md - Converted Claude skill.
+  manual_fix_required: .agents/skills/pr-comments/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `model`.
+  manual_fix_required: .agents/skills/revue/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `Mode 1 "position"`, `Mode 2 "dry-run"`, `model`.
+  manual_fix_required: .agents/skills/run-tests/SKILL.md - Manual review required for Claude skill fields: `allowed-tools`, `model`.
+  rewritten: .agents/skills/unit-test-principles/SKILL.md - Converted Claude skill.
+  manual_fix_required: .agents/skills/source-command-prime/SKILL.md - Converted source command `prime` to a single-file Codex skill; review invocation and template placeholder semantics.
+  manual_fix_required: .agents/skills/source-command-terse/SKILL.md - Converted source command `terse` to a single-file Codex skill; review invocation and template placeholder semantics.
+  manual_fix_required: .agents/skills/source-command-verbose/SKILL.md - Converted source command `verbose` to a single-file Codex skill; review invocation and template placeholder semantics.
