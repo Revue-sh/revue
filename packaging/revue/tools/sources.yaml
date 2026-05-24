@@ -32,6 +32,20 @@ skill:
         to: "from revue_skill.vendored.terminal_state"
       - from: "from positioning.adapters"
         to: "from revue_skill.vendored.positioning_adapters"
+      # REVUE-278: the dev script tolerates a missing revue_skill.validate
+      # because it runs from the source tree where the validate module may
+      # not be on sys.path. The vendored copy inside the Nuitka-compiled
+      # wheel MUST NOT tolerate this — ImportError-as-bypass would let an
+      # attacker who removed or corrupted validate.so issue themselves
+      # unlimited reviews. Swap the dev bypass for a hard-fail at vendor
+      # time. See tests/test_local_run_gate.py::test_validate_import_failure_does_not_bypass
+      # and build_nuitka.py:COMPILE_ROOTS.
+      # NOTE: the from/to strings are 4-space indented (function-body level)
+      # to match the literal text in scripts/local_run.py. Using double-quoted
+      # YAML with explicit \n escapes avoids ambiguity with block-scalar
+      # indent stripping rules.
+      - from: "    try:\n        from revue_skill.validate import validate_licence\n    except ImportError:\n        # Source-tree mode: this script is being run from scripts/local_run.py\n        # without the published wheel installed. The wheel-only validation\n        # module isn't available; treat the same as REVUE_SKIP_LICENCE_CHECK.\n        return 0"
+        to: "    # Wheel mode: ImportError MUST hard-fail. A silent bypass on\n    # missing validate.so is a licence-bypass exploit — see the\n    # rewrite_imports note in packaging/revue/tools/sources.yaml.\n    try:\n        from revue_skill.validate import validate_licence\n    except ImportError as exc:\n        sys.stderr.write(\n            \"error: Revue installation appears corrupt \"\n            f\"(could not load revue_skill.validate: {exc}). \"\n            \"Reinstall the revue wheel from https://revue.sh/install.\\n\"\n        )\n        return 8"
 
 vendored:
   - source: packaging/revue_core/src/revue_core/comments/position_adapter.py

@@ -28,6 +28,7 @@ else:  # pragma: no cover
 
 PACKAGING_DIR = Path(__file__).resolve().parent.parent
 PYPROJECT = PACKAGING_DIR / "pyproject.toml"
+BUILD_WHEEL = PACKAGING_DIR / "build" / "build_wheel.py"
 VENDORED_LOCAL_RUN = PACKAGING_DIR / "src" / "revue_skill" / "skill" / "local_run.py"
 
 
@@ -83,4 +84,41 @@ def test_vendored_local_run_keeps_revue_core_runtime_imports() -> None:
         f"local_run.py to justify the runtime dep; found {len(revue_core_imports)}. "
         "If the orchestration layer has been vendored, drop the revue_core "
         "runtime dep in packaging/revue/pyproject.toml and delete this test."
+    )
+
+
+def test_wheel_metadata_matches_pyproject_dependencies() -> None:
+    """REVUE-278 — bridge the pyproject ↔ build_wheel.py gap.
+
+    ``packaging/revue/build/build_wheel.py`` hand-rolls the wheel METADATA
+    instead of reading pyproject.toml. That means a runtime dep declared in
+    pyproject can silently disappear from the wheel's ``Requires-Dist`` lines —
+    pip will then install the wheel without the dep and the first ``import
+    revue_skill.validate`` crashes with ``ModuleNotFoundError`` on the
+    customer's machine.
+
+    Discovered when REVUE-278 added ``httpx`` (via the new ``validate.py`` +
+    ``activate.py`` modules) to pyproject but the hand-rolled METADATA still
+    only declared jsonschema + PyYAML. A freshly-built wheel installed cleanly
+    but every gated command crashed on import.
+
+    Lock the invariant: every package in pyproject's ``dependencies`` MUST
+    appear as a ``Requires-Dist:`` line in build_wheel.py. Add new deps in
+    both places.
+    """
+    declared = {_package_name(req) for req in _runtime_dependencies()}
+
+    build_source = BUILD_WHEEL.read_text(encoding="utf-8")
+    metadata_decls = re.findall(
+        r'Requires-Dist:\s*([A-Za-z0-9_.\-\[\]]+)',
+        build_source,
+    )
+    in_metadata = {_package_name(name) for name in metadata_decls}
+
+    missing = declared - in_metadata
+    assert not missing, (
+        f"build_wheel.py METADATA is missing runtime deps from pyproject.toml: "
+        f"{sorted(missing)}. The published wheel will install without them and "
+        f"crash on import. Add `f\"Requires-Dist: <pkg>>=<version>\\n\"` lines "
+        f"to packaging/revue/build/build_wheel.py:100-111 to match pyproject."
     )

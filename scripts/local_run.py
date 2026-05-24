@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -1665,9 +1666,64 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# REVUE-278 Task 7: review subcommands gated by licence validation. The
+# ``position`` subcommand is a dev/CI fixture-runner — no licence needed.
+_LICENCE_GATED_COMMANDS = frozenset({
+    "prepare",
+    "consolidate",
+    "classify-and-build-vex-jobs",
+    "apply-verdicts-and-finalize",
+    "run",
+})
+
+
+def _gate_licence_validation(cmd: str) -> int:
+    """Run the licence cache/network state machine BEFORE any review begins.
+
+    Returns 0 to proceed; non-zero exit code halts the review per the
+    contract in ``revue_skill/validate.py``. Honours
+    ``REVUE_SKIP_LICENCE_CHECK=1`` for tests and local development against
+    in-tree code (the published Nuitka binary's threat model elsewhere
+    handles this).
+    """
+    if cmd not in _LICENCE_GATED_COMMANDS:
+        return 0
+    if os.environ.get("REVUE_SKIP_LICENCE_CHECK") == "1":
+        return 0
+
+    licence_path = Path.home() / ".config" / "revue" / "licence.jwt"
+    try:
+        jwt_token = licence_path.read_text().strip()
+    except (FileNotFoundError, PermissionError, OSError) as exc:
+        sys.stderr.write(
+            f"error: Revue needs an activated licence — run `revue activate`. "
+            f"(could not read {licence_path}: {exc.__class__.__name__})\n"
+        )
+        return 8
+
+    if not jwt_token:
+        sys.stderr.write(
+            "error: Revue licence file is empty — run `revue activate`.\n"
+        )
+        return 8
+
+    try:
+        from revue_skill.validate import validate_licence
+    except ImportError:
+        # Source-tree mode: this script is being run from scripts/local_run.py
+        # without the published wheel installed. The wheel-only validation
+        # module isn't available; treat the same as REVUE_SKIP_LICENCE_CHECK.
+        return 0
+    return validate_licence(jwt_token)
+
+
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
+
+    gate_code = _gate_licence_validation(args.cmd)
+    if gate_code != 0:
+        return gate_code
 
     if args.cmd == "position":
         if args.diff:

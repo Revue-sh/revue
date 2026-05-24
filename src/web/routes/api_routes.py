@@ -7,12 +7,14 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from database import get_db
 from auth import get_session
 from jwt_signing import JWTSigningKeyMissing, sign_licence_jwt
-from models import get_license_by_key, increment_usage, reset_monthly_counter, create_review_run, get_all_runs_for_user, get_analytics
+from jwt_verify import decode_licence_jwt
+from models import get_license_by_key, get_active_license_for_workspace, increment_usage, reset_monthly_counter, create_review_run, get_all_runs_for_user, get_analytics, record_usage_event
+import jwt as pyjwt
 
 router = APIRouter()
 
@@ -42,6 +44,45 @@ class ActivateRequest(BaseModel):
 
     key: str
     machine_fingerprint: str
+
+
+class LicenceValidateRequest(BaseModel):
+    """REVUE-278 AC1: payload for POST /api/v2/licence/validate.
+
+    The skill sends the JWT read from ~/.config/revue/licence.jwt. The server
+    verifies the signature, extracts the tier and workspace_id, and returns a
+    validation response with refresh_after_ts (server-issued cache horizon) and
+    optionally a refreshed_jwt.
+
+    The 4 KiB cap is the same asymmetric-attack-surface defence ``ActivateRequest``
+    applies to ``machine_fingerprint`` — real RS256 licence JWTs are under 2 KB;
+    an attacker POSTing a 1 MB string would otherwise burn CPU on the failing
+    decode and bloat the request log."""
+
+    jwt: str = Field(max_length=4096)
+
+
+class UsageEmitRequest(BaseModel):
+    """REVUE-278 AC6: payload for POST /api/v2/usage/emit — per-invocation
+    telemetry from ``/revue-local`` (or any skill invoking ``/validate``).
+
+    The client supplies a signed JWT (same one issued by /activate) so the
+    server can derive workspace_id from the verified claims rather than
+    trusting a client-supplied value — otherwise any unauthenticated caller
+    could poison another tenant's usage counters or inflate billing.
+
+    The client supplies the epoch-seconds timestamp of invocation (``ts``);
+    the server stamps received_at at write time so billing windows use the
+    authoritative server timeline, not client clocks.
+
+    JWT length is capped at 4 KiB for the same reason as
+    ``LicenceValidateRequest`` — symmetric defence across both authenticated
+    endpoints."""
+
+    jwt: str = Field(max_length=4096)
+    reviews_run: int
+    findings_count: int
+    ts: int  # epoch seconds — client-supplied invocation time
 
 
 # S9: enforce length cap + charset on the client-supplied fingerprint
@@ -255,6 +296,154 @@ async def list_runs(
             for r in runs
         ],
     })
+
+
+@router.post("/v2/licence/validate")
+async def validate_licence(body: LicenceValidateRequest) -> JSONResponse:
+    """REVUE-278 AC1–AC5: validate a JWT and return tier + cache refresh window.
+
+    The skill POSTs the JWT from ~/.config/revue/licence.jwt. The server:
+    1. Verifies the JWT signature
+    2. Checks the workspace's licence is still ``is_active`` in the DB
+    3. Extracts tier and workspace_id claims
+    4. Returns {valid, tier, reviews_remaining, refresh_after_ts, refreshed_jwt?}
+
+    If verification fails (expired, tampered, missing claims) OR the licence
+    has been revoked since issuance, returns {valid: false}. All tiers get the
+    same 24h cache window (no tier-graded grace to prevent tier-bypass attacks
+    per AC5).
+
+    The ``refresh_after_ts`` is issued by the server (issuance_ts + 86400),
+    so the skill can trust it as the canonical cache horizon even if the
+    client clock is skewed (per decision #4 in PM-plan).
+
+    Revocation note: the JWT carries a 365-day ``exp``; without the DB
+    ``is_active`` check, the only way to invalidate a leaked or churned JWT
+    would be full signing-key rotation (which kills every customer). Adding
+    the lookup makes per-workspace revocation honour the 24h cache bound
+    that PM-plan decision #4 already accepts.
+    """
+    try:
+        claims = decode_licence_jwt(body.jwt)
+    except pyjwt.PyJWTError:
+        # Any JWT error (expired, invalid sig, missing claims, malformed)
+        # returns valid: false. The skill will retry or block, depending on
+        # whether it has a fresh cached result (AC3–AC4).
+        return JSONResponse({
+            "valid": False,
+            "tier": None,
+            "reviews_remaining": None,
+            "refresh_after_ts": None,
+            "refreshed_jwt": None,
+        })
+
+    # Decode succeeded — extract the claims
+    tier = claims.get("tier")
+    workspace_id = claims.get("workspace_id")
+
+    # Revocation gate. Done after JWT decode (cheap, no DB hit) so signature
+    # / expiry failures still short-circuit before the lookup.
+    if isinstance(workspace_id, int):
+        with get_db() as conn:
+            if get_active_license_for_workspace(conn, workspace_id) is None:
+                return JSONResponse({
+                    "valid": False,
+                    "tier": None,
+                    "reviews_remaining": None,
+                    "refresh_after_ts": None,
+                    "refreshed_jwt": None,
+                })
+
+    # Calculate reviews_remaining (for now, no server-side cap per tier;
+    # free-tier enforcement is REVUE-279). Return None for unlimited tiers.
+    reviews_remaining = None
+    if tier == "free":
+        reviews_remaining = 25  # placeholder; REVUE-279 will compute this
+
+    # AC1 / decision #4: refresh_after_ts is server-issued and canonical.
+    # Compute from server clock — do NOT derive from the JWT's
+    # ``issuance_ts`` claim, since that is client-presented (signed, but a
+    # leaked signing key or a future bug could mint a far-future
+    # issuance_ts and effectively disable re-validation forever).
+    refresh_after_ts = int(datetime.now(timezone.utc).timestamp()) + 86400
+
+    return JSONResponse({
+        "valid": True,
+        "tier": tier,
+        "reviews_remaining": reviews_remaining,
+        "refresh_after_ts": refresh_after_ts,
+        "refreshed_jwt": None,  # Rotation policy deferred; always None for now
+    })
+
+
+@router.post("/v2/usage/emit")
+async def emit_usage(body: UsageEmitRequest) -> Response:
+    """REVUE-278 AC6: record one per-invocation usage event.
+
+    Telemetry endpoint used by ``/revue-local`` to report the number of
+    reviews run and findings returned in a single invocation.
+
+    Authentication: the client supplies the licence JWT (same one issued by
+    ``/activate``). Workspace_id is derived from the verified claims so an
+    unauthenticated caller cannot poison another tenant's counters or
+    inflate billing. The endpoint:
+
+    1. Verifies the JWT signature and required claims
+    2. Rejects negative counter values (defence against billing fraud)
+    3. Persists one UsageEvent row tied to the verified workspace_id
+    4. Returns 200 (success is implicit; no response body)
+    """
+    try:
+        claims = decode_licence_jwt(body.jwt)
+    except pyjwt.PyJWTError as exc:
+        return JSONResponse(
+            {
+                "error": "invalid_jwt",
+                "message": f"licence JWT failed verification: {exc}",
+            },
+            status_code=401,
+        )
+
+    workspace_id = claims.get("workspace_id")
+    if not isinstance(workspace_id, int):
+        return JSONResponse(
+            {
+                "error": "invalid_jwt",
+                "message": "licence JWT is missing a valid workspace_id claim",
+            },
+            status_code=401,
+        )
+
+    # Revocation gate. Symmetric with /v2/licence/validate — a revoked
+    # workspace must not be able to keep emitting telemetry until JWT exp.
+    with get_db() as conn:
+        if get_active_license_for_workspace(conn, workspace_id) is None:
+            return JSONResponse(
+                {
+                    "error": "licence_revoked",
+                    "message": "workspace has no active licence",
+                },
+                status_code=401,
+            )
+
+    if body.reviews_run < 0 or body.findings_count < 0:
+        return JSONResponse(
+            {
+                "error": "invalid_counters",
+                "message": "reviews_run and findings_count must be non-negative",
+            },
+            status_code=422,
+        )
+
+    with get_db() as conn:
+        record_usage_event(
+            conn,
+            workspace_id=workspace_id,
+            reviews_run=body.reviews_run,
+            findings_count=body.findings_count,
+            emitted_at=body.ts,
+        )
+    return Response(status_code=200)
 
 
 @router.get("/analytics")

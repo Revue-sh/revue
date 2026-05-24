@@ -28,10 +28,19 @@ COMPILED_DIR = PACKAGING_DIR / "dist" / "compiled" / "revue_skill"
 
 # Python files that will be compiled to .so/.pyd.
 # __init__.py is excluded — Nuitka --module rejects it as a target.
+#
+# IP-PROTECTION INVARIANT: every module that touches a JWT (sign, verify,
+# embedded public key, validation endpoint URL, exit-code semantics) MUST
+# be compiled. Plain `.py` in the wheel = customer-readable bypass surface:
+# the hardcoded VALIDATE_URL is a one-line edit away from a free-review
+# exploit. Adding a new licence-touching module? Add it here. See
+# `feedback_revue_core_nuitka` + `project_license_validator_hardcoded`.
 COMPILE_ROOTS = [
     SRC_DIR / "cli.py",
     SRC_DIR / "install.py",
     SRC_DIR / "manifest.py",
+    SRC_DIR / "activate.py",
+    SRC_DIR / "validate.py",
     SRC_DIR / "skill" / "local_run.py",
 ]
 

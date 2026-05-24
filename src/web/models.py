@@ -43,6 +43,16 @@ class LicenseKey:
 
 
 @dataclass
+class UsageEvent:
+    id: int
+    workspace_id: int
+    reviews_run: int
+    findings_count: int
+    emitted_at: int  # client-supplied epoch seconds (untrusted clock)
+    received_at: str  # server-stamped ISO8601 (canonical timeline)
+
+
+@dataclass
 class ReviewRun:
     id: int
     license_key_id: int
@@ -175,6 +185,24 @@ def create_license_key(
 
 def get_license_by_key(conn: sqlite3.Connection, key: str) -> Optional[LicenseKey]:
     row = conn.execute("SELECT * FROM license_keys WHERE key = ?", (key,)).fetchone()
+    return row_to_license_key(row) if row else None
+
+
+def get_active_license_for_workspace(
+    conn: sqlite3.Connection, workspace_id: int
+) -> Optional[LicenseKey]:
+    """Latest active licence_key for a workspace, or None if revoked.
+
+    Used by /v2/licence/validate and /v2/usage/emit to enforce revocation
+    within the 24h cache bound — without this lookup, a stolen JWT would
+    remain bearer-of-trust until its 365-day ``exp`` claim.
+    """
+    row = conn.execute(
+        """SELECT * FROM license_keys
+           WHERE workspace_id = ? AND is_active = 1
+           ORDER BY created_at DESC LIMIT 1""",
+        (workspace_id,),
+    ).fetchone()
     return row_to_license_key(row) if row else None
 
 
@@ -425,6 +453,58 @@ def get_conversion_analytics(
         "conversion_rate": conversion_rate,
         "signups_over_time": signups_over_time,
     }
+
+
+# --- Usage event queries (REVUE-278) ---
+
+def record_usage_event(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: int,
+    reviews_run: int,
+    findings_count: int,
+    emitted_at: int,
+) -> int:
+    """Insert one per-invocation usage record. ``received_at`` is set by
+    SQLite's ``CURRENT_TIMESTAMP`` default — never accept it from the
+    client. The client-supplied ``emitted_at`` is stored for skew
+    diagnostics but never trusted for billing windows.
+    """
+    cur = conn.execute(
+        """INSERT INTO usage_events
+           (workspace_id, reviews_run, findings_count, emitted_at)
+           VALUES (?, ?, ?, ?)""",
+        (workspace_id, reviews_run, findings_count, emitted_at),
+    )
+    return cur.lastrowid  # type: ignore[return-value]
+
+
+def get_usage_events_for_workspace(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    limit: int = 1000,
+) -> list[UsageEvent]:
+    """Return usage events for one workspace, newest first. The composite
+    index ``idx_usage_events_workspace_received_at`` covers this query."""
+    rows = conn.execute(
+        """SELECT id, workspace_id, reviews_run, findings_count,
+                  emitted_at, received_at
+           FROM usage_events
+           WHERE workspace_id = ?
+           ORDER BY received_at DESC LIMIT ?""",
+        (workspace_id, limit),
+    ).fetchall()
+    return [
+        UsageEvent(
+            id=r["id"],
+            workspace_id=r["workspace_id"],
+            reviews_run=r["reviews_run"],
+            findings_count=r["findings_count"],
+            emitted_at=r["emitted_at"],
+            received_at=str(r["received_at"]),
+        )
+        for r in rows
+    ]
 
 
 def get_user_by_stripe_customer(conn: sqlite3.Connection, customer_id: str) -> Optional[User]:

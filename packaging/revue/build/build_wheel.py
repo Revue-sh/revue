@@ -106,8 +106,18 @@ def build_wheel() -> None:
             f"Author-email: team@revue.sh\n"
             f"License: Apache-2.0\n"
             f"Requires-Python: >=3.12\n"
+            # IP-PROTECTION INVARIANT: this list MUST stay in sync with the
+            # `dependencies` array in packaging/revue/pyproject.toml. The wheel
+            # METADATA is what pip resolves at install time — if a runtime dep
+            # is missing here, the wheel imports crash on a fresh customer
+            # install. `test_wheel_metadata_matches_pyproject_dependencies`
+            # enforces parity. When adding a new licence/network-touching
+            # module that pulls in a new dep, add it BOTH here and in
+            # pyproject.toml.
+            f"Requires-Dist: revue_core~=0.1.0\n"
             f"Requires-Dist: jsonschema>=4.21\n"
             f"Requires-Dist: PyYAML>=6.0\n"
+            f"Requires-Dist: httpx>=0.27\n"
         )
         arc = f"{dist_info_dir}/METADATA"
         data = metadata.encode()

@@ -1,6 +1,6 @@
 ---
 name: epic-progress
-model: haiku
+model: sonnet
 description: Render an epic progress recap (green-bar tally of Done/Active children) for a Jira epic. Accepts a ticket key or epic key — resolves to parent epic automatically. Use when the user says "epic progress", "epic recap", or when a Jira ticket completes.
 allowed-tools: Bash, Read
 ---

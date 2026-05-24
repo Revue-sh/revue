@@ -55,6 +55,23 @@ CREATE TABLE IF NOT EXISTS review_runs (
 
 CREATE INDEX IF NOT EXISTS idx_review_runs_license_key ON review_runs(license_key_id);
 CREATE INDEX IF NOT EXISTS idx_review_runs_created_at ON review_runs(created_at DESC);
+
+-- REVUE-278: per-invocation usage records emitted by /revue-local. ``emitted_at``
+-- is the client-supplied epoch seconds (untrusted, may be skewed); ``received_at``
+-- is the server-stamped insertion time used by cohort/billing queries. The
+-- composite index supports the REVUE-279 free-tier paywall lookup
+-- (workspace_id + recent window).
+CREATE TABLE IF NOT EXISTS usage_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+    reviews_run INTEGER NOT NULL DEFAULT 0,
+    findings_count INTEGER NOT NULL DEFAULT 0,
+    emitted_at INTEGER NOT NULL,
+    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_events_workspace_received_at
+    ON usage_events(workspace_id, received_at);
 """
 
 REVIEWS_LIMIT_BY_TIER: dict[str, int | None] = {
