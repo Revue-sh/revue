@@ -16,6 +16,145 @@ definitions:
 
   steps:
     # -----------------------------------------------------------------------
+    # Main-branch web promotion chain (REVUE-348): build one immutable image,
+    # deploy it to staging, smoke-test, then manually promote that same image
+    # to production and smoke-test again.
+    # -----------------------------------------------------------------------
+    - step: &build-web-image-fly
+        name: "Build Web Image → Fly Registry"
+        image: docker:24.0.7-cli
+        services:
+          - docker
+        script:
+          - apk add --no-cache curl
+          - curl -fsSL https://fly.io/install.sh -o /tmp/fly-install.sh && sh /tmp/fly-install.sh
+          - export PATH="$HOME/.fly/bin:$PATH"
+          - test -n "${FLY_API_TOKEN:-}"
+          - export WEB_IMAGE="registry.fly.io/revue-staging:${BITBUCKET_COMMIT}"
+          - flyctl auth docker
+          - docker build -t "$WEB_IMAGE" src/web
+          - docker push "$WEB_IMAGE"
+
+    - step: &deploy-web-staging
+        name: "Deploy Web → Staging"
+        script:
+          - apt-get update -qq && apt-get install -y --no-install-recommends curl
+          - curl -fsSL https://fly.io/install.sh -o /tmp/fly-install.sh && sh /tmp/fly-install.sh
+          - export PATH="$HOME/.fly/bin:$PATH"
+          - test -n "${FLY_API_TOKEN:-}"
+          - export WEB_IMAGE="registry.fly.io/revue-staging:${BITBUCKET_COMMIT}"
+          - cd src/web && flyctl deploy --app revue-staging --config fly.staging.toml --image "$WEB_IMAGE" --remote-only
+
+    - step: &smoke-web-staging
+        name: "Smoke Test → Staging"
+        script:
+          - apt-get update -qq && apt-get install -y --no-install-recommends curl
+          - |
+            set -eu
+            CURL_RETRY_FLAGS="--retry 12 --retry-all-errors --connect-timeout 5 --max-time 20"
+
+            assert_json_health() {
+              out="$(mktemp)"
+              code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" "$1")"
+              if [ "$code" != "200" ]; then
+                echo "Expected 200 from $1, got $code" >&2
+                cat "$out" >&2
+                exit 1
+              fi
+              if ! python3 -c 'import json, sys; raise SystemExit(json.load(open(sys.argv[1], encoding="utf-8")) != {"status": "ok"})' "$out"
+              then
+                echo "Unexpected health body from $1" >&2
+                cat "$out" >&2
+                exit 1
+              fi
+            }
+
+            assert_200() {
+              out="$(mktemp)"
+              code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" "$1")"
+              if [ "$code" != "200" ]; then
+                echo "Expected 200 from $1, got $code" >&2
+                cat "$out" >&2
+                exit 1
+              fi
+            }
+
+            assert_422() {
+              out="$(mktemp)"
+              code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" -X POST "$1" -H 'content-type: application/json' -d '{}')"
+              if [ "$code" != "422" ]; then
+                echo "Expected 422 from $1, got $code" >&2
+                cat "$out" >&2
+                exit 1
+              fi
+            }
+
+            assert_json_health "https://staging.revue.sh/health"
+            assert_200 "https://api.staging.revue.sh/health"
+            assert_422 "https://api.staging.revue.sh/license/validate"
+            assert_422 "https://staging.revue.sh/api/license/validate"
+
+    - step: &deploy-web-production
+        name: "Deploy Web → Production"
+        trigger: manual
+        script:
+          - apt-get update -qq && apt-get install -y --no-install-recommends curl
+          - curl -fsSL https://fly.io/install.sh -o /tmp/fly-install.sh && sh /tmp/fly-install.sh
+          - export PATH="$HOME/.fly/bin:$PATH"
+          - test -n "${FLY_API_TOKEN:-}"
+          - export WEB_IMAGE="registry.fly.io/revue-staging:${BITBUCKET_COMMIT}"
+          - cd src/web && flyctl deploy --app revue-io --config fly.toml --image "$WEB_IMAGE" --remote-only
+
+    - step: &smoke-web-production
+        name: "Smoke Test → Production"
+        script:
+          - apt-get update -qq && apt-get install -y --no-install-recommends curl
+          - |
+            set -eu
+            CURL_RETRY_FLAGS="--retry 12 --retry-all-errors --connect-timeout 5 --max-time 20"
+
+            assert_json_health() {
+              out="$(mktemp)"
+              code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" "$1")"
+              if [ "$code" != "200" ]; then
+                echo "Expected 200 from $1, got $code" >&2
+                cat "$out" >&2
+                exit 1
+              fi
+              if ! python3 -c 'import json, sys; raise SystemExit(json.load(open(sys.argv[1], encoding="utf-8")) != {"status": "ok"})' "$out"
+              then
+                echo "Unexpected health body from $1" >&2
+                cat "$out" >&2
+                exit 1
+              fi
+            }
+
+            assert_200() {
+              out="$(mktemp)"
+              code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" "$1")"
+              if [ "$code" != "200" ]; then
+                echo "Expected 200 from $1, got $code" >&2
+                cat "$out" >&2
+                exit 1
+              fi
+            }
+
+            assert_422() {
+              out="$(mktemp)"
+              code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" -X POST "$1" -H 'content-type: application/json' -d '{}')"
+              if [ "$code" != "422" ]; then
+                echo "Expected 422 from $1, got $code" >&2
+                cat "$out" >&2
+                exit 1
+              fi
+            }
+
+            assert_json_health "https://revue.sh/health"
+            assert_200 "https://api.revue.sh/health"
+            assert_422 "https://api.revue.sh/license/validate"
+            assert_422 "https://revue.sh/api/license/validate"
+
+    # -----------------------------------------------------------------------
     # Tests — install all three packages and exercise each test suite.
     # revue_core is the leaf; revue-ci + revue depend on it. Order matters:
     # editable installs of dependents must come after revue_core so import
@@ -220,6 +359,11 @@ pipelines:
   branches:
     main:
       - step: *run-tests
+      - step: *build-web-image-fly
+      - step: *deploy-web-staging
+      - step: *smoke-web-staging
+      - step: *deploy-web-production
+      - step: *smoke-web-production
       - step:
           name: "Tag Release (if warranted)"
           script:
@@ -279,14 +423,6 @@ pipelines:
               git tag "v${NEXT_VERSION}"
               git push origin "v${NEXT_VERSION}"
               echo "Released v${NEXT_VERSION}"
-      - step:
-          name: "Deploy Web → Fly.io"
-          script:
-            - apt-get update -qq && apt-get install -y --no-install-recommends curl
-            - curl -L https://fly.io/install.sh | sh
-            # cd into src/web so flyctl uses it as the Docker build context (requirements.txt lives there).
-            # FLY_APP defaults to revue-io; change to the new app name after domain purchase.
-            - cd src/web && $HOME/.fly/bin/flyctl deploy --app "${FLY_APP:-revue-io}" --remote-only
 
     develop:
       - step: *run-tests

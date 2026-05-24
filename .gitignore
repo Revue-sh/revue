@@ -56,3 +56,4 @@ atlassian-bitbucket-pipelines-runner/
 
 # Per-session Claude Code runtime state (sessionId/pid lock file)
 .claude/scheduled_tasks.lock
+_bmad/custom/config.user.toml

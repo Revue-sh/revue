@@ -1,6 +1,6 @@
 ---
 name: "revue"
-description: ">"
+description: "Run local Revue orchestration commands for positioning fixtures and full pipeline dry-runs. Use when testing Revue review flows locally without posting to GitHub, GitLab, or Bitbucket."
 ---
 
 # revue

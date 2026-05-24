@@ -1,6 +1,6 @@
 ---
 name: "humaniser"
-description: "|"
+description: "Edit existing text to remove AI-generated writing patterns. Detects and fixes inflated symbolism, promotional language, AI vocabulary, negative parallelisms, em dash overuse, and other common AI writing signals."
 ---
 
 # Humaniser: Remove AI Writing Patterns
