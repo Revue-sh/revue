@@ -1,6 +1,6 @@
 ---
 name: bitbucket-merge-pr
-model: haiku
+model: sonnet
 description: Squash-merge an open Bitbucket pull request using the PR title as the exact commit message (no "Merged in..." header). Closes the source branch after merge, syncs the local repo, and pushes to GitHub and GitLab mirrors. Use when the user says "merge the PR", "merge PR #N", "merge this PR", "squash merge", or "merge and clean up".
 allowed-tools: Bash, Read
 ---
@@ -71,15 +71,22 @@ If the script exits non-zero, print the error and stop.
 
 ### Step 3 — Sync local repo
 
-After a successful merge, bring the local repo up to date and remove the stale branch:
+After a successful merge, bring the local repo up to date and remove the stale branch (and any worktree attached to it):
 
 ```bash
 git switch main
 git pull origin main
-git branch -d SOURCE_BRANCH 2>/dev/null || true
+bash .claude/skills/bitbucket-merge-pr/scripts/cleanup_branch.sh SOURCE_BRANCH
 ```
 
-If `git branch -d` fails (branch not local), skip silently — it was already gone.
+`cleanup_branch.sh` detects whether `SOURCE_BRANCH` is checked out in a worktree (per REVUE-349):
+
+- Clean worktree → removes it, then deletes the branch. Prints `✅ Worktree <path> removed` and `✅ Branch <branch> deleted`.
+- No worktree → just deletes the branch. Prints `✅ Branch <branch> deleted`.
+- Dirty worktree → exit 2; preserves both. Surface the error and stop.
+- `git branch -d` failed → exit 4; surfaces git's stderr verbatim. If stderr says "not fully merged" (the squash-merge case), additionally suggests inspecting `git diff origin/main..BRANCH --numstat` and force-deleting with `-D` if safe.
+
+If the script exits non-zero, surface the message to the user and stop — do not force-delete without confirmation.
 
 ### Step 4 — Sync GitHub and GitLab mirrors
 
@@ -111,12 +118,25 @@ This step is post-merge bookkeeping; if it fails, surface the error but do not r
 
 ## Output
 
-Report to the user:
+Report to the user. When a worktree was attached to the source branch:
 
 ```
 ✅ Merged: <pr title>
 ✅ main updated (git pull)
-✅ Branch <source-branch> deleted locally
+✅ Worktree <worktree-path> removed
+✅ Branch <source-branch> deleted
+✅ GitHub main synced
+✅ GitLab main synced
+
+<epic progress recap from /bmad-agent-pm>
+```
+
+When the source branch had no worktree:
+
+```
+✅ Merged: <pr title>
+✅ main updated (git pull)
+✅ Branch <source-branch> deleted
 ✅ GitHub main synced
 ✅ GitLab main synced
 
