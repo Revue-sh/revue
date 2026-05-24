@@ -99,7 +99,11 @@ If the script exits non-zero, print the error. **Do not treat a remote-sync fail
 
 ### Step 5 — Epic progress recap
 
-Bitbucket → Jira automation transitions the merged ticket to **Done** within seconds. Dispatch `/bmad-agent-pm` as a **background sub-agent** with the ticket key and the parent-epic JQL pattern (REST v3 `/search/jql`, JQL `parent=<EPIC-KEY>`). When the agent returns, print its recap verbatim — do not hand-roll the JQL yourself. Format and rules: see `CLAUDE.md → Jira ticket completion — epic progress recap`.
+Dispatch `/bmad-agent-pm` (John) as a background sub-agent. Pass this exact prompt:
+
+> Invoke the `/epic-progress <TICKET-KEY>` skill and return its output verbatim. Do not add commentary, do not re-format — just the recap text.
+
+Print John's response verbatim after the merge confirmation lines. Format and rules live inside `/epic-progress`; do not hand-roll JQL here.
 
 This step is post-merge bookkeeping; if it fails, surface the error but do not retry the merge.
 

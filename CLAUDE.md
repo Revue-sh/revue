@@ -27,27 +27,7 @@ When starting any task, establish scope upfront before writing any code:
 
 ### Jira ticket completion — epic progress recap
 
-After Bitbucket auto-transitions a ticket to Done, dispatch `/bmad-agent-pm` **as a background sub-agent** to fetch the parent epic and produce the recap. Then render the agent's output verbatim — do not bypass John (the PM persona) by hand-rolling the JQL call yourself.
-
-Dispatch prompt to give the PM agent:
-
-> Fetch the parent epic of `<TICKET-KEY>` from Jira (REST v3 `/search/jql`, JQL `parent=<EPIC-KEY>`). Produce an epic progress recap in the exact format below.
-
-Recap format the PM agent must return:
-
-```
-Epic: [<EPIC-KEY>] <Epic Name>
-🟩🟩🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ <done>/<active> tickets (<pct>%)
-```
-
-Rules:
-
-- **active** = total children − rejected − cancelled. Use `active` (not `total`) as the denominator.
-- **done** = count of children with status ∈ {Done, Closed}.
-- **pct** = round(done ÷ active × 100).
-- **Bar width = 20 cells.** Use `🟩` (green square) for done cells and `⬜` (white square) for remaining cells — these survive markdown rendering with distinctive colour, unlike `█`/`░` which render as monochrome.
-- Done cells count = `floor(done ÷ active × 20)`.
-- List Rejected / Cancelled tickets in a separate row below the bar, not on the bar.
+Owned by `/epic-progress`. `bitbucket-merge-pr` dispatches John (`/bmad-agent-pm`) as a background sub-agent with a prompt that invokes `/epic-progress <TICKET-KEY>` and returns the result verbatim. See `.claude/skills/epic-progress/SKILL.md` for format and rules. Never hand-roll the JQL inline.
 
 ### Jira ticket states — non-negotiable rules
 
