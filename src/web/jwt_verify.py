@@ -53,15 +53,20 @@ def decode_licence_jwt(token: str) -> dict[str, Any]:
     - Valid RS256 signature against the embedded public key
     - Token is not expired (``exp`` claim checked)
     - Required claims are present: ``exp``, ``workspace_id``, ``tier``
+    - ``workspace_id`` claim is an int and ``tier`` is a str — pyjwt's
+      ``require`` only validates presence, not type, so a non-int workspace_id
+      would silently bypass the ``isinstance(workspace_id, int)`` guards in
+      /v2/licence/validate's revocation gate and the REVUE-279 paywall.
 
     Raises:
         pyjwt.ExpiredSignatureError — token is past its expiry
         pyjwt.InvalidSignatureError — signature does not match public key
         pyjwt.MissingRequiredClaimError — required claim missing
+        pyjwt.InvalidTokenError — claim has wrong type (workspace_id not int, tier not str)
         pyjwt.DecodeError — malformed token
         pyjwt.InvalidKeyError — embedded public key is corrupted
     """
-    return pyjwt.decode(
+    claims = pyjwt.decode(
         token,
         JWT_PUBLIC_KEY_PEM,
         algorithms=[JWT_ALGORITHM],
@@ -71,3 +76,26 @@ def decode_licence_jwt(token: str) -> dict[str, Any]:
             "require": ["exp", "workspace_id", "tier"],
         },
     )
+    _require_claim_type(claims, "workspace_id", int, exclude_bool=True)
+    _require_claim_type(claims, "tier", str)
+    return claims
+
+
+def _require_claim_type(
+    claims: dict[str, Any],
+    name: str,
+    expected_type: type,
+    *,
+    exclude_bool: bool = False,
+) -> None:
+    """Raise ``pyjwt.InvalidTokenError`` if claim ``name`` is not exactly ``expected_type``.
+
+    ``exclude_bool=True`` rejects ``bool`` values even though ``bool`` is a
+    subclass of ``int`` — required for ``workspace_id`` so a ``True``/``False``
+    cannot silently route to workspace 1/0.
+    """
+    value = claims.get(name)
+    if exclude_bool and isinstance(value, bool):
+        raise pyjwt.InvalidTokenError(f"{name} claim must be a {expected_type.__name__}")
+    if not isinstance(value, expected_type):
+        raise pyjwt.InvalidTokenError(f"{name} claim must be a {expected_type.__name__}")

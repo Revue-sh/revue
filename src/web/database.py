@@ -8,7 +8,18 @@ from typing import Generator
 
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "revue.db")
 
-SCHEMA_SQL = """
+# Canonical wall-clock format for ``usage_events.received_at``. Both the
+# schema CHECK constraint below and the lex-compare in
+# ``count_usage_events_since_month_start`` (models.py) reference this single
+# source of truth. Changing one without the other silently breaks the free-tier
+# counter — they share one constant so the contract is impossible to forget.
+USAGE_RECEIVED_AT_FORMAT = "%Y-%m-%d %H:%M:%S"
+USAGE_RECEIVED_AT_GLOB = (
+    "[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9] "
+    "[0-2][0-9]:[0-5][0-9]:[0-5][0-9]"
+)
+
+SCHEMA_SQL = f"""
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,
@@ -61,13 +72,22 @@ CREATE INDEX IF NOT EXISTS idx_review_runs_created_at ON review_runs(created_at 
 -- is the server-stamped insertion time used by cohort/billing queries. The
 -- composite index supports the REVUE-279 free-tier paywall lookup
 -- (workspace_id + recent window).
+--
+-- REVUE-279 code-review fix: the CHECK constraint pins the format that
+-- count_usage_events_since_month_start's lex string comparison depends on.
+-- Without it, a future writer using ISO-8601 with 'T' separator, date-only,
+-- or integer epoch strings would silently break the WHERE filter — counter
+-- undercounts → free-tier bypass.
 CREATE TABLE IF NOT EXISTS usage_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
     reviews_run INTEGER NOT NULL DEFAULT 0,
     findings_count INTEGER NOT NULL DEFAULT 0,
     emitted_at INTEGER NOT NULL,
-    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP CHECK (
+        received_at IS NULL OR
+        received_at GLOB '{USAGE_RECEIVED_AT_GLOB}'
+    )
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_events_workspace_received_at

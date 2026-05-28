@@ -533,6 +533,9 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     return 0
 
 
+from revue_skill.skill.post_review_signals import emit_post_review_signals as _emit_post_review_signals
+
+
 def cmd_consolidate(args: argparse.Namespace) -> int:
     """Consolidate agent outputs written by the in-session Tasks.
 
@@ -544,8 +547,12 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
     If omitted, groups are passed through without synthesis.
     """
     from revue_core.core.logging_channels import Log
+    import time as _time_module
 
     _setup_local_logging()
+
+    # Capture invocation timestamp for usage telemetry
+    invocation_ts = int(_time_module.time())
 
     jobs_dir = Path(args.jobs_dir)
     platform = args.platform or "github"
@@ -635,6 +642,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
 
     if not all_reviews:
         Log.pipeline.info("[revue] consolidate  no findings from any agent")
+        _emit_post_review_signals(findings_count=0, invocation_ts=invocation_ts)
         return 0
 
     # Step 3: group
@@ -752,6 +760,11 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
             Log.cli.info("     Hunk context: (file not in diff)")
 
     Log.cli.info("")
+
+    _emit_post_review_signals(
+        findings_count=len(consolidated), invocation_ts=invocation_ts
+    )
+
     return 0
 
 
@@ -1431,8 +1444,12 @@ def cmd_apply_verdicts_and_finalize(args: argparse.Namespace) -> int:
     Renders the final findings to stdout via ``_render_findings``.
     """
     from revue_core.core.logging_channels import Log
+    import time as _time_module
 
     _setup_local_logging()
+
+    # Capture invocation timestamp for usage telemetry
+    invocation_ts = int(_time_module.time())
 
     jobs_dir = Path(args.jobs_dir)
     platform = args.platform or "github"
@@ -1504,6 +1521,11 @@ def cmd_apply_verdicts_and_finalize(args: argparse.Namespace) -> int:
     )
 
     _render_findings(finalised, diff_by_file, platform)
+
+    _emit_post_review_signals(
+        findings_count=len(finalised), invocation_ts=invocation_ts
+    )
+
     return 0
 
 

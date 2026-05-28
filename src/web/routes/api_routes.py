@@ -9,11 +9,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from database import get_db
+from database import REVIEWS_LIMIT_BY_TIER, get_db
 from auth import get_session
 from jwt_signing import JWTSigningKeyMissing, sign_licence_jwt
 from jwt_verify import decode_licence_jwt
-from models import get_license_by_key, get_active_license_for_workspace, increment_usage, reset_monthly_counter, create_review_run, get_all_runs_for_user, get_analytics, record_usage_event
+from models import get_license_by_key, get_active_license_for_workspace, increment_usage, reset_monthly_counter, create_review_run, get_all_runs_for_user, get_analytics, record_usage_event, count_usage_events_since_month_start
 import jwt as pyjwt
 
 router = APIRouter()
@@ -333,6 +333,7 @@ async def validate_licence(body: LicenceValidateRequest) -> JSONResponse:
             "valid": False,
             "tier": None,
             "reviews_remaining": None,
+            "paywall_state": None,
             "refresh_after_ts": None,
             "refreshed_jwt": None,
         })
@@ -341,24 +342,41 @@ async def validate_licence(body: LicenceValidateRequest) -> JSONResponse:
     tier = claims.get("tier")
     workspace_id = claims.get("workspace_id")
 
-    # Revocation gate. Done after JWT decode (cheap, no DB hit) so signature
-    # / expiry failures still short-circuit before the lookup.
+    # Single context manager for revocation check + usage count: ensures both
+    # the licence validity and the paywall counter are consistent under the
+    # same connection/SQLite snapshot. Without this, a revocation between the
+    # two checks would create a TOCTOU gap.
+    reviews_remaining = None
+    paywall_state = None
     if isinstance(workspace_id, int):
         with get_db() as conn:
+            # Revocation gate. Done after JWT decode (cheap, no DB hit) so
+            # signature / expiry failures still short-circuit before the lookup.
             if get_active_license_for_workspace(conn, workspace_id) is None:
                 return JSONResponse({
                     "valid": False,
                     "tier": None,
                     "reviews_remaining": None,
+                    "paywall_state": None,
                     "refresh_after_ts": None,
                     "refreshed_jwt": None,
                 })
 
-    # Calculate reviews_remaining (for now, no server-side cap per tier;
-    # free-tier enforcement is REVUE-279). Return None for unlimited tiers.
-    reviews_remaining = None
-    if tier == "free":
-        reviews_remaining = 25  # placeholder; REVUE-279 will compute this
+            # Calculate reviews_remaining for free tier by counting events this
+            # month (under the same connection so licence + counter are
+            # consistent). Paid tiers have no cap (reviews_remaining = None).
+            # Paywall state is "exhausted" only when tier == "free" AND
+            # reviews_remaining <= 0.
+            if tier == "free":
+                count = count_usage_events_since_month_start(conn, workspace_id)
+                # REVIEWS_LIMIT_BY_TIER["free"] is typed int | None (paid tiers
+                # have None for "no cap"). Free is guaranteed to be an int, but
+                # narrow defensively so mypy + future tier renames stay safe
+                # (REVUE-279 code-review fix: replaced hardcoded 25).
+                free_cap = REVIEWS_LIMIT_BY_TIER["free"] or 25
+                reviews_remaining = max(0, free_cap - count)
+                if reviews_remaining <= 0:
+                    paywall_state = "exhausted"
 
     # AC1 / decision #4: refresh_after_ts is server-issued and canonical.
     # Compute from server clock — do NOT derive from the JWT's
@@ -371,6 +389,7 @@ async def validate_licence(body: LicenceValidateRequest) -> JSONResponse:
         "valid": True,
         "tier": tier,
         "reviews_remaining": reviews_remaining,
+        "paywall_state": paywall_state,
         "refresh_after_ts": refresh_after_ts,
         "refreshed_jwt": None,  # Rotation policy deferred; always None for now
     })

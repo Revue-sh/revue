@@ -507,6 +507,41 @@ def get_usage_events_for_workspace(
     ]
 
 
+def count_usage_events_since_month_start(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+) -> int:
+    """Count usage events received this UTC calendar month.
+
+    The ``received_at`` timestamp is server-issued (not client-supplied),
+    so the count naturally resets at 00:00 UTC on the 1st without a
+    scheduled job. Used by the free-tier paywall to enforce the monthly
+    review cap (REVUE-279 AC1).
+
+    Implementation note: the lex string ``>=`` compare against ``received_at``
+    is only safe because both sides use the canonical
+    ``USAGE_RECEIVED_AT_FORMAT`` (``YYYY-MM-DD HH:MM:SS``), enforced at write
+    time by the schema CHECK constraint in ``database.py``. The format is
+    fixed-width and zero-padded, so lexicographic ordering matches
+    chronological ordering. Any future writer using ISO-8601 with ``T``
+    separator, date-only values, or epoch strings would silently break this —
+    that's why the format lives as a single shared constant.
+    """
+    from database import USAGE_RECEIVED_AT_FORMAT
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start_iso = month_start.strftime(USAGE_RECEIVED_AT_FORMAT)
+
+    row = conn.execute(
+        """SELECT COUNT(*) as cnt
+           FROM usage_events
+           WHERE workspace_id = ? AND received_at >= ?""",
+        (workspace_id, month_start_iso),
+    ).fetchone()
+
+    return row["cnt"] if row else 0
+
+
 def get_user_by_stripe_customer(conn: sqlite3.Connection, customer_id: str) -> Optional[User]:
     row = conn.execute(
         "SELECT * FROM users WHERE stripe_customer_id = ?", (customer_id,)

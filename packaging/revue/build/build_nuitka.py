@@ -42,6 +42,8 @@ COMPILE_ROOTS = [
     SRC_DIR / "activate.py",
     SRC_DIR / "validate.py",
     SRC_DIR / "skill" / "local_run.py",
+    SRC_DIR / "skill" / "upgrade_prompt.py",
+    SRC_DIR / "skill" / "emit_usage.py",
 ]
 
 VENDORED_DIR = SRC_DIR / "vendored"

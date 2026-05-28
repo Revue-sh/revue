@@ -158,3 +158,69 @@ def test_decode_malformed_token_raises():
 
     with pytest.raises((pyjwt.DecodeError, ValueError)):
         decode_licence_jwt("invalid@base64!.tokens.here")
+
+
+# --- REVUE-279 PLAUSIBLE fix: enforce claim type at decode boundary ---
+
+def test_decode_rejects_non_int_workspace_id(_patch_jwt_keys):
+    """REVUE-279 code-review defence-in-depth: a JWT with a string
+    workspace_id must be rejected at decode, not silently allowed through
+    to the isinstance(workspace_id, int) guards in api_routes.py."""
+    # Arrange — sign a token with workspace_id as string (would happen if
+    # any future signing path bypassed jwt_signing.sign_licence_jwt).
+    priv_pem, _ = _patch_jwt_keys
+    now = datetime.now(timezone.utc)
+    expiry = now + timedelta(days=365)
+    claims = {
+        "workspace_id": "not-an-int",  # WRONG TYPE
+        "tier": "free",
+        "issuance_ts": int(now.timestamp()),
+        "exp": int(expiry.timestamp()),
+        "machine_fingerprint": "test",
+    }
+    token = pyjwt.encode(claims, priv_pem, algorithm="RS256")
+
+    # Act & Assert
+    from jwt_verify import decode_licence_jwt
+
+    with pytest.raises(pyjwt.InvalidTokenError):
+        decode_licence_jwt(token)
+
+
+def test_decode_rejects_bool_workspace_id(_patch_jwt_keys):
+    """bool is a subclass of int in Python — must NOT pass the type check
+    or a True/False workspace_id would silently route to workspace 1/0."""
+    priv_pem, _ = _patch_jwt_keys
+    now = datetime.now(timezone.utc)
+    claims = {
+        "workspace_id": True,  # bool, not pure int
+        "tier": "free",
+        "exp": int((now + timedelta(days=365)).timestamp()),
+        "machine_fingerprint": "test",
+    }
+    token = pyjwt.encode(claims, priv_pem, algorithm="RS256")
+
+    from jwt_verify import decode_licence_jwt
+
+    with pytest.raises(pyjwt.InvalidTokenError):
+        decode_licence_jwt(token)
+
+
+def test_decode_rejects_non_str_tier(_patch_jwt_keys):
+    """A JWT with a non-string tier claim is rejected — defence against
+    a tier like 42 routing into AGENTS_BY_TIER.get() with surprising
+    behaviour."""
+    priv_pem, _ = _patch_jwt_keys
+    now = datetime.now(timezone.utc)
+    claims = {
+        "workspace_id": 1,
+        "tier": 42,  # WRONG TYPE
+        "exp": int((now + timedelta(days=365)).timestamp()),
+        "machine_fingerprint": "test",
+    }
+    token = pyjwt.encode(claims, priv_pem, algorithm="RS256")
+
+    from jwt_verify import decode_licence_jwt
+
+    with pytest.raises(pyjwt.InvalidTokenError):
+        decode_licence_jwt(token)

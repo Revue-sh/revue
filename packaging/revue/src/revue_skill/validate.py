@@ -122,6 +122,15 @@ def _is_cache_fresh(cache_data: object) -> bool:
         return False
     if not cache_data.get("valid"):
         return False
+    # REVUE-279 code-review fix: pre-REVUE-279 cache shapes did not include
+    # ``paywall_state``. Treat such caches as stale so the next invocation
+    # re-validates and writes the new shape. After REVUE-279 the key is
+    # always present in {"valid": true} responses (None for paid tiers,
+    # None or "exhausted" for free tier) — using ``in`` rather than
+    # ``get(...) is None`` lets us distinguish "key absent" from
+    # "key present, value None".
+    if "paywall_state" not in cache_data:
+        return False
     refresh_after_ts = cache_data.get("refresh_after_ts")
     cached_at = cache_data.get("cached_at")
     if not isinstance(refresh_after_ts, (int, float)):
