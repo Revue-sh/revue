@@ -20,6 +20,14 @@ definitions:
     # deploy it to staging, smoke-test, then manually promote that same image
     # to production and smoke-test again.
     # -----------------------------------------------------------------------
+    # REVUE-352: DOCKER_BUILDKIT=0 is LOAD-BEARING. The docker:24.0.7-cli image
+    # enables BuildKit by default, which tries to launch a privileged
+    # buildx_buildkit_default container. Bitbucket Pipelines forbids
+    # --privileged=true and rejects the build with "authorization denied by
+    # plugin pipelines". Disabling BuildKit forces the legacy build path,
+    # which does NOT require privileged mode. Do not remove this export or
+    # "modernise" by re-enabling buildx without first confirming a
+    # non-privileged build path works inside Bitbucket Pipelines.
     - step: &build-web-image-fly
         name: "Build Web Image → Fly Registry"
         image: docker:24.0.7-cli
@@ -31,6 +39,7 @@ definitions:
           - export PATH="$HOME/.fly/bin:$PATH"
           - test -n "${FLY_API_TOKEN:-}"
           - export WEB_IMAGE="registry.fly.io/revue-staging:${BITBUCKET_COMMIT}"
+          - export DOCKER_BUILDKIT=0
           - flyctl auth docker
           - docker build -t "$WEB_IMAGE" src/web
           - docker push "$WEB_IMAGE"
