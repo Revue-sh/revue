@@ -1,6 +1,6 @@
 # Revue
 
-AI-powered code review for GitLab and Bitbucket. Revue uses multi-agent orchestration to provide security, performance, architecture, and code-quality analysis on every pull request.
+Revue cuts your AI API spend by ~79–88% on code review. Multi-agent orchestration provides security, performance, architecture, and code-quality analysis on every pull request — your code never leaves your infrastructure (only license checks contact our API).
 
 ## Quick Start
 

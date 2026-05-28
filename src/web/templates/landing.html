@@ -16,17 +16,37 @@
     <!-- Hero -->
     <section class="max-w-4xl mx-auto px-6 pt-24 pb-16 text-center">
         <h1 class="text-5xl font-extrabold tracking-tight mb-6">
-            AI code review that catches<br>
-            <span class="text-brand-400">what humans miss</span>
+            Cut your AI API spend<br>
+            <span class="text-brand-400">by 79–88%</span>
         </h1>
         <p class="text-xl text-gray-400 mb-10 max-w-2xl mx-auto">
             Multi-agent AI reviews every pull request in your CI pipeline.
-            Your code never leaves your infrastructure.
+            Catch issues before they hit expensive AI API re-review cycles.
+        </p>
+        <p class="text-gray-500 text-sm -mt-6 mb-10 max-w-2xl mx-auto">
+            Savings assume Revue's default DeepSeek-V4-Pro model vs. the Anthropic Sonnet baseline. BYOK users pay their chosen provider's rates.
         </p>
         <a href="/signup" class="inline-block bg-brand-600 hover:bg-brand-700 text-white text-lg px-8 py-3 rounded-lg font-semibold">
             Get started free
         </a>
         <p class="text-gray-500 text-sm mt-3">25 free reviews/month &middot; No credit card required</p>
+
+        <!-- TCO Table Teaser -->
+        <div class="mt-16 bg-gray-900 border border-gray-800 rounded-xl p-8 max-w-2xl mx-auto">
+            <p class="text-gray-400 text-sm font-medium mb-4">Typical monthly cost for a team of 5</p>
+            <div class="space-y-3 text-left">
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-300">Without Revue</span>
+                    <span class="text-xl font-semibold text-brand-400">$850–$1,200</span>
+                </div>
+                <div class="border-t border-gray-800"></div>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-300">With Revue + DeepSeek</span>
+                    <span class="text-xl font-semibold text-green-400">$100–$250</span>
+                </div>
+            </div>
+            <p class="text-gray-500 text-xs mt-4">vs. Anthropic Sonnet 4.5 baseline. See <a href="#pricing" class="text-brand-400 hover:text-brand-300">pricing table</a> for details.</p>
+        </div>
     </section>
 
     <!-- Benefits -->
@@ -51,8 +71,9 @@
     </section>
 
     <!-- Pricing -->
-    <section class="max-w-5xl mx-auto px-6 pb-24">
-        <h2 class="text-3xl font-bold text-center mb-12">Simple, transparent pricing</h2>
+    <section class="max-w-5xl mx-auto px-6 pb-24" id="pricing">
+        <h2 class="text-3xl font-bold text-center mb-4">Pricing that scales with your team</h2>
+        <p class="text-center text-gray-400 mb-12 max-w-2xl mx-auto">Revue reduces your AI API bill by ~79–88% compared to the Anthropic Sonnet baseline. Prices below reflect total cost of ownership with DeepSeek-V4-Pro as the default model.</p>
         <div class="grid md:grid-cols-3 gap-8">
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 text-center">
                 <h3 class="text-lg font-semibold mb-1">Free</h3>
@@ -69,7 +90,8 @@
                 <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-brand-600 text-white text-xs px-3 py-1 rounded-full font-medium">Popular</div>
                 <h3 class="text-lg font-semibold mb-1">Indie</h3>
                 <div class="text-4xl font-bold mb-1">$9<span class="text-lg text-gray-500">/mo</span></div>
-                <p class="text-gray-500 text-sm mb-6">100 reviews/month</p>
+                <p class="text-gray-500 text-sm mb-2">100 reviews/month</p>
+                <p class="text-green-400 text-sm font-medium mb-6">vs. $1,000–1,400 (baseline)</p>
                 <ul class="text-sm text-gray-400 space-y-2 mb-6 text-left">
                     <li>&#10003; All 6 specialised agents</li>
                     <li>&#10003; GitHub &amp; GitLab</li>
@@ -80,7 +102,8 @@
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 text-center">
                 <h3 class="text-lg font-semibold mb-1">Pro</h3>
                 <div class="text-4xl font-bold mb-1">$29<span class="text-lg text-gray-500">/mo</span></div>
-                <p class="text-gray-500 text-sm mb-6">Unlimited reviews</p>
+                <p class="text-gray-500 text-sm mb-2">Unlimited reviews</p>
+                <p class="text-green-400 text-sm font-medium mb-6">vs. $2,000–2,800 (baseline)</p>
                 <ul class="text-sm text-gray-400 space-y-2 mb-6 text-left">
                     <li>&#10003; All 6 specialised agents</li>
                     <li>&#10003; Priority support</li>
