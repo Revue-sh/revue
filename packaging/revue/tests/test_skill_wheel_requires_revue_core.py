@@ -87,38 +87,71 @@ def test_vendored_local_run_keeps_revue_core_runtime_imports() -> None:
     )
 
 
-def test_wheel_metadata_matches_pyproject_dependencies() -> None:
-    """REVUE-278 — bridge the pyproject ↔ build_wheel.py gap.
+def test_build_wheel_reads_dependencies_from_pyproject() -> None:
+    """REVUE-353 — the published wheel's Requires-Dist MUST come from
+    pyproject.toml at build time, not from hardcoded strings.
 
-    ``packaging/revue/build/build_wheel.py`` hand-rolls the wheel METADATA
-    instead of reading pyproject.toml. That means a runtime dep declared in
-    pyproject can silently disappear from the wheel's ``Requires-Dist`` lines —
-    pip will then install the wheel without the dep and the first ``import
-    revue_skill.validate`` crashes with ``ModuleNotFoundError`` on the
-    customer's machine.
+    *Why this test exists.* REVUE-278 first surfaced the wheel-METADATA gap:
+    pyproject declared revue_core + httpx but the hand-rolled METADATA in
+    build_wheel.py only emitted jsonschema + PyYAML. REVUE-352 patched it by
+    hardcoding the missing entries — and v0.24.1 shipped uninstallable.
 
-    Discovered when REVUE-278 added ``httpx`` (via the new ``validate.py`` +
-    ``activate.py`` modules) to pyproject but the hand-rolled METADATA still
-    only declared jsonschema + PyYAML. A freshly-built wheel installed cleanly
-    but every gated command crashed on import.
+    The interaction the hardcoded fix missed: REVUE-322's atomic-version
+    invariant rewrites the ``revue_core~=`` pin in pyproject.toml via ``sed``
+    at release time (bitbucket-pipelines.yml:428-429). If build_wheel.py
+    hardcodes the pin, the sed bump never reaches the published wheel —
+    pyproject says ``~=0.24.1`` but the METADATA says ``~=0.1.0`` and pip's
+    resolver fails because no such revue_core exists on PyPI.
 
-    Lock the invariant: every package in pyproject's ``dependencies`` MUST
-    appear as a ``Requires-Dist:`` line in build_wheel.py. Add new deps in
-    both places.
+    The fix: ``build_wheel.read_dependencies()`` reads pyproject's
+    ``[project.dependencies]`` directly. This test pins the contract.
+
+    Failure modes this catches:
+    1. Someone re-adds a hardcoded ``Requires-Dist:`` block (drift trap).
+    2. ``read_dependencies()`` gets accidentally removed or stops reading
+       from pyproject (e.g., switches to a stale snapshot file).
+    3. The function silently returns an empty list, which would yield a
+       wheel with zero declared deps.
     """
-    declared = {_package_name(req) for req in _runtime_dependencies()}
+    import importlib.util
+    from pathlib import Path
 
-    build_source = BUILD_WHEEL.read_text(encoding="utf-8")
-    metadata_decls = re.findall(
-        r'Requires-Dist:\s*([A-Za-z0-9_.\-\[\]]+)',
-        build_source,
+    # Import build_wheel.py as a module so we can call read_dependencies()
+    # without running its __main__ block.
+    spec = importlib.util.spec_from_file_location("build_wheel", BUILD_WHEEL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    assert hasattr(mod, "read_dependencies"), (
+        "build_wheel.py must expose `read_dependencies()` that reads "
+        "[project.dependencies] from pyproject.toml. Without this function, "
+        "the Tag Release sed-bump on `revue_core~=` cannot reach the wheel."
     )
-    in_metadata = {_package_name(name) for name in metadata_decls}
 
-    missing = declared - in_metadata
-    assert not missing, (
-        f"build_wheel.py METADATA is missing runtime deps from pyproject.toml: "
-        f"{sorted(missing)}. The published wheel will install without them and "
-        f"crash on import. Add `f\"Requires-Dist: <pkg>>=<version>\\n\"` lines "
-        f"to packaging/revue/build/build_wheel.py:100-111 to match pyproject."
+    from_function = {_package_name(d) for d in mod.read_dependencies()}
+    from_pyproject = {_package_name(d) for d in _runtime_dependencies()}
+
+    assert from_function == from_pyproject, (
+        f"build_wheel.read_dependencies() must return pyproject.toml's "
+        f"[project.dependencies] verbatim. Got from function: "
+        f"{sorted(from_function)}; from pyproject: {sorted(from_pyproject)}. "
+        f"Diff: pyproject only={sorted(from_pyproject - from_function)}, "
+        f"function only={sorted(from_function - from_pyproject)}."
+    )
+
+    # Guard against the regression that motivated this test: no hardcoded
+    # `Requires-Dist:` literal for any runtime dep should appear in the
+    # build_wheel.py source. The METADATA must be synthesised from
+    # read_dependencies() output, never duplicated by hand.
+    build_source = BUILD_WHEEL.read_text(encoding="utf-8")
+    hardcoded_runtime = [
+        name for name in (_package_name(d) for d in _runtime_dependencies())
+        if re.search(rf'Requires-Dist:\s*{re.escape(name)}', build_source, re.IGNORECASE)
+    ]
+    assert not hardcoded_runtime, (
+        f"build_wheel.py contains a hardcoded `Requires-Dist:` literal for "
+        f"runtime dep(s): {hardcoded_runtime}. This duplicates pyproject.toml "
+        f"and re-creates the REVUE-353 bug class — Tag Release's sed bump "
+        f"of the version pin will silently fail to reach the wheel METADATA. "
+        f"Generate the line from read_dependencies() instead."
     )

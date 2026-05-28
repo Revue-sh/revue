@@ -20,6 +20,11 @@ import sys
 import zipfile
 from pathlib import Path
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover
+    import tomli as tomllib
+
 PACKAGING_DIR = Path(__file__).resolve().parent.parent
 COMPILED_DIR = PACKAGING_DIR / "dist" / "compiled"
 WHEELS_DIR = PACKAGING_DIR / "dist" / "wheels"
@@ -33,6 +38,29 @@ def read_version() -> str:
         print("ERROR: could not parse version from pyproject.toml", file=sys.stderr)
         sys.exit(1)
     return match.group(1)
+
+
+# REVUE-353: runtime dependencies MUST be read from pyproject.toml at build
+# time, not hardcoded here. The Tag Release pipeline step in
+# bitbucket-pipelines.yml uses `sed` to bump the cross-package `revue_core~=`
+# pin in pyproject.toml at release time (REVUE-322 atomic-version invariant).
+# If this script hardcodes the pin, the sed bump silently fails to reach the
+# published wheel's METADATA — v0.24.1 shipped with a stale `revue_core~=0.1.0`
+# pin against a revue_core that only existed at 0.18+, making the wheel
+# uninstallable. Read once, emit verbatim.
+def read_dependencies() -> list[str]:
+    pyproject = PACKAGING_DIR / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    deps = data.get("project", {}).get("dependencies", [])
+    if not deps:
+        print(
+            "ERROR: pyproject.toml has no [project.dependencies] — refusing to "
+            "build a wheel with empty Requires-Dist (would break pip install on "
+            "any system where the deps aren't already present).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return deps
 
 
 def get_python_tag() -> str:
@@ -96,7 +124,11 @@ def build_wheel() -> None:
                 whl.writestr(arc_name, data)
                 record_entries.append((arc_name, sha256_digest(data), len(data)))
 
-        # METADATA
+        # METADATA — Requires-Dist lines are generated from pyproject.toml
+        # (REVUE-353). Do not hardcode dep strings here: the Tag Release
+        # pipeline `sed`s the cross-package pin in pyproject.toml only,
+        # and any hardcoded duplicate here will diverge silently at release.
+        requires_dist = "".join(f"Requires-Dist: {dep}\n" for dep in read_dependencies())
         metadata = (
             f"Metadata-Version: 2.1\n"
             f"Name: revue\n"
@@ -106,18 +138,7 @@ def build_wheel() -> None:
             f"Author-email: team@revue.sh\n"
             f"License: Apache-2.0\n"
             f"Requires-Python: >=3.12\n"
-            # IP-PROTECTION INVARIANT: this list MUST stay in sync with the
-            # `dependencies` array in packaging/revue/pyproject.toml. The wheel
-            # METADATA is what pip resolves at install time — if a runtime dep
-            # is missing here, the wheel imports crash on a fresh customer
-            # install. `test_wheel_metadata_matches_pyproject_dependencies`
-            # enforces parity. When adding a new licence/network-touching
-            # module that pulls in a new dep, add it BOTH here and in
-            # pyproject.toml.
-            f"Requires-Dist: revue_core~=0.1.0\n"
-            f"Requires-Dist: jsonschema>=4.21\n"
-            f"Requires-Dist: PyYAML>=6.0\n"
-            f"Requires-Dist: httpx>=0.27\n"
+            f"{requires_dist}"
         )
         arc = f"{dist_info_dir}/METADATA"
         data = metadata.encode()
