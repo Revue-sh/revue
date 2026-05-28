@@ -28,10 +28,11 @@ Agent definitions live in `_revue/agents/` — independently editable copies of
 - `/revue position <path>` — fixture by explicit path
 - `/revue position --platform gitlab` — filter to one platform
 
-**Dispatch:** Run `local_run.py position` with the appropriate args:
+**Dispatch:** Run `local_run.py position` with the appropriate args. Resolve
+`REPO` at runtime from the current git checkout — never hardcode an absolute path:
 
 ```bash
-REPO=/Volumes/LexarSSD/Projects/revue.io
+REPO="$(git rev-parse --show-toplevel)"
 # All fixtures
 python "$REPO/scripts/local_run.py" position --all
 
@@ -63,7 +64,7 @@ Three phases: `prepare` (pure Python) → Agent forks per agent → `consolidate
 Run `prepare` to build one job JSON per agent. No AI calls.
 
 ```bash
-REPO=/Volumes/LexarSSD/Projects/revue.io
+REPO="$(git rev-parse --show-toplevel)"
 JOBS_DIR=$(mktemp -d /tmp/revue_jobs_XXXXXX)
 
 python3 "$REPO/scripts/local_run.py" prepare \
@@ -83,40 +84,43 @@ This writes:
 **Use the `Agent` tool** — one fork per agent, all four launched in a single parallel
 message. Do NOT use subprocess, `claude --print`, or any SDK call.
 
-Read `manifest.json`, then for **each entry** read the job file and construct the prompt:
+**Dispatch by file path, never by inline content.** Read `manifest.json` and pass
+each Agent fork ONLY the job-file and output-file paths from the manifest entry.
+The fork itself reads the job file with the Read tool. Do NOT construct an
+f-string that embeds `system_prompt + diff_text + user_prompt` and paste it into
+the Agent prompt — diffs are typically 50KB+ per agent, and an orchestrator that
+abbreviates, truncates, or pastes a placeholder for any of the four agents silently
+drops that agent's review coverage. File-path dispatch makes the diff physically
+impossible to drop: the fork cannot proceed without reading the file.
 
-```python
-job = json.loads(Path(entry["job_file"]).read_text())
-# Agent prompt:
-f"""{job['system_prompt']}
+**Exact prompt shape for each Agent fork** (substitute only the two paths from
+`manifest.json`):
 
-{job['diff_text']}
+> Read the JSON file at `<entry.job_file>`. It contains three string fields:
+> `system_prompt`, `diff_text`, and `user_prompt`. Treat `system_prompt` as your
+> reviewer instructions, `diff_text` as the code to review, and `user_prompt` as
+> the response-format directive.
+>
+> Respond with ONLY a JSON array of finding objects. No prose, no markdown fences.
+> Each object must have: file_path, line, severity, issue, suggestion. Optional
+> fields: code_replacement (array of strings), replacement_line_count (int).
+> Write the raw JSON to `<entry.output_file>` using the Write tool.
+>
+> IMPORTANT: Do NOT make any HTTP requests to api.anthropic.com or any other
+> Claude/Anthropic API URL. Do NOT use the Bash tool to call `curl`, `python`,
+> `claude`, or any command that contacts an external API. Produce your findings
+> using only the `diff_text` field in the job file.
 
-{job['user_prompt']}
+**Tool allowlist for the fork** (mirrors Phase 3b's Vex pattern): the fork must
+be spawned with `allowed-tools: Read Write`. Specifically:
+- No `Bash` — the fork has nothing to execute; reasoning is in-context.
+- No `Agent` — recursive Agent spawning is forbidden.
+- No `Grep`, `WebFetch`, network tools, or anything else.
 
-Respond with ONLY a JSON array of finding objects. No prose, no markdown fences.
-Each object must have: file_path, line, severity, issue, suggestion.
-Optional fields: code_replacement (array of strings), replacement_line_count (int).
-
-IMPORTANT: Do NOT make any HTTP requests to api.anthropic.com or any other
-Claude/Anthropic API URL. Do NOT use the Bash tool to call `curl`, `python`,
-`claude`, or any command that contacts an external API. Produce your findings
-using only the diff text provided above.
-"""
-```
-
-Launch all four agents in **one message** with four parallel `Agent` tool calls
-(description: "Agent review: <agent_name>", no subagent_type — fork this session).
-
-Each Agent fork must:
-1. Analyse the diff text in the prompt and produce findings
-2. Write its raw JSON output to `entry["output_file"]` using the Write tool
-
-After all four forks complete, their output files will be ready for Phase 3.
-
-Write the raw Agent output text to `entry["output_file"]` (e.g. `$JOBS_DIR/maya_output.json`).
-
-Run all four agent Tasks (maya, zara, kai, leo) concurrently using parallel Agent tool calls.
+Launch all four agents (maya, zara, kai, leo) in **one message** with four parallel
+`Agent` tool calls (description: "Agent review: <agent_name>", no subagent_type —
+fork this session). After all four forks have written their output files, proceed
+to Phase 3a.
 
 ### Phase 3 — split into 3a → 3b (Agent forks) → 3c for production-parity Vex
 
