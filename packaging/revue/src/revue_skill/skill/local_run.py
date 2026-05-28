@@ -642,7 +642,10 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
 
     if not all_reviews:
         Log.pipeline.info("[revue] consolidate  no findings from any agent")
-        _emit_post_review_signals(findings_count=0, invocation_ts=invocation_ts)
+        no_footer = getattr(args, "no_footer", False)
+        _emit_post_review_signals(
+            findings_count=0, invocation_ts=invocation_ts, no_footer=no_footer
+        )
         return 0
 
     # Step 3: group
@@ -761,8 +764,9 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
 
     Log.cli.info("")
 
+    no_footer = getattr(args, "no_footer", False)
     _emit_post_review_signals(
-        findings_count=len(consolidated), invocation_ts=invocation_ts
+        findings_count=len(consolidated), invocation_ts=invocation_ts, no_footer=no_footer
     )
 
     return 0
@@ -1522,8 +1526,9 @@ def cmd_apply_verdicts_and_finalize(args: argparse.Namespace) -> int:
 
     _render_findings(finalised, diff_by_file, platform)
 
+    no_footer = getattr(args, "no_footer", False)
     _emit_post_review_signals(
-        findings_count=len(finalised), invocation_ts=invocation_ts
+        findings_count=len(finalised), invocation_ts=invocation_ts, no_footer=no_footer
     )
 
     return 0
@@ -1623,6 +1628,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--nova-output", metavar="FILE",
         help="Path to Nova Task output JSON (optional; passthrough if omitted)",
     )
+    cons.add_argument(
+        "--no-footer", action="store_true",
+        help="Suppress cost-saving footer (for piped/CI usage)",
+    )
 
     # classify-and-build-vex-jobs subcommand (Phase 3a, Slice 3)
     vex_a = sub.add_parser(
@@ -1664,6 +1673,10 @@ def _build_parser() -> argparse.ArgumentParser:
     vex_c.add_argument(
         "--platform", choices=PLATFORMS, default="github",
         help="Target platform for position params (default: github)",
+    )
+    vex_c.add_argument(
+        "--no-footer", action="store_true",
+        help="Suppress cost-saving footer (for piped/CI usage)",
     )
 
     # run subcommand (legacy — prefer prepare + consolidate)

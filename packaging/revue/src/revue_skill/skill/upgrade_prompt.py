@@ -25,7 +25,7 @@ def _read_fresh_paywall_state() -> str | None:
     that's hours/days old may have been reset server-side.
     """
     from revue_core.core.logging_channels import Log
-    from revue_skill.validate import _is_cache_fresh
+    from revue_skill.validate import is_cache_fresh
 
     try:
         cache_path = _get_cache_path()
@@ -35,7 +35,7 @@ def _read_fresh_paywall_state() -> str | None:
         with open(cache_path) as f:
             cache = json.load(f)
 
-        if not _is_cache_fresh(cache):
+        if not is_cache_fresh(cache):
             return None
 
         return cache.get("paywall_state")

@@ -44,6 +44,16 @@ COMPILE_ROOTS = [
     SRC_DIR / "skill" / "local_run.py",
     SRC_DIR / "skill" / "upgrade_prompt.py",
     SRC_DIR / "skill" / "emit_usage.py",
+    # REVUE-280: cost footer + usage-cache writer both read the licence
+    # cache to gate free-tier messaging. Plain `.py` here would let a
+    # customer flip ``tier`` checks or rewrite pricing constants — both
+    # are commercial gates and qualify for the IP-protection invariant
+    # above. cache_paths.py is the shared helper imported by both, so it
+    # ships compiled for symmetry (a swappable path resolver could be used
+    # to relocate the caches in ways that confuse the freshness check).
+    SRC_DIR / "skill" / "cost_footer.py",
+    SRC_DIR / "skill" / "update_usage_cache.py",
+    SRC_DIR / "skill" / "cache_paths.py",
 ]
 
 VENDORED_DIR = SRC_DIR / "vendored"

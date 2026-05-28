@@ -62,6 +62,7 @@ import jwt as pyjwt
 # Import the module, not the constant, so the value is read at call time.
 # Same pattern as ``activate.py``.
 from revue_core.security import jwt_keys as _jwt_keys
+from revue_skill.skill.cache_paths import atomic_json_write
 
 VALIDATE_URL: Final[str] = "https://revue.sh/api/v2/licence/validate"
 """Production validation endpoint. Hardcoded — never read from an env var.
@@ -103,7 +104,7 @@ def _read_cache() -> dict | None:
         return None
 
 
-def _is_cache_fresh(cache_data: object) -> bool:
+def is_cache_fresh(cache_data: object) -> bool:
     """Check if the cached result is still fresh (within cache window).
 
     Fresh iff cache_data is a dict that:
@@ -159,22 +160,10 @@ def _write_cache(response_json: dict) -> int:
         cache_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(cache_dir, _CACHE_DIR_PERMS)
 
-        # Write atomically via temp file (same pattern as activate.py)
-        fd, tmp_path_str = tempfile.mkstemp(
-            dir=str(cache_dir), prefix=".cache-", suffix=".tmp"
-        )
-        tmp_path = Path(tmp_path_str)
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(payload, f)
-            os.chmod(tmp_path, _CACHE_FILE_PERMS)
-            tmp_path.replace(cache_path)
-        except BaseException:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise
+        # Atomic write via the shared helper (REVUE-280: same contract used
+        # by update_usage_cache so any future tweak — fsync, retry, etc. —
+        # is made in one place).
+        atomic_json_write(cache_path, payload, file_mode=_CACHE_FILE_PERMS)
         return 0
     except (PermissionError, OSError) as exc:
         cache_dir_path = Path.home() / ".config" / "revue"
@@ -206,7 +195,7 @@ def validate_licence(jwt_token: str) -> int:
     """
     # Step 1: check cache
     cache_data = _read_cache()
-    if _is_cache_fresh(cache_data):
+    if is_cache_fresh(cache_data):
         # Cache is fresh — no network call, invocation proceeds (AC2)
         return 0
 
@@ -332,12 +321,15 @@ def validate_licence(jwt_token: str) -> int:
                     f.write(refreshed_jwt)
                 os.chmod(tmp_path, _CACHE_FILE_PERMS)
                 tmp_path.replace(licence_path)
-            except BaseException:
+            finally:
+                # On success ``replace`` consumed tmp_path; on failure
+                # (including KeyboardInterrupt/SystemExit) we still clean
+                # up the leftover, without catching exceptions that should
+                # propagate.
                 try:
                     tmp_path.unlink(missing_ok=True)
                 except OSError:
                     pass
-                raise
         except (PermissionError, OSError) as exc:
             # Surface a warning so operators can diagnose; don't block — the
             # old JWT is still valid until its own exp claim. Cache write

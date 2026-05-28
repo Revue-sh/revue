@@ -412,3 +412,95 @@ def test_corrupt_cache_json_does_not_crash(monkeypatch, tmp_path):
     from revue_skill.validate import validate_licence
     # Should reach network (treating cache as missing) and then block per AC4
     assert validate_licence("jwt") == 8
+
+
+# ---------- is_cache_fresh (public) -----------------------------------------
+# Direct unit tests for the freshness predicate. Promoted from private to
+# public in REVUE-280 (code-review #803516255, #803516275) so callers in
+# other modules — cost_footer, upgrade_prompt — don't depend on a name
+# marked internal by convention.
+
+class TestIsCacheFresh:
+    def test_non_dict_input_is_not_fresh(self):
+        from revue_skill.validate import is_cache_fresh
+        assert is_cache_fresh(None) is False
+        assert is_cache_fresh([1, 2, 3]) is False
+        assert is_cache_fresh("not a dict") is False
+
+    def test_missing_valid_field_is_not_fresh(self):
+        from revue_skill.validate import is_cache_fresh
+        now = int(time.time())
+        assert is_cache_fresh({
+            "paywall_state": None,
+            "refresh_after_ts": now + 3600,
+            "cached_at": now,
+        }) is False
+
+    def test_valid_false_is_not_fresh(self):
+        from revue_skill.validate import is_cache_fresh
+        now = int(time.time())
+        assert is_cache_fresh({
+            "valid": False,
+            "paywall_state": None,
+            "refresh_after_ts": now + 3600,
+            "cached_at": now,
+        }) is False
+
+    def test_missing_paywall_state_key_is_not_fresh(self):
+        """Pre-REVUE-279 cache shape: no paywall_state key → stale."""
+        from revue_skill.validate import is_cache_fresh
+        now = int(time.time())
+        assert is_cache_fresh({
+            "valid": True,
+            "refresh_after_ts": now + 3600,
+            "cached_at": now,
+        }) is False
+
+    def test_paywall_state_present_but_none_is_fresh(self):
+        """REVUE-279 contract: ``paywall_state: None`` is the valid 'no
+        paywall' shape, not 'missing'."""
+        from revue_skill.validate import is_cache_fresh
+        now = int(time.time())
+        assert is_cache_fresh({
+            "valid": True,
+            "paywall_state": None,
+            "refresh_after_ts": now + 3600,
+            "cached_at": now,
+        }) is True
+
+    def test_past_refresh_after_ts_is_not_fresh(self):
+        from revue_skill.validate import is_cache_fresh
+        past = int(time.time()) - 3600
+        assert is_cache_fresh({
+            "valid": True,
+            "paywall_state": None,
+            "refresh_after_ts": past,
+            "cached_at": past,
+        }) is False
+
+    def test_cached_at_more_than_24h_ago_caps_the_horizon(self):
+        """Defense-in-depth: even if ``refresh_after_ts`` is far in the
+        future (tampered cache), cached_at + 24h caps the lifetime."""
+        from revue_skill.validate import CACHE_WINDOW_SECONDS, is_cache_fresh
+        old_cached_at = int(time.time()) - CACHE_WINDOW_SECONDS - 60
+        assert is_cache_fresh({
+            "valid": True,
+            "paywall_state": None,
+            "refresh_after_ts": int(time.time()) + (365 * 86400),
+            "cached_at": old_cached_at,
+        }) is False
+
+    def test_non_numeric_timestamps_are_not_fresh(self):
+        from revue_skill.validate import is_cache_fresh
+        assert is_cache_fresh({
+            "valid": True,
+            "paywall_state": None,
+            "refresh_after_ts": "not a number",
+            "cached_at": int(time.time()),
+        }) is False
+        assert is_cache_fresh({
+            "valid": True,
+            "paywall_state": None,
+            "refresh_after_ts": int(time.time()) + 3600,
+            "cached_at": None,
+        }) is False
