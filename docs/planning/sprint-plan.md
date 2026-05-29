@@ -183,5 +183,5 @@
 
 ---
 
-*Sprint plan generated from PRD v1.3 and 48 Taiga stories.*  
-*Board: http://localhost:9000/project/revueio/kanban*
+*Sprint plan generated from PRD v1.3 and 48 stories (since migrated from Taiga to Jira).*  
+*Board: Jira (REVUE project) — https://urukia.atlassian.net/browse/REVUE*

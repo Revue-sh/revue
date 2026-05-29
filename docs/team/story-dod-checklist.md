@@ -41,16 +41,16 @@ Any design decisions, valid values for env vars, links to relevant code, etc.
 
 Before marking a story as 'Review', please go through each item in this checklist. Report the status of each item (e.g., [x] Done, [ ] Not Done, [N/A] Not Applicable) and provide brief comments if necessary.
 
-> ## 🚨 TAIGA IS NON-NEGOTIABLE
-> **Taiga (http://localhost:9000/project/revueio/kanban) is the authoritative project board.**
-> Updating Taiga is NOT optional. It is NOT skippable. It is NOT deferrable.
+> ## 🚨 JIRA IS NON-NEGOTIABLE
+> **Jira (REVUE project — https://urukia.atlassian.net/browse/REVUE) is the authoritative project board.**
+> Keeping Jira current is NOT optional. It is NOT skippable. It is NOT deferrable.
 >
 > **Rules — no exceptions:**
-> 1. Every story marked Done in code MUST be marked Done in Taiga before the session ends.
-> 2. Every new story created (in docs or code) MUST be created in Taiga in the same session.
-> 3. If Taiga is unreachable: STOP. Tell the human immediately. Do not proceed with closing stories. Wait for Taiga to come back or get explicit human approval to defer — and document the deferral explicitly.
-> 4. `kanban-board.md` is a mirror only — it is NEVER a substitute for Taiga.
-> 5. The developer agent must confirm Taiga status in their DoD summary before sign-off.
+> 1. Every new story created (in docs or code) MUST be created in Jira in the same session.
+> 2. Story state transitions follow the project rules: → **In Progress** (manual, when work starts) → **Code Review** (manual, when the PR opens) → **Done** (**AUTOMATIC** via the Bitbucket→Jira automation on merge — NEVER transition to Done manually).
+> 3. If Jira is unreachable: STOP. Tell the human immediately. Do not proceed with closing stories. Wait for Jira to come back or get explicit human approval to defer — and document the deferral explicitly.
+> 4. `docs/planning/kanban-board.md` is a mirror only — it is NEVER a substitute for Jira.
+> 5. The developer agent must confirm Jira status in their DoD summary before sign-off.
 
 [[LLM: INITIALIZATION INSTRUCTIONS - STORY DOD VALIDATION
 

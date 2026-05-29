@@ -1,7 +1,7 @@
 # Kanban Board — Revue
 **Last Updated:** 2026-03-28 22:31 GMT
-**Source of Truth:** Taiga — http://localhost:9000/project/revueio/kanban
-**⚠️ This file is a mirror. If Taiga is available, prefer Taiga. Update this file whenever a story is closed.**
+**Source of Truth:** Jira (REVUE project) — https://urukia.atlassian.net/browse/REVUE
+**⚠️ This file is a mirror. Always prefer Jira. Update this file whenever a story is closed.**
 
 ---
 
