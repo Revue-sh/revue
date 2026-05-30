@@ -41,6 +41,12 @@ COMPILE_ROOTS = [
     SRC_DIR / "manifest.py",
     SRC_DIR / "activate.py",
     SRC_DIR / "validate.py",
+    # REVUE-359: support-contact footer. cli.py and validate.py import this at
+    # module top level (and local_run imports it tolerantly), so it MUST ship
+    # in the wheel — a plain-source or absent module would ImportError at CLI
+    # startup. Not licence-touching itself, but compiled for packaging symmetry
+    # (see test_compile_roots_cover_modules).
+    SRC_DIR / "support.py",
     SRC_DIR / "skill" / "local_run.py",
     SRC_DIR / "skill" / "upgrade_prompt.py",
     SRC_DIR / "skill" / "emit_usage.py",
@@ -54,6 +60,14 @@ COMPILE_ROOTS = [
     SRC_DIR / "skill" / "cost_footer.py",
     SRC_DIR / "skill" / "update_usage_cache.py",
     SRC_DIR / "skill" / "cache_paths.py",
+    # REVUE-359 active wheel-shipping bug: skill/local_run.py top-level imports
+    # this module (``from revue_skill.skill.post_review_signals import
+    # emit_post_review_signals``). Without it here, the module is excluded by
+    # the skill/ copytree's ``ignore_patterns('*.py', ...)`` (step 2 below) and
+    # therefore ships in NEITHER compiled nor source form — any /revue-local
+    # invocation would ImportError at startup. Caught by the extended
+    # test_compile_roots_cover_modules guard.
+    SRC_DIR / "skill" / "post_review_signals.py",
 ]
 
 VENDORED_DIR = SRC_DIR / "vendored"

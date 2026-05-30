@@ -60,6 +60,12 @@ For the empirical evidence behind the OpenRouter `tool_choice_first_turn:
 required` policy, see
 [docs/research/deepseek-v4-pro-evaluation.md](docs/research/deepseek-v4-pro-evaluation.md).
 
+## Support
+
+Having trouble installing, activating, or running Revue? Email [support@revue.sh](mailto:support@revue.sh) and we'll help you out.
+
+GitHub issues coming soon — for now, email is the best way to reach us.
+
 ## Documentation
 
 - [Configuration Reference](docs/configuration.md)

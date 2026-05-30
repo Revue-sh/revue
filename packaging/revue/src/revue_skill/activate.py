@@ -283,11 +283,14 @@ def activate(key: str) -> int:
         # ``InvalidTokenError``-only branch above, violating AC4 ("no
         # silent / cryptic failures") and skipping the documented exit-5
         # path. Catch both, print an operator-actionable hint, exit 5.
+        # REVUE-359: don't hardcode the support address here — the cli.main
+        # boundary appends the canonical "Need help? Email support@revue.sh"
+        # line on this non-zero exit, so naming it again would double-print it
+        # with drifting wording.
         print(
             f"error: the CLI binary appears to have a corrupted embedded "
             f"public key — JWT verification could not start "
-            f"({exc.__class__.__name__}: {exc}). Please report this to "
-            f"support@revue.sh.",
+            f"({exc.__class__.__name__}: {exc}). Please report this.",
             file=sys.stderr,
         )
         return 5

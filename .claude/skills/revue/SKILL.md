@@ -242,3 +242,13 @@ quick smoke tests without Vex. New work should use 3a → 3b → 3c.
 branch and `main`. No `--files` filter — all changed files are reviewed.
 
 When the user explicitly says "position" or "fixtures", dispatch to Mode 1.
+
+---
+
+## Troubleshooting
+
+If you encounter an error while installing, activating, or running Revue, the error message will include:
+
+> Need help? Email support@revue.sh
+
+We'd like to help you resolve the issue. Please reach out with a description of what you were trying to do and the full error message. We'll respond quickly.

@@ -1712,6 +1712,23 @@ _LICENCE_GATED_COMMANDS = frozenset({
 })
 
 
+def _emit_support_footer() -> None:
+    """Surface the support contact on a pre-validation gate failure (REVUE-359).
+
+    Hard-imports ``revue_skill.support`` — the same package this file already
+    hard-imports at module top (line 536) and inside the gate below
+    (``revue_skill.validate``). A prior tolerant ``except ImportError`` would
+    have silently dropped the footer if ``support.py`` ever slipped from
+    ``COMPILE_ROOTS`` again, which is the exact regression
+    ``test_compile_roots_cover_modules`` was added to prevent — masking the
+    packaging bug. If ``support.py`` is absent the wheel is broken; crash
+    loudly.
+    """
+    from revue_skill.support import support_footer
+
+    print(support_footer(), file=sys.stderr)
+
+
 def _gate_licence_validation(cmd: str) -> int:
     """Run the licence cache/network state machine BEFORE any review begins.
 
@@ -1734,12 +1751,14 @@ def _gate_licence_validation(cmd: str) -> int:
             f"error: Revue needs an activated licence — run `revue activate`. "
             f"(could not read {licence_path}: {exc.__class__.__name__})\n"
         )
+        _emit_support_footer()
         return 8
 
     if not jwt_token:
         sys.stderr.write(
             "error: Revue licence file is empty — run `revue activate`.\n"
         )
+        _emit_support_footer()
         return 8
 
     # Wheel mode: ImportError MUST hard-fail. A silent bypass on

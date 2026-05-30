@@ -24,6 +24,7 @@ from . import __version__
 from .activate import activate as activate_licence
 from .install import DEFAULT_SKILLS_DIR, install
 from .manifest import ManifestError, validate
+from .support import support_footer
 
 DEFAULT_MANIFEST_URL = "https://revue.sh/skills/manifest.json"
 
@@ -156,7 +157,25 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return int(args.func(args))
+    # REVUE-359: the CLI boundary is the single point that surfaces the support
+    # contact, so every activation/install failure — whether it returns a
+    # non-zero exit code or raises uncaught (e.g. install() hitting a read-only
+    # skills dir) — points the user at support. Individual subcommands stay
+    # free of footer plumbing.
+    try:
+        code = int(args.func(args))
+    except Exception as exc:  # noqa: BLE001 — last-resort boundary handler.
+        # Catches only ``Exception``; BaseException subclasses
+        # (KeyboardInterrupt, SystemExit) pass through intentionally so Ctrl-C
+        # and explicit exits keep their native behaviour and are NOT remapped to
+        # exit 1 or given a support footer. A future maintainer adding a custom
+        # BaseException subclass must opt it in here deliberately.
+        print(f"error: `{args.cmd}` failed: {exc}", file=sys.stderr)
+        print(support_footer(), file=sys.stderr)
+        return 1
+    if code != 0:
+        print(support_footer(), file=sys.stderr)
+    return code
 
 
 if __name__ == "__main__":  # pragma: no cover

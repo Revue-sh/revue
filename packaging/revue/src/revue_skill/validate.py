@@ -63,6 +63,7 @@ import jwt as pyjwt
 # Same pattern as ``activate.py``.
 from revue_core.security import jwt_keys as _jwt_keys
 from revue_skill.skill.cache_paths import atomic_json_write
+from revue_skill.support import support_footer
 
 VALIDATE_URL: Final[str] = "https://revue.sh/api/v2/licence/validate"
 """Production validation endpoint. Hardcoded — never read from an env var.
@@ -182,6 +183,21 @@ _BLOCK_MESSAGE: Final[str] = (
 
 
 def validate_licence(jwt_token: str) -> int:
+    """Run the licence validation flow, surfacing the support footer on any
+    failure.
+
+    REVUE-359: this is the single boundary for the /revue-local licence path,
+    so the support contact is emitted exactly once on every non-zero exit
+    rather than being threaded through each individual error branch (which
+    silently missed the network and bad-shape paths). Success stays quiet.
+    """
+    code = _run_validation(jwt_token)
+    if code != 0:
+        print(support_footer(), file=sys.stderr)
+    return code
+
+
+def _run_validation(jwt_token: str) -> int:
     """Run the licence validation flow. Returns the process exit code
     (0 on success, non-zero on failure per the exit-code table).
 
