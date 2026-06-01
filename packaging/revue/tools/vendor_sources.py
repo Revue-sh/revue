@@ -31,6 +31,25 @@ PACKAGING_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = PACKAGING_DIR.parent.parent
 SOURCES_YAML = PACKAGING_DIR / "tools" / "sources.yaml"
 
+# First-class files in src/revue_skill/skill/ — git-tracked, listed in
+# build_nuitka.COMPILE_ROOTS, imported at startup. The --clean sweep must
+# preserve these even if sources.yaml never mentions them. Adding a new
+# first-class module to skill/ requires updating BOTH this set and
+# COMPILE_ROOTS. The test in test_vendor_clean_preserves_first_class_files.py
+# guards against drift.
+FIRST_CLASS_SKILL_FILES: frozenset[str] = frozenset(
+    {
+        "__init__.py",
+        "cache_paths.py",
+        "cost_footer.py",
+        "emit_usage.py",
+        "local_run_dispatcher.py",
+        "post_review_signals.py",
+        "update_usage_cache.py",
+        "upgrade_prompt.py",
+    }
+)
+
 
 class UnsafePathError(ValueError):
     """Raised when a sources.yaml entry resolves outside its allowed base dir."""
@@ -123,15 +142,48 @@ VENDORED_INIT_BODY = (
 )
 
 
+def _clean_vendored_targets() -> None:
+    """Remove vendored content from the build tree while preserving first-class files.
+
+    REVUE-369 F1: skill/ contains first-class files (cache_paths.py,
+    update_usage_cache.py, post_review_signals.py, etc.) that are git-tracked,
+    listed in COMPILE_ROOTS, and imported at startup. They are NEVER vendored
+    and must NEVER be deleted.
+
+    REVUE-369 M4: stale top-level vendored files (entries removed from
+    sources.yaml since the last build) must still be swept. We do this by
+    deleting every file in skill/ top-level that is not in the protected
+    FIRST_CLASS_SKILL_FILES set. Subdirectories declared as target_dir get
+    rmtree'd to wipe any internal stragglers.
+    """
+    # Always wipe vendored/ — every file in it is vendored, no first-class.
+    vendored_dir = PACKAGING_DIR / "src/revue_skill/vendored"
+    if vendored_dir.exists():
+        shutil.rmtree(vendored_dir)
+
+    # Sweep top-level files in skill/ that are NOT first-class (removes any
+    # stale top-level vendored file even if sources.yaml no longer mentions it).
+    skill_dir = PACKAGING_DIR / "src/revue_skill/skill"
+    if skill_dir.is_dir():
+        for entry in skill_dir.iterdir():
+            if entry.is_file() and entry.name not in FIRST_CLASS_SKILL_FILES:
+                entry.unlink()
+
+    # Wipe skill/_revue/ wholesale — every file under it is vendored (agent
+    # prompts, config, models_registry). Wiping the entire subtree handles
+    # the case where a target_dir is removed from sources.yaml entirely
+    # (REVUE-369 M7: M4's per-target_dir cleanup left stale subdirs).
+    revue_subdir = skill_dir / "_revue"
+    if revue_subdir.exists():
+        shutil.rmtree(revue_subdir)
+
+
 def vendor(*, clean: bool = False, dry_run: bool = False) -> list[FileEntry]:
     """Copy all configured sources into the wheel build tree."""
-    entries = _load_entries()
-
     if clean:
-        for sub in ("src/revue_skill/skill", "src/revue_skill/vendored"):
-            path = PACKAGING_DIR / sub
-            if path.exists():
-                shutil.rmtree(path)
+        _clean_vendored_targets()
+
+    entries = _load_entries()
 
     if not dry_run:
         for entry in entries:

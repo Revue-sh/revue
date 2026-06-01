@@ -15,12 +15,31 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
-_SCHEMA_PATH = Path(__file__).resolve().parent.parent.parent / "manifest.schema.json"
-
 
 def load_schema() -> dict[str, Any]:
-    """Return the bundled JSON Schema document for the release manifest."""
-    return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    """Return the bundled JSON Schema document for the release manifest.
+
+    Tries importlib.resources first (works in compiled wheels and installed
+    packages), then falls back to the source-tree path for dev/test usage.
+    """
+    # Try importlib.resources (works in compiled wheels)
+    try:
+        from importlib.resources import files
+
+        schema_text = files("revue_skill").joinpath("manifest.schema.json").read_text(encoding="utf-8")
+        return json.loads(schema_text)
+    except (FileNotFoundError, ModuleNotFoundError, AttributeError):
+        pass
+
+    # Fallback for source-tree dev/test: schema is at packaging/revue/
+    fallback_path = Path(__file__).resolve().parent.parent.parent / "manifest.schema.json"
+    if fallback_path.is_file():
+        return json.loads(fallback_path.read_text(encoding="utf-8"))
+
+    raise FileNotFoundError(
+        "manifest.schema.json not found. The schema must be bundled in the wheel "
+        "or present in the source tree at packaging/revue/manifest.schema.json."
+    )
 
 
 MANIFEST_SCHEMA: dict[str, Any] = load_schema()

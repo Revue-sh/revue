@@ -24,6 +24,7 @@ from . import __version__
 from .activate import activate as activate_licence
 from .install import DEFAULT_SKILLS_DIR, install
 from .manifest import ManifestError, validate
+from .skill.local_run_dispatcher import dispatch_local_run
 from .support import support_footer
 
 DEFAULT_MANIFEST_URL = "https://revue.sh/skills/manifest.json"
@@ -108,6 +109,47 @@ def cmd_activate(args: argparse.Namespace) -> int:
     return activate_licence(args.key)
 
 
+_LOCAL_RUN_HELP = """\
+usage: revue local-run <subcommand> [args...]
+
+Subcommands:
+  position                       Run position fixtures (use --all for full suite)
+  prepare                        Build job JSON for the four reviewer agents
+  classify-and-build-vex-jobs    Classify findings and build Vex verifier jobs
+  apply-verdicts-and-finalize    Apply Vex verdicts and render final findings
+  run                            Legacy: prepare + consolidate (no agents run)
+
+Run `revue local-run <subcommand> --help` for subcommand-specific help.
+"""
+
+
+def cmd_local_run(args: argparse.Namespace) -> int:
+    """REVUE-369 F4+F6: dispatch local-run subcommands to the compiled local_run module.
+
+    This command replaces the source-tree invocation ``$REPO/scripts/local_run.py``
+    with an installed wheel entry point. Subcommands (position, prepare, etc.)
+    are forwarded to the compiled module.
+    """
+    sub_args = list(getattr(args, "sub_args", []) or [])
+
+    # Strip leading `--` argparse separator if present
+    if sub_args and sub_args[0] == "--":
+        sub_args = sub_args[1:]
+
+    # Show the subcommand catalog when no subcommand is given or user asks for help
+    if not sub_args or sub_args[0] in ("-h", "--help"):
+        print(_LOCAL_RUN_HELP)
+        return 0
+
+    subcommand = sub_args[0].strip()
+    if not subcommand:
+        print("error: local-run subcommand cannot be empty", file=sys.stderr)
+        return 2
+
+    sub_argv = sub_args[1:]
+    return dispatch_local_run(subcommand, sub_argv)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="revue")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -151,12 +193,53 @@ def build_parser() -> argparse.ArgumentParser:
     activate_p.add_argument("key", help="your licence key (lic_…)")
     activate_p.set_defaults(func=cmd_activate)
 
+    # add_help=False so the outer argparse doesn't intercept `-h/--help` —
+    # we route it to cmd_local_run which prints the subcommand catalog.
+    # nargs=argparse.REMAINDER captures all remaining args, including
+    # `--help` for inner subcommands.
+    local_run_p = sub.add_parser(
+        "local-run",
+        help="run local Revue pipeline (position, prepare, run, etc.)",
+        add_help=False,
+    )
+    local_run_p.add_argument(
+        "sub_args",
+        nargs=argparse.REMAINDER,
+        help="subcommand and arguments (position, prepare, run, classify-and-build-vex-jobs, apply-verdicts-and-finalize)",
+    )
+    local_run_p.set_defaults(func=cmd_local_run)
+
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    argv_list = list(argv)
+
+    # Intercept `revue local-run [-h|--help|<subcommand> ...]` BEFORE argparse,
+    # so argparse's add_help can't claim --help and short-circuit our custom
+    # subcommand catalog. (REVUE-369 M5: argparse intercepts --help via the
+    # outer parser before nargs=REMAINDER on the local-run subparser can
+    # capture it. Pre-routing keeps the help and subcommand path coherent.)
+    if argv_list and argv_list[0] == "local-run":
+        ns = argparse.Namespace(
+            cmd="local-run",
+            sub_args=argv_list[1:],
+            func=cmd_local_run,
+        )
+        try:
+            code = int(ns.func(ns))
+        except Exception as exc:  # noqa: BLE001
+            print(f"error: `local-run` failed: {exc}", file=sys.stderr)
+            print(support_footer(), file=sys.stderr)
+            return 1
+        if code != 0:
+            print(support_footer(), file=sys.stderr)
+        return code
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv_list)
     # REVUE-359: the CLI boundary is the single point that surfaces the support
     # contact, so every activation/install failure — whether it returns a
     # non-zero exit code or raises uncaught (e.g. install() hitting a read-only

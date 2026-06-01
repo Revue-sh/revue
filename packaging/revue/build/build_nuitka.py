@@ -48,6 +48,7 @@ COMPILE_ROOTS = [
     # (see test_compile_roots_cover_modules).
     SRC_DIR / "support.py",
     SRC_DIR / "skill" / "local_run.py",
+    SRC_DIR / "skill" / "local_run_dispatcher.py",
     SRC_DIR / "skill" / "upgrade_prompt.py",
     SRC_DIR / "skill" / "emit_usage.py",
     # REVUE-280: cost footer + usage-cache writer both read the licence
@@ -71,6 +72,16 @@ COMPILE_ROOTS = [
 ]
 
 VENDORED_DIR = SRC_DIR / "vendored"
+
+
+def _reset_build_dirs() -> None:
+    """Clear both NUITKA_OUT_DIR and COMPILED_DIR to prevent stale-ABI .so leakage."""
+    if NUITKA_OUT_DIR.exists():
+        shutil.rmtree(NUITKA_OUT_DIR)
+    if COMPILED_DIR.exists():
+        shutil.rmtree(COMPILED_DIR)
+    NUITKA_OUT_DIR.mkdir(parents=True, exist_ok=True)
+    COMPILED_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def compile_module(py_file: Path, extra_include: list[str] | None = None) -> Path:
@@ -118,11 +129,8 @@ def main() -> None:
         )
         sys.exit(1)
 
-    # Clean previous compiled output.
-    if COMPILED_DIR.exists():
-        shutil.rmtree(COMPILED_DIR)
-    NUITKA_OUT_DIR.mkdir(parents=True, exist_ok=True)
-    COMPILED_DIR.mkdir(parents=True, exist_ok=True)
+    # Clean previous compiled output (both dirs — prevents stale-ABI .so leakage).
+    _reset_build_dirs()
 
     # --- Step 1: Compile top-level orchestration modules ---
     print(f"Compiling top-level modules ...")
@@ -185,6 +193,13 @@ def main() -> None:
         (COMPILED_DIR / "vendored" / "positioning_adapters").mkdir(parents=True, exist_ok=True)
         shutil.copy2(pos_init_src, COMPILED_DIR / "vendored" / "positioning_adapters" / "__init__.py")
         print("  vendored/positioning_adapters/__init__.py")
+
+    # manifest.schema.json — JSON Schema for revue manifest validation
+    # (REVUE-369 F3: included so importlib.resources finds it in compiled wheels)
+    manifest_schema_src = PACKAGING_DIR / "manifest.schema.json"
+    if manifest_schema_src.is_file():
+        shutil.copy2(manifest_schema_src, COMPILED_DIR / "manifest.schema.json")
+        print(f"  manifest.schema.json")
 
     # skill/ — SKILL.md + _revue/ agent prompts (intentionally plain text)
     skill_src = SRC_DIR / "skill"

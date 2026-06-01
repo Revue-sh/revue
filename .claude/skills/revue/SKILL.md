@@ -28,20 +28,17 @@ Agent definitions live in `_revue/agents/` — independently editable copies of
 - `/revue position <path>` — fixture by explicit path
 - `/revue position --platform gitlab` — filter to one platform
 
-**Dispatch:** Run `local_run.py position` with the appropriate args. Resolve
-`REPO` at runtime from the current git checkout — never hardcode an absolute path:
+**Dispatch:** Run `revue local-run position` with the appropriate args:
 
 ```bash
-REPO="$(git rev-parse --show-toplevel)"
 # All fixtures
-python "$REPO/scripts/local_run.py" position --all
+revue local-run position --all
 
 # Single fixture by platform + number (e.g. "github 01")
-python "$REPO/scripts/local_run.py" position \
-  "$REPO/src/revue/tests/fixtures/positioning/github/fixture_01.json"
+revue local-run position <fixture-path>
 
 # Platform filter
-python "$REPO/scripts/local_run.py" position --all --platform github
+revue local-run position --all --platform github
 ```
 
 Parse the user's argument to determine which variant to run, then execute and
@@ -64,10 +61,9 @@ Three phases: `prepare` (pure Python) → Agent forks per agent → `consolidate
 Run `prepare` to build one job JSON per agent. No AI calls.
 
 ```bash
-REPO="$(git rev-parse --show-toplevel)"
 JOBS_DIR=$(mktemp -d /tmp/revue_jobs_XXXXXX)
 
-python3 "$REPO/scripts/local_run.py" prepare \
+revue local-run prepare \
   --base main \
   --platform github \
   --jobs-dir "$JOBS_DIR"
@@ -131,7 +127,7 @@ the LLM step (3b) is externalised to orchestrator Agent forks in this session.
 #### Phase 3a — classify, consolidate, build Vex job files
 
 ```bash
-python3 "$REPO/scripts/local_run.py" classify-and-build-vex-jobs \
+revue local-run classify-and-build-vex-jobs \
   --jobs-dir "$JOBS_DIR" \
   --max-vex-forks 20
 # Optional: --nova-output "$JOBS_DIR/nova_output.json"
@@ -203,7 +199,7 @@ in Phase 3c.
 After all Vex forks have written their verdict JSONs, run:
 
 ```bash
-python3 "$REPO/scripts/local_run.py" apply-verdicts-and-finalize \
+revue local-run apply-verdicts-and-finalize \
   --jobs-dir "$JOBS_DIR" \
   --platform github
 ```

@@ -1771,9 +1771,9 @@ def _gate_licence_validation(cmd: str) -> int:
     return validate_licence(jwt_token)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     gate_code = _gate_licence_validation(args.cmd)
     if gate_code != 0:

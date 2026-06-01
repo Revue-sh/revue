@@ -46,6 +46,18 @@ skill:
       # indent stripping rules.
       - from: "    try:\n        from revue_skill.validate import validate_licence\n    except ImportError:\n        # Source-tree mode: this script is being run from scripts/local_run.py\n        # without the published wheel installed. The wheel-only validation\n        # module isn't available; treat the same as REVUE_SKIP_LICENCE_CHECK.\n        return 0"
         to: "    # Wheel mode: ImportError MUST hard-fail. A silent bypass on\n    # missing validate.so is a licence-bypass exploit — see the\n    # rewrite_imports note in packaging/revue/tools/sources.yaml.\n    try:\n        from revue_skill.validate import validate_licence\n    except ImportError as exc:\n        sys.stderr.write(\n            \"error: Revue installation appears corrupt \"\n            f\"(could not load revue_skill.validate: {exc}). \"\n            \"Reinstall the revue wheel from https://revue.sh/install.\\n\"\n        )\n        return 8"
+      # REVUE-369 H1 (Codex finding): in source-tree mode REPO_ROOT is the
+      # revue.io checkout root. In the wheel it would resolve to the
+      # installed `revue_skill/` package dir — wrong: git diff would run in
+      # the wheel, and _revue/agents/ paths would resolve to non-existent
+      # locations. Rewrite to: REPO_ROOT = the customer's git checkout
+      # (via `git rev-parse --show-toplevel`, falling back to cwd) and
+      # introduce WHEEL_ASSETS_DIR for bundled assets like _revue/agents.
+      - from: "REPO_ROOT = Path(__file__).resolve().parent.parent\nsys.path.insert(0, str(REPO_ROOT / \"src\"))\nsys.path.insert(0, str(REPO_ROOT / \"scripts\"))\nsys.path.insert(0, str(REPO_ROOT))  # for _revue package"
+        to: "# REVUE-369: split source-tree REPO_ROOT into two concepts:\n# - REPO_ROOT  = customer's git checkout (where `git diff` runs)\n# - WHEEL_ASSETS_DIR = where bundled assets (_revue/agents/, etc.) live\nWHEEL_ASSETS_DIR = Path(__file__).resolve().parent  # revue_skill/skill/\ntry:\n    import subprocess as _sp\n    _toplevel = _sp.run(\n        [\"git\", \"rev-parse\", \"--show-toplevel\"],\n        capture_output=True, text=True, check=True,\n    ).stdout.strip()\n    REPO_ROOT = Path(_toplevel)\nexcept Exception:\n    REPO_ROOT = Path.cwd()"
+      # Redirect bundled-asset lookups to the wheel directory
+      - from: "str(REPO_ROOT / \"_revue/agents\")"
+        to: "str(WHEEL_ASSETS_DIR / \"_revue/agents\")"
 
 vendored:
   - source: packaging/revue_core/src/revue_core/comments/position_adapter.py

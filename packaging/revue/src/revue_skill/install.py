@@ -35,7 +35,13 @@ def bundled_skill_root() -> Path:
 
 
 def install(target_dir: Path = DEFAULT_SKILLS_DIR, *, overwrite: bool = True) -> InstallResult:
-    """Copy the bundled skill into ``target_dir/SKILL_NAME``."""
+    """Copy the bundled skill into ``target_dir/SKILL_NAME``.
+
+    Filters out .so files (REVUE-369 F5) — compiled modules live at the
+    package level (revue_skill/), not in the skill directory. This prevents
+    orphan .so files (from stale builds or different ABI versions) from
+    landing in ~/.claude/skills/revue/, where they are not on PYTHONPATH.
+    """
     src = bundled_skill_root()
     dst = target_dir / SKILL_NAME
 
@@ -47,7 +53,8 @@ def install(target_dir: Path = DEFAULT_SKILLS_DIR, *, overwrite: bool = True) ->
         shutil.rmtree(dst)
 
     target_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src, dst)
+    # Ignore .so files (compiled modules and stale artefacts)
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns("*.so"))
 
     files_written = sum(1 for _ in dst.rglob("*") if _.is_file())
     return InstallResult(skill_dir=dst, files_written=files_written)

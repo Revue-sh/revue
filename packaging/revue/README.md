@@ -9,17 +9,17 @@ Run the [Revue](https://revue.sh) AI code-review pipeline locally as a [Claude C
 ## Install
 
 ```bash
-pip install revue-local
-revue-local install-skill
+pip install revue
+revue install-skill
 ```
 
 The second command verifies the wheel signature, then drops `SKILL.md` and the orchestrator into
-`~/.claude/skills/revue-local/` so Claude Code picks it up automatically on next launch.
+`~/.claude/skills/revue/` so Claude Code picks it up automatically on next launch.
 
 ## Verify a release
 
 ```bash
-revue-local verify
+revue verify
 ```
 
 Fetches the published manifest, compares against the locally-installed version, and prints whether the

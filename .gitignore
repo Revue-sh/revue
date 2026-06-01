@@ -17,6 +17,9 @@ venv/
 venv_new/
 .venv/
 .build-venv/
+.skill-build-venv/
+.revue-core-build-venv/
+.test-venv/
 .playwright-cli/
 
 # Test artifacts

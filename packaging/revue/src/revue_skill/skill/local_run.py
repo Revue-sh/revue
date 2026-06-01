@@ -31,10 +31,19 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO_ROOT / "src"))
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-sys.path.insert(0, str(REPO_ROOT))  # for _revue package
+# REVUE-369: split source-tree REPO_ROOT into two concepts:
+# - REPO_ROOT  = customer's git checkout (where `git diff` runs)
+# - WHEEL_ASSETS_DIR = where bundled assets (_revue/agents/, etc.) live
+WHEEL_ASSETS_DIR = Path(__file__).resolve().parent  # revue_skill/skill/
+try:
+    import subprocess as _sp
+    _toplevel = _sp.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    REPO_ROOT = Path(_toplevel)
+except Exception:
+    REPO_ROOT = Path.cwd()
 
 from revue_skill.vendored.position_adapter import calculate, PositionStatus
 from revue_skill.vendored.terminal_state import TerminalState, classify_terminal_state
@@ -473,7 +482,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
             raise RuntimeError("stub — must not be called in prepare mode")
 
     all_agents = load_agents_from_dir(
-        str(REPO_ROOT / "_revue/agents"), _StubClient(), max_tokens=4096
+        str(WHEEL_ASSETS_DIR / "_revue/agents"), _StubClient(), max_tokens=4096
     )
     review_agents = [a for a in all_agents if a.name in _REVIEW_AGENTS]
 
@@ -583,7 +592,7 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
             def complete(self, *a, **kw):
                 raise RuntimeError("stub")
         loaded = load_agents_from_dir(
-            str(REPO_ROOT / "_revue/agents"), _StubClient(), max_tokens=4096
+            str(WHEEL_ASSETS_DIR / "_revue/agents"), _StubClient(), max_tokens=4096
         )
         stub_agents = {a.name: a for a in loaded}
     except Exception:
@@ -1227,7 +1236,7 @@ def _consolidate_from_manifest(jobs_dir: Path, nova_output: "str | None"):
             def complete(self, *a, **kw):
                 raise RuntimeError("stub")
         loaded = load_agents_from_dir(
-            str(REPO_ROOT / "_revue/agents"), _StubClient(), max_tokens=4096
+            str(WHEEL_ASSETS_DIR / "_revue/agents"), _StubClient(), max_tokens=4096
         )
         stub_agents = {a.name: a for a in loaded}
     except Exception:
@@ -1776,9 +1785,9 @@ def _gate_licence_validation(cmd: str) -> int:
     return validate_licence(jwt_token)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     gate_code = _gate_licence_validation(args.cmd)
     if gate_code != 0:
