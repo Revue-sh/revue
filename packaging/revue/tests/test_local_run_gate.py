@@ -3,7 +3,7 @@
 The gate must:
 - Run BEFORE any review subcommand (prepare / consolidate / run / vex / verdicts)
 - Be skipped for the developer ``position`` subcommand
-- Honour ``REVUE_SKIP_LICENCE_CHECK=1`` for dev/test bypass
+- Strip ``REVUE_SKIP_LICENCE_CHECK=1`` from the vendored wheel copy
 - Return validate_licence's exit code unchanged (don't swallow non-zero)
 - Block (exit 8) when ``~/.config/revue/licence.jwt`` is missing or empty
 """
@@ -72,14 +72,67 @@ def test_review_subcommand_propagates_nonzero_exit(monkeypatch, tmp_path, _gate)
     assert _gate("prepare") == 8
 
 
-def test_env_var_bypass(monkeypatch, _gate):
-    """REVUE_SKIP_LICENCE_CHECK=1 short-circuits the gate for dev/tests."""
+def test_env_var_bypass_removed_in_wheel(monkeypatch, tmp_path, _gate, capsys):
+    """REVUE-370: REVUE_SKIP_LICENCE_CHECK MUST NOT bypass the gate in the wheel.
+
+    Threat model: a paying customer with shell access could set
+    ``REVUE_SKIP_LICENCE_CHECK=1`` and issue unlimited free reviews against the
+    published Nuitka wheel. The dev-mirror ``scripts/local_run.py`` keeps the
+    bypass for source-tree testing, but the vendored copy that ships in the
+    wheel must enforce the licence gate regardless of the environment.
+
+    With the env var set and ``Path.home`` pointed at an empty tmp dir, the
+    gate must fall through to the missing-licence-file branch and exit 8 —
+    *not* return 0. The ``Path.home`` monkeypatch is load-bearing: without it
+    the test would non-deterministically read the developer's real
+    ``~/.config/revue/licence.jwt`` on CI/dev machines.
+    """
+    monkeypatch.setattr("revue_skill.skill.local_run.Path.home", lambda: tmp_path)
     monkeypatch.setenv("REVUE_SKIP_LICENCE_CHECK", "1")
     monkeypatch.setattr(
         "revue_skill.validate.validate_licence",
-        lambda jwt: pytest.fail("validate_licence should not be called"),
+        lambda jwt: pytest.fail(
+            "validate_licence should not be reached — gate must exit on missing licence first"
+        ),
     )
-    assert _gate("prepare") == 0
+    assert _gate("prepare") == 8, (
+        "REVUE_SKIP_LICENCE_CHECK=1 bypassed the gate in the vendored copy — "
+        "this is a licence-bypass exploit. The bypass must be stripped at "
+        "vendor time via sources.yaml rewrite_imports."
+    )
+    err = capsys.readouterr().err
+    assert "revue activate" in err
+
+
+def test_vendored_source_text_strips_skip_env_var():
+    """REVUE-370 differential proof: the vendored copy must NOT contain the
+    REVUE_SKIP_LICENCE_CHECK literal, while the source-tree copy MUST keep it.
+
+    This is a cheap text-level guard that catches accidental regressions of
+    the ``rewrite_imports`` entry in ``packaging/revue/tools/sources.yaml``
+    without standing up the full source-tree import path. It also documents
+    the dev/wheel split: the env-var bypass is a *dev convenience* that the
+    vendor step surgically removes for the shipped artifact.
+    """
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    vendored = repo_root / "packaging" / "revue" / "src" / "revue_skill" / "skill" / "local_run.py"
+    source_tree = repo_root / "scripts" / "local_run.py"
+
+    vendored_text = vendored.read_text()
+    source_text = source_tree.read_text()
+
+    assert "REVUE_SKIP_LICENCE_CHECK" not in vendored_text, (
+        f"{vendored} still contains REVUE_SKIP_LICENCE_CHECK — the vendor "
+        f"rewrite in packaging/revue/tools/sources.yaml did not strip it. "
+        f"Regenerate via `python packaging/revue/tools/vendor_sources.py --clean`."
+    )
+    assert "REVUE_SKIP_LICENCE_CHECK" in source_text, (
+        f"{source_tree} no longer contains REVUE_SKIP_LICENCE_CHECK — the "
+        f"source-tree dev bypass must be preserved for local development. "
+        f"If you intentionally removed it, update this test and document why."
+    )
 
 
 def test_missing_licence_file_blocks(monkeypatch, tmp_path, _gate, capsys):

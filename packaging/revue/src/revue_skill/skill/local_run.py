@@ -1742,15 +1742,15 @@ def _gate_licence_validation(cmd: str) -> int:
     """Run the licence cache/network state machine BEFORE any review begins.
 
     Returns 0 to proceed; non-zero exit code halts the review per the
-    contract in ``revue_skill/validate.py``. Honours
-    ``REVUE_SKIP_LICENCE_CHECK=1`` for tests and local development against
-    in-tree code (the published Nuitka binary's threat model elsewhere
-    handles this).
+    contract in ``revue_skill/validate.py``. The published wheel always
+    enforces the licence gate; the source-tree developer bypass is stripped
+    at vendor time (see packaging/revue/tools/sources.yaml).
     """
     if cmd not in _LICENCE_GATED_COMMANDS:
         return 0
-    if os.environ.get("REVUE_SKIP_LICENCE_CHECK") == "1":
-        return 0
+    # REVUE-370: the developer env-var bypass is stripped at vendor
+    # time — the shipped wheel must enforce the licence gate regardless of
+    # the environment. See packaging/revue/tools/sources.yaml.
 
     licence_path = Path.home() / ".config" / "revue" / "licence.jwt"
     try:

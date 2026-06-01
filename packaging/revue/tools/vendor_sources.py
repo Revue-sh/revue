@@ -55,6 +55,15 @@ class UnsafePathError(ValueError):
     """Raised when a sources.yaml entry resolves outside its allowed base dir."""
 
 
+class RewriteNotFoundError(ValueError):
+    """Raised when a rewrite_imports ``from`` literal is absent from the source.
+
+    A ``str.replace`` whose ``from`` is missing is a silent no-op, so source
+    drift would ship unrewritten code (e.g. the REVUE-370 licence bypass).
+    Failing loudly turns that into a hard CI error at vendor time.
+    """
+
+
 def _safe_join(base: Path, rel: str) -> Path:
     # sources.yaml is committed, but defence-in-depth: refuse absolute paths
     # and any join that escapes the base after resolution, so a tampered
@@ -125,6 +134,13 @@ def _apply(entry: FileEntry) -> None:
     if entry.rewrites:
         text = entry.source.read_text(encoding="utf-8")
         for find, replace in entry.rewrites:
+            if find not in text:
+                raise RewriteNotFoundError(
+                    f"rewrite_imports rule for {entry.target.name} did not match "
+                    f"{entry.source}: the `from` literal is absent, so the rewrite "
+                    f"would silently no-op and ship unrewritten source. The source "
+                    f"text has likely drifted from sources.yaml.\n  from: {find!r}"
+                )
             text = text.replace(find, replace)
         entry.target.write_text(text, encoding="utf-8")
     else:

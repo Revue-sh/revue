@@ -32,6 +32,23 @@ skill:
         to: "from revue_skill.vendored.terminal_state"
       - from: "from positioning.adapters"
         to: "from revue_skill.vendored.positioning_adapters"
+      # REVUE-370 (Codex H2): scripts/local_run.py honours
+      # REVUE_SKIP_LICENCE_CHECK=1 as a developer convenience that
+      # short-circuits the licence gate. A paying customer who set the same
+      # env var against the shipped wheel could issue unlimited free reviews.
+      # Strip BOTH the executable bypass AND every textual reference to the
+      # env-var name at vendor time so the wheel always enforces the licence —
+      # the source-tree copy keeps the bypass for local dev. The
+      # test_vendored_source_text_strips_skip_env_var guard asserts the literal
+      # is absent from the vendored module, so the replacement text below must
+      # not name it either. Pair test: test_env_var_bypass_removed_in_wheel.
+      - from: "    if os.environ.get(\"REVUE_SKIP_LICENCE_CHECK\") == \"1\":\n        return 0\n"
+        to: "    # REVUE-370: the developer env-var bypass is stripped at vendor\n    # time — the shipped wheel must enforce the licence gate regardless of\n    # the environment. See packaging/revue/tools/sources.yaml.\n"
+      # REVUE-370: the docstring still advertised the env-var bypass, which is
+      # both false (the wheel no longer honours it) and a literal match for the
+      # strip guard. Rewrite it to describe the wheel's actual behaviour.
+      - from: "    contract in ``revue_skill/validate.py``. Honours\n    ``REVUE_SKIP_LICENCE_CHECK=1`` for tests and local development against\n    in-tree code (the published Nuitka binary's threat model elsewhere\n    handles this).\n"
+        to: "    contract in ``revue_skill/validate.py``. The published wheel always\n    enforces the licence gate; the source-tree developer bypass is stripped\n    at vendor time (see packaging/revue/tools/sources.yaml).\n"
       # REVUE-278: the dev script tolerates a missing revue_skill.validate
       # because it runs from the source tree where the validate module may
       # not be on sys.path. The vendored copy inside the Nuitka-compiled
