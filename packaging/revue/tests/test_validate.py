@@ -58,12 +58,15 @@ def test_cache_path_env_override_test_only(monkeypatch):
 # ---------- Helpers ----------------------------------------------------------
 
 def _write_fresh_cache(cache_path: Path, *, tier: str = "indie",
-                       window_offset_seconds: int = 3600) -> dict:
-    """Write a fresh cache file expiring `window_offset_seconds` in the future."""
+                       window_offset_seconds: int = 3600,
+                       workspace_id: int = 42) -> dict:
+    """Write a fresh cache file expiring `window_offset_seconds` in the future.
+    REVUE-371: Include workspace_id in cache so JWT claim matching works."""
     now = int(time.time())
     body = {
         "valid": True,
         "tier": tier,
+        "workspace_id": workspace_id,
         "reviews_remaining": 100,
         "paywall_state": None,
         "refresh_after_ts": now + window_offset_seconds,
@@ -75,12 +78,15 @@ def _write_fresh_cache(cache_path: Path, *, tier: str = "indie",
     return body
 
 
-def _write_stale_cache(cache_path: Path, *, tier: str = "indie") -> dict:
-    """Write a stale cache file whose refresh_after_ts is in the past."""
+def _write_stale_cache(cache_path: Path, *, tier: str = "indie",
+                       workspace_id: int = 42) -> dict:
+    """Write a stale cache file whose refresh_after_ts is in the past.
+    REVUE-371: Include workspace_id in cache so JWT claim matching works."""
     now = int(time.time())
     body = {
         "valid": True,
         "tier": tier,
+        "workspace_id": workspace_id,
         "reviews_remaining": 100,
         "paywall_state": None,
         "refresh_after_ts": now - 3600,
@@ -120,10 +126,12 @@ class _MockClient:
         return None
 
 
-# ---------- AC2: cache within 24h skips network -----------------------------
+# ---------- REVUE-371: AC1–AC5 JWT signature verification before cache -------
 
-def test_cache_within_24h_skips_network(monkeypatch, tmp_path):
-    """AC2: second invocation within 24h reads cache; ZERO network calls."""
+def test_jwt_invalid_signature_with_fresh_cache_returns_error(monkeypatch, tmp_path, capsys):
+    """AC1: JWT signature must be verified BEFORE trusting cache. Fresh cache
+    + invalid JWT signature → reject, return exit code 5 (verification failed).
+    This is the core REVUE-371 security fix: cache alone is not enough."""
     cache_file = tmp_path / "cache.json"
     monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
     _write_fresh_cache(cache_file)
@@ -131,8 +139,162 @@ def test_cache_within_24h_skips_network(monkeypatch, tmp_path):
     mock = _MockClient(response=_MockResponse(status_code=200, body={}))
     monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
 
+    # Arrange: Patch public key so the signature check runs but fails on garbage JWT.
+    _sign_test_jwt(monkeypatch)
+    bad_jwt = "header.payload.fake-signature"
+
+    # Act
     from revue_skill.validate import validate_licence
-    exit_code = validate_licence("any.jwt.token")
+    exit_code = validate_licence(bad_jwt)
+
+    # Assert: Signature verification failed BEFORE cache was trusted.
+    assert exit_code == 5, (
+        f"AC1 violated: invalid JWT should return 5 (verification failed), "
+        f"got {exit_code} (cached fresh state)"
+    )
+    assert mock.calls == [], (
+        "AC1 violated: network should not be touched; signature check should "
+        "reject BEFORE network attempt"
+    )
+    captured = capsys.readouterr()
+    assert "licence validation failed" in captured.err or "verification" in captured.err.lower()
+
+
+def test_jwt_expired_with_fresh_cache_returns_error(monkeypatch, tmp_path, capsys):
+    """AC2: JWT exp claim must be verified before cache is trusted. Expired JWT
+    + fresh cache → reject, return error. Cache is bypassed."""
+    cache_file = tmp_path / "cache.json"
+    monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
+    _write_fresh_cache(cache_file)
+
+    mock = _MockClient(response=_MockResponse(status_code=200, body={}))
+    monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
+
+    # Arrange: Create a JWT with an expired exp claim.
+    import base64
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import jwt as pyjwt
+    import revue_core.security.jwt_keys as jwt_keys_module
+
+    priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv_pem = priv.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    pub_pem = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    monkeypatch.setattr(jwt_keys_module, "JWT_PUBLIC_KEY_PEM", pub_pem)
+
+    expired_claims = {
+        "exp": int(time.time()) - 3600,  # Expired 1 hour ago
+        "workspace_id": 42,
+        "tier": "indie",
+    }
+    expired_jwt = pyjwt.encode(expired_claims, priv_pem, algorithm="RS256")
+
+    # Act
+    from revue_skill.validate import validate_licence
+    exit_code = validate_licence(expired_jwt)
+
+    # Assert: Expired token rejected before cache is consulted.
+    assert exit_code == 5, (
+        f"AC2 violated: expired JWT should fail verification (exit 5), got {exit_code}"
+    )
+    assert mock.calls == [], "network should not be touched"
+
+
+def test_jwt_missing_required_claims_with_fresh_cache_returns_error(monkeypatch, tmp_path, capsys):
+    """AC3: Required claims (sub/tier/iss) must be verified before cache trust.
+    JWT missing 'tier' claim + fresh cache → reject."""
+    cache_file = tmp_path / "cache.json"
+    monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
+    _write_fresh_cache(cache_file)
+
+    mock = _MockClient(response=_MockResponse(status_code=200, body={}))
+    monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
+
+    # Arrange: Create JWT missing required 'tier' claim.
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import jwt as pyjwt
+    import revue_core.security.jwt_keys as jwt_keys_module
+
+    priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv_pem = priv.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    pub_pem = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    monkeypatch.setattr(jwt_keys_module, "JWT_PUBLIC_KEY_PEM", pub_pem)
+
+    incomplete_claims = {
+        "exp": int(time.time()) + 86400,
+        "workspace_id": 42,
+        # Missing 'tier' — required claim
+    }
+    incomplete_jwt = pyjwt.encode(incomplete_claims, priv_pem, algorithm="RS256")
+
+    # Act
+    from revue_skill.validate import validate_licence
+    exit_code = validate_licence(incomplete_jwt)
+
+    # Assert: Missing required claims rejected before cache is trusted.
+    assert exit_code == 5, (
+        f"AC3 violated: JWT missing required claims should fail (exit 5), got {exit_code}"
+    )
+    assert mock.calls == [], "network should not be touched"
+
+
+def test_plaintext_cache_plus_invalid_jwt_token_rejects(monkeypatch, tmp_path):
+    """AC5: Explicit anti-regression test. Plaintext cache file + unsigned
+    'not-a-real-jwt' string → validate_licence must reject, not trust cache."""
+    cache_file = tmp_path / "cache.json"
+    monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
+    _write_fresh_cache(cache_file)
+
+    mock = _MockClient(response=_MockResponse(status_code=200, body={}))
+    monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
+
+    # Patch public key to ensure signature verification path runs.
+    _sign_test_jwt(monkeypatch)
+
+    # Act: Call with a non-JWT placeholder string.
+    from revue_skill.validate import validate_licence
+    exit_code = validate_licence("not-a-real-jwt")
+
+    # Assert: Rejected due to invalid JWT format/signature, NOT bypassed by cache.
+    assert exit_code == 5, (
+        "AC5 violated: plaintext cache should not bypass JWT verification; "
+        f"'not-a-real-jwt' should be rejected (got exit {exit_code})"
+    )
+    assert mock.calls == [], "network should not be touched (cache is bypassed by verification)"
+
+
+# ---------- AC2: cache within 24h skips network -----------------------------
+
+def test_cache_within_24h_skips_network(monkeypatch, tmp_path):
+    """AC1+AC2: JWT signature verified before cache trust; fresh cache + valid
+    JWT skips network. REVUE-371: must use a real signed JWT, not placeholder."""
+    cache_file = tmp_path / "cache.json"
+    monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
+    _write_fresh_cache(cache_file)
+
+    mock = _MockClient(response=_MockResponse(status_code=200, body={}))
+    monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
+
+    # REVUE-371: Use a real signed JWT (requires embedded public key patch).
+    real_jwt, _ = _sign_test_jwt(monkeypatch)
+
+    from revue_skill.validate import validate_licence
+    exit_code = validate_licence(real_jwt)
 
     assert exit_code == 0
     assert mock.calls == [], (
@@ -144,8 +306,9 @@ def test_cache_within_24h_skips_network(monkeypatch, tmp_path):
 # ---------- AC3: network failure inside window honoured ---------------------
 
 def test_network_fail_in_window_uses_cache(monkeypatch, tmp_path):
-    """AC3 (degenerate): fresh cache short-circuits before the network is
-    ever touched, so a network failure is irrelevant — the user proceeds."""
+    """AC3 (degenerate): fresh cache + valid JWT short-circuits before the
+    network is ever touched, so a network failure is irrelevant — the user
+    proceeds. REVUE-371: must use a real signed JWT."""
     cache_file = tmp_path / "cache.json"
     monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
     _write_fresh_cache(cache_file)
@@ -153,15 +316,19 @@ def test_network_fail_in_window_uses_cache(monkeypatch, tmp_path):
     mock = _MockClient(exc=httpx.ConnectError("no internet"))
     monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
 
+    # REVUE-371: Use a real signed JWT.
+    real_jwt, _ = _sign_test_jwt(monkeypatch)
+
     from revue_skill.validate import validate_licence
-    assert validate_licence("jwt") == 0
+    assert validate_licence(real_jwt) == 0
     assert mock.calls == []
 
 
 # ---------- AC4: network failure outside window blocks ----------------------
 
 def test_network_fail_outside_window_blocks(monkeypatch, tmp_path, capsys):
-    """AC4: stale cache + network down → invocation blocks with exit 8."""
+    """AC4: stale cache + network down + valid JWT → invocation blocks with
+    exit 8. REVUE-371: must use a real signed JWT."""
     cache_file = tmp_path / "cache.json"
     monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
     _write_stale_cache(cache_file)
@@ -169,8 +336,11 @@ def test_network_fail_outside_window_blocks(monkeypatch, tmp_path, capsys):
     mock = _MockClient(exc=httpx.ConnectError("no internet"))
     monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
 
+    # REVUE-371: Use a real signed JWT.
+    real_jwt, _ = _sign_test_jwt(monkeypatch)
+
     from revue_skill.validate import validate_licence
-    exit_code = validate_licence("jwt")
+    exit_code = validate_licence(real_jwt)
 
     assert exit_code == 8
     captured = capsys.readouterr()
@@ -179,15 +349,19 @@ def test_network_fail_outside_window_blocks(monkeypatch, tmp_path, capsys):
 
 
 def test_no_cache_network_fail_blocks(monkeypatch, tmp_path, capsys):
-    """AC4: no cache at all + network down → blocks with exit 8."""
+    """AC4: no cache at all + network down + valid JWT → blocks with exit 8.
+    REVUE-371: must use a real signed JWT."""
     cache_file = tmp_path / "nope.json"
     monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
 
     mock = _MockClient(exc=httpx.ConnectError("no internet"))
     monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
 
+    # REVUE-371: Use a real signed JWT.
+    real_jwt, _ = _sign_test_jwt(monkeypatch)
+
     from revue_skill.validate import validate_licence
-    assert validate_licence("jwt") == 8
+    assert validate_licence(real_jwt) == 8
     captured = capsys.readouterr()
     assert "Revue needs to verify your licence" in captured.err
 
@@ -197,7 +371,8 @@ def test_no_cache_network_fail_blocks(monkeypatch, tmp_path, capsys):
 def test_server_valid_false_returns_nonzero(monkeypatch, tmp_path, capsys):
     """If server returns {valid: false} (revocation / expired / tampered JWT),
     the skill must NOT cache it and must NOT return success — otherwise the
-    whole validation endpoint becomes a no-op."""
+    whole validation endpoint becomes a no-op. REVUE-371: must use a real
+    signed JWT."""
     cache_file = tmp_path / "cache.json"
     monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
 
@@ -213,8 +388,11 @@ def test_server_valid_false_returns_nonzero(monkeypatch, tmp_path, capsys):
     )
     monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
 
+    # REVUE-371: Use a real signed JWT.
+    real_jwt, _ = _sign_test_jwt(monkeypatch)
+
     from revue_skill.validate import validate_licence
-    exit_code = validate_licence("expired.jwt.token")
+    exit_code = validate_licence(real_jwt)
 
     assert exit_code == 5, (
         "Server-rejected JWT must block invocation, got exit code "
@@ -234,9 +412,10 @@ def test_server_valid_false_returns_nonzero(monkeypatch, tmp_path, capsys):
 # ---------- AC5: all tiers, same 24h window ---------------------------------
 
 @pytest.mark.parametrize("tier", ["free", "indie", "pro", "enterprise_starter"])
-def test_all_tiers_same_grace(monkeypatch, tmp_path, tier):
+def test_all_tiers_same_grace(monkeypatch, tmp_path, tier, sign_jwt):
     """AC5: Free / Indie / Pro / Enterprise all use the same 24h cache —
-    no tier-graded grace (prevents tier-bypass attacks)."""
+    no tier-graded grace (prevents tier-bypass attacks). REVUE-371: must use
+    a real signed JWT with matching tier."""
     cache_file = tmp_path / f"cache_{tier}.json"
     monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
     _write_fresh_cache(cache_file, tier=tier)
@@ -244,8 +423,12 @@ def test_all_tiers_same_grace(monkeypatch, tmp_path, tier):
     mock = _MockClient(response=_MockResponse(status_code=200, body={}))
     monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
 
+    # REVUE-371 review #317-a: sign via the shared session-keyed fixture instead
+    # of regenerating an RSA-2048 keypair in each of the 4 parametrized cases.
+    real_jwt = sign_jwt(tier=tier)
+
     from revue_skill.validate import validate_licence
-    assert validate_licence("jwt") == 0, f"tier {tier} did not honour cache"
+    assert validate_licence(real_jwt) == 0, f"tier {tier} did not honour cache"
     assert mock.calls == [], (
         f"tier {tier} hit the network within window — AC5 violated"
     )
@@ -283,9 +466,92 @@ def _sign_test_jwt(monkeypatch) -> tuple[str, str]:
     return token, pub_pem
 
 
+def test_cache_written_by_validation_is_honoured_offline_with_same_jwt(
+    monkeypatch, tmp_path
+):
+    """REVUE-371 C1 regression: a cache written by a real validation round-trip
+    must be honoured on the next invocation WITHOUT re-hitting the network.
+
+    The /v2/licence/validate response omits ``workspace_id``; the write path
+    must persist the verified JWT's workspace_id so the read-time AC3 claims-
+    match succeeds. Before the fix the cached workspace_id was None, the match
+    failed on every fresh-cache run, and offline invocations blocked with exit 8
+    despite a valid licence + fresh cache — killing the 24h offline grace.
+
+    This is an end-to-end round-trip (write via the real path, read on the next
+    call); it does NOT hand-inject workspace_id like the cache-helper fixtures,
+    so it exercises exactly the production code path that regressed."""
+    import httpx
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    import revue_core.security.jwt_keys as jwt_keys_module
+    from revue_skill.validate import validate_licence
+
+    cache_file = tmp_path / "licence-cache.json"
+    monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
+
+    priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv_pem = priv.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    pub_pem = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    monkeypatch.setattr(jwt_keys_module, "JWT_PUBLIC_KEY_PEM", pub_pem)
+    real_jwt = pyjwt.encode(
+        {"exp": int(time.time()) + 86400, "workspace_id": 42, "tier": "indie"},
+        priv_pem,
+        algorithm="RS256",
+    )
+
+    # First call: server validates. The response omits workspace_id, exactly as
+    # the real /v2/licence/validate endpoint does. The cache is written here.
+    server_body = {
+        "valid": True,
+        "tier": "indie",
+        "reviews_remaining": 100,
+        "paywall_state": None,
+        "refresh_after_ts": int(time.time()) + 86400,
+        "refreshed_jwt": None,
+    }
+    online = _MockClient(response=_MockResponse(status_code=200, body=server_body))
+    monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: online)
+    assert validate_licence(real_jwt) == 0
+    assert len(online.calls) == 1, "first (cold-cache) call should hit the network once"
+
+    # REVUE-371 review #317-b: assert the write side directly. server_body omits
+    # workspace_id, so its presence in the cache proves _write_cache extracted it
+    # from the verified JWT and persisted it — pinning the C1 regression at the
+    # write site, not only via the downstream offline read below.
+    cached = json.loads(cache_file.read_text())
+    assert cached["workspace_id"] == 42, (
+        "validation did not persist the verified JWT's workspace_id into the "
+        f"cache; got {cached.get('workspace_id')!r}"
+    )
+
+    # Second call: SAME jwt, but the network is down. A fresh, matching cache
+    # must be honoured without any network call.
+    offline = _MockClient(exc=httpx.ConnectError("network down"))
+    monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: offline)
+    assert validate_licence(real_jwt) == 0, (
+        "fresh cache written by a real validation was not honoured offline — the "
+        "AC3 claims-match compared against a workspace_id the write path did not "
+        "persist"
+    )
+    assert offline.calls == [], (
+        "second call hit the network despite a fresh, claim-matching cache"
+    )
+
+
 def test_refreshed_jwt_overwrites_licence_file(monkeypatch, tmp_path):
     """Decision #5: when server returns a properly signed refreshed_jwt,
-    client overwrites ~/.config/revue/licence.jwt atomically."""
+    client overwrites ~/.config/revue/licence.jwt atomically. REVUE-371: must
+    use a real signed JWT."""
     cache_file = tmp_path / "cache.json"
     licence_dir = tmp_path / ".config" / "revue"
     licence_file = licence_dir / "licence.jwt"
@@ -295,10 +561,42 @@ def test_refreshed_jwt_overwrites_licence_file(monkeypatch, tmp_path):
     monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
     monkeypatch.setattr("revue_skill.validate.Path.home", lambda: tmp_path)
 
-    new_jwt, _ = _sign_test_jwt(monkeypatch)
+    # REVUE-371: sign TWO DISTINCT JWTs with the same throwaway key so the test
+    # proves a *different* refreshed token overwrites the licence file (not the
+    # input token re-written as itself). Keep the private key here so both can
+    # be signed by the key whose public half the verifier trusts.
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    import revue_core.security.jwt_keys as jwt_keys_module
+
+    priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv_pem = priv.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    pub_pem = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    monkeypatch.setattr(jwt_keys_module, "JWT_PUBLIC_KEY_PEM", pub_pem)
+
+    base_claims = {"workspace_id": 42, "tier": "indie"}
+    input_jwt = pyjwt.encode(
+        {**base_claims, "exp": int(time.time()) + 86400}, priv_pem, algorithm="RS256"
+    )
+    # Distinct exp → distinct token string, still a valid signature.
+    new_jwt = pyjwt.encode(
+        {**base_claims, "exp": int(time.time()) + 2 * 86400}, priv_pem, algorithm="RS256"
+    )
+    assert new_jwt != input_jwt, "refreshed JWT must differ from the input JWT"
+
     server_response = {
         "valid": True,
         "tier": "indie",
+        "workspace_id": 42,
         "reviews_remaining": None,
         "refresh_after_ts": int(time.time()) + 86400,
         "refreshed_jwt": new_jwt,
@@ -309,7 +607,7 @@ def test_refreshed_jwt_overwrites_licence_file(monkeypatch, tmp_path):
     monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
 
     from revue_skill.validate import validate_licence
-    assert validate_licence("old.jwt.token") == 0
+    assert validate_licence(input_jwt) == 0
 
     assert licence_file.read_text() == new_jwt, (
         "refreshed_jwt did not overwrite licence.jwt"
@@ -320,7 +618,8 @@ def test_refreshed_jwt_with_invalid_signature_is_ignored(monkeypatch, tmp_path, 
     """Defence: a refreshed_jwt that fails signature verification must NOT
     overwrite the on-disk licence — a compromised backend or MITM (corp root
     CA) could otherwise replace the user's working JWT with garbage and
-    brick the licence until a manual ``revue activate``."""
+    brick the licence until a manual ``revue activate``. REVUE-371: must use
+    a real signed JWT with matching tier."""
     cache_file = tmp_path / "cache.json"
     licence_dir = tmp_path / ".config" / "revue"
     licence_file = licence_dir / "licence.jwt"
@@ -332,7 +631,7 @@ def test_refreshed_jwt_with_invalid_signature_is_ignored(monkeypatch, tmp_path, 
 
     # Patch in a real public key so the verification path runs; the
     # refreshed_jwt below is NOT signed by it (it's just garbage).
-    _sign_test_jwt(monkeypatch)
+    real_jwt, _ = _sign_test_jwt(monkeypatch)
 
     bogus_jwt = "header.payload.not-a-real-sig"
     server_response = {
@@ -348,7 +647,7 @@ def test_refreshed_jwt_with_invalid_signature_is_ignored(monkeypatch, tmp_path, 
     monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
 
     from revue_skill.validate import validate_licence
-    assert validate_licence("any.jwt") == 0
+    assert validate_licence(real_jwt) == 0
     # Existing JWT untouched
     assert licence_file.read_text() == "existing.legit.jwt"
     assert "invalid refreshed JWT" in capsys.readouterr().err
@@ -360,7 +659,8 @@ def test_cache_refresh_after_ts_capped_at_24h_in_future(monkeypatch, tmp_path):
     """Defence-in-depth: even if the cache file is tampered to set a
     far-future refresh_after_ts, the skill must re-validate at most once per
     24h. Otherwise a local attacker could write
-    ``{"refresh_after_ts": 99999999999}`` to bypass revocation forever."""
+    ``{"refresh_after_ts": 99999999999}`` to bypass revocation forever.
+    REVUE-371: must use a real signed JWT."""
     cache_file = tmp_path / "cache.json"
     monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
 
@@ -390,8 +690,33 @@ def test_cache_refresh_after_ts_capped_at_24h_in_future(monkeypatch, tmp_path):
     mock = _MockClient(exc=httpx.ConnectError("no net"))
     monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
 
+    # REVUE-371: Use a real signed JWT with matching tier.
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import jwt as pyjwt
+    import revue_core.security.jwt_keys as jwt_keys_module
+
+    priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    priv_pem = priv.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    pub_pem = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    monkeypatch.setattr(jwt_keys_module, "JWT_PUBLIC_KEY_PEM", pub_pem)
+
+    claims = {
+        "exp": int(time.time()) + 86400,
+        "workspace_id": 42,
+        "tier": "enterprise_plus",
+    }
+    real_jwt = pyjwt.encode(claims, priv_pem, algorithm="RS256")
+
     from revue_skill.validate import validate_licence
-    exit_code = validate_licence("jwt")
+    exit_code = validate_licence(real_jwt)
     assert exit_code == 8, (
         f"tampered cache bypass: expected re-validation attempt + block, "
         f"got exit {exit_code}"
@@ -401,7 +726,8 @@ def test_cache_refresh_after_ts_capped_at_24h_in_future(monkeypatch, tmp_path):
 
 def test_corrupt_cache_json_does_not_crash(monkeypatch, tmp_path):
     """A malformed cache file (e.g. JSON list, partial write) must not crash
-    the CLI — treat as missing and fall through to network."""
+    the CLI — treat as missing and fall through to network. REVUE-371: must use
+    a real signed JWT."""
     cache_file = tmp_path / "cache.json"
     monkeypatch.setenv("REVUE_LICENCE_CACHE_PATH", str(cache_file))
     cache_file.write_text("[1, 2, 3]")  # valid JSON, wrong type
@@ -409,9 +735,12 @@ def test_corrupt_cache_json_does_not_crash(monkeypatch, tmp_path):
     mock = _MockClient(exc=httpx.ConnectError("no net"))
     monkeypatch.setattr("revue_skill.validate._build_http_client", lambda: mock)
 
+    # REVUE-371: Use a real signed JWT.
+    real_jwt, _ = _sign_test_jwt(monkeypatch)
+
     from revue_skill.validate import validate_licence
     # Should reach network (treating cache as missing) and then block per AC4
-    assert validate_licence("jwt") == 8
+    assert validate_licence(real_jwt) == 8
 
 
 # ---------- is_cache_fresh (public) -----------------------------------------

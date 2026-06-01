@@ -165,10 +165,16 @@ class _MockClient:
 
 
 def test_validate_emits_support_footer_on_invalid_licence(
-    monkeypatch, tmp_path, capsys
+    monkeypatch, tmp_path, capsys, sign_jwt
 ):
     # Arrange — no cache (fresh path skipped) + server rejects the JWT
     from revue_skill.validate import validate_licence
+
+    # REVUE-371: sign a real RS256 JWT (shared `sign_jwt` fixture) so it passes
+    # the signature gate and actually reaches the mocked server-rejection branch
+    # this test covers. A placeholder token would fail signature verification
+    # first and never exercise the `valid: false` server path.
+    real_jwt = sign_jwt()
 
     monkeypatch.setenv(
         "REVUE_LICENCE_CACHE_PATH", str(tmp_path / "licence-cache.json")
@@ -182,7 +188,7 @@ def test_validate_emits_support_footer_on_invalid_licence(
     )
 
     # Act
-    rc = validate_licence("invalid.jwt.token")
+    rc = validate_licence(real_jwt)
 
     # Assert — rejected licence surfaces the support line (exit 5)
     assert rc == 5
@@ -190,12 +196,18 @@ def test_validate_emits_support_footer_on_invalid_licence(
 
 
 def test_validate_does_not_emit_support_footer_on_valid_licence(
-    monkeypatch, tmp_path, capsys
+    monkeypatch, tmp_path, capsys, sign_jwt
 ):
     # Arrange — no cache + server accepts the JWT
     import time
 
     from revue_skill.validate import validate_licence
+
+    # REVUE-371: validate_licence verifies the JWT signature before any cache or
+    # network step, so a placeholder token now (correctly) fails. The shared
+    # `sign_jwt` fixture signs a real RS256 JWT and points the verifier at its
+    # public key so the happy path reaches the (mocked) network branch.
+    real_jwt = sign_jwt()
 
     monkeypatch.setenv(
         "REVUE_LICENCE_CACHE_PATH", str(tmp_path / "licence-cache.json")
@@ -215,7 +227,7 @@ def test_validate_does_not_emit_support_footer_on_valid_licence(
     )
 
     # Act
-    rc = validate_licence("valid.jwt.token")
+    rc = validate_licence(real_jwt)
 
     # Assert — happy path stays quiet
     assert rc == 0

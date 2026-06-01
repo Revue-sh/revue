@@ -144,18 +144,33 @@ def is_cache_fresh(cache_data: object) -> bool:
     return now < capped_horizon
 
 
-def _write_cache(response_json: dict) -> int:
+def _write_cache(response_json: dict, *, jwt_claims: dict | None = None) -> int:
     """Write the validation response to the cache file. Returns 0 on success,
     exit code 7 on failure. Creates parent directory if needed, ensures file
     mode 0600 and parent mode 0700.
 
     Stamps ``cached_at`` (client wall-clock at write time) so the freshness
     check can cap the cache lifetime independently of the server-issued
-    ``refresh_after_ts`` (defense against cache tampering)."""
+    ``refresh_after_ts`` (defense against cache tampering).
+
+    REVUE-371 C1: when ``jwt_claims`` is provided, the verified JWT's
+    ``workspace_id`` is persisted into the cache. The ``/v2/licence/validate``
+    response body omits ``workspace_id``, so without this the read-time AC3
+    claims-match (``decoded_claims.workspace_id == cache.workspace_id``) would
+    compare an int against ``None`` on every fresh-cache hit, fail, and fall
+    through to the network — defeating the 24h offline grace and locking out
+    offline users with a valid licence."""
     cache_path = _get_cache_path()
     cache_dir = cache_path.parent
 
     payload = {**response_json, "cached_at": int(time.time())}
+    if jwt_claims is not None:
+        # Bind the cache to the identifying claim of the JWT it was validated
+        # against, so a different JWT presented later fails the claims-match and
+        # forces re-validation (AC3). ``tier`` is already present from the
+        # server body; comparing the JWT's tier to that correctly re-validates
+        # on a tier change.
+        payload["workspace_id"] = jwt_claims.get("workspace_id")
 
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -201,19 +216,54 @@ def _run_validation(jwt_token: str) -> int:
     """Run the licence validation flow. Returns the process exit code
     (0 on success, non-zero on failure per the exit-code table).
 
-    The flow is:
-    1. Check if cache is fresh (within refresh_after_ts) → return 0
-    2. Cache stale/missing → POST JWT to validate endpoint
-    3. On 200 + valid=true → write cache, return 0
-    4. On 200 + valid=false → block with exit 5 (server rejected the JWT)
-    5. On network fail (any cache state) → block with exit 8 per AC4 — step 1
-       already returned 0 for fresh cache, so reaching here means stale/missing
+    REVUE-371: The flow is:
+    1. Verify JWT signature against embedded public key (AC1). If invalid,
+       return 5 regardless of cache state — plaintext cache cannot bypass
+       cryptographic checks.
+    2. Check if cache is fresh (within refresh_after_ts) and JWT claims match
+       cached payload (AC2, AC3) → return 0
+    3. Cache stale/missing → POST JWT to validate endpoint
+    4. On 200 + valid=true → write cache, return 0
+    5. On 200 + valid=false → block with exit 5 (server rejected the JWT)
+    6. On network fail (any cache state) → block with exit 8 per AC4 — step 2
+       already returned 0 for fresh cache + valid JWT, so reaching here means
+       stale/missing or unverifiable JWT
     """
-    # Step 1: check cache
+    # Step 1: REVUE-371 — verify JWT signature BEFORE checking cache.
+    # This prevents a forged JWT + plaintext cache from granting access.
+    try:
+        decoded_claims = pyjwt.decode(
+            jwt_token,
+            _jwt_keys.JWT_PUBLIC_KEY_PEM,
+            algorithms=[_jwt_keys.JWT_ALGORITHM],
+            options={
+                "verify_exp": True,
+                "require": ["exp", "workspace_id", "tier"],
+            },
+        )
+    except pyjwt.PyJWTError as exc:
+        # Signature, expiry, or required claims check failed.
+        error_code = exc.__class__.__name__
+        print(
+            f"error: licence validation failed (jwt_verification): "
+            f"{error_code}: {exc}",
+            file=sys.stderr,
+        )
+        return 5
+
+    # Step 2: JWT verified; check cache freshness (AC2).
     cache_data = _read_cache()
     if is_cache_fresh(cache_data):
-        # Cache is fresh — no network call, invocation proceeds (AC2)
-        return 0
+        # Cache is fresh AND JWT is valid — verify claims match (AC3).
+        # This catches a scenario where cache was written with one licence
+        # but a different JWT is presented (e.g., revocation + re-activation).
+        cached_tier = cache_data.get("tier")
+        cached_workspace_id = cache_data.get("workspace_id")
+        if (decoded_claims.get("tier") == cached_tier and
+            decoded_claims.get("workspace_id") == cached_workspace_id):
+            # Claims match cache payload; invocation proceeds (AC2 + AC3)
+            return 0
+        # Claims mismatch → cache is invalid for this JWT; fall through to network
 
     # Step 2: cache is stale or missing; attempt network call.
     # NOTE: reaching this branch means the cache is NOT fresh, so any
@@ -288,8 +338,10 @@ def _run_validation(jwt_token: str) -> int:
         )
         return 5
 
-    # Step 6: valid response; write cache and return 0
-    cache_result = _write_cache(body)
+    # Step 6: valid response; write cache and return 0. Persist the verified
+    # JWT's identifying claim (REVUE-371 C1) so the next invocation's claims-
+    # match honours this fresh cache instead of falling through to the network.
+    cache_result = _write_cache(body, jwt_claims=decoded_claims)
     if cache_result != 0:
         return cache_result
 
