@@ -6,9 +6,9 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ## Deferred from: code review of revue-374-version-manifest-endpoint (2026-06-02)
 
-- **Multi-platform wheel selection** — `manifest_builder._map_pypi_to_manifest` picks an arbitrary first `.whl`; revue publishes one wheel per platform (macOS arm64 + Linux x86_64). The schema exposes a single `wheel` slot and "multi-platform artefact representation" is explicitly out of scope for REVUE-374; the MVP `install-skill` client does version-equality only and never downloads from the manifest URL, so installs are not broken today. Revisit when the client consumes the artefact URL (relates to REVUE-377). [src/web/services/manifest_builder.py:114]
-- **Cache stampede** — no async lock around the cache read-modify-write in `build_manifest`; concurrent requests on a cold/expired cache both fetch PyPI. Idempotent, last-write-wins, low severity at current traffic. [src/web/services/manifest_builder.py:65]
-- **Yanked wheels not skipped** — a withdrawn release could be served as `current_version`. Low likelihood under the current single-maintainer release flow. [src/web/services/manifest_builder.py:114]
+- **Multi-platform wheel selection** — `manifest_builder._map_pypi_to_manifest` picks an arbitrary first `.whl`; revue publishes one wheel per platform (macOS arm64 + Linux x86_64). The schema exposes a single `wheel` slot and "multi-platform artefact representation" is explicitly out of scope for REVUE-374; the MVP `install-skill` client does version-equality only and never downloads from the manifest URL, so installs are not broken today. Revisit when the client consumes the artefact URL. **Now owned by REVUE-378** (Option A — per-platform manifest is the hard prerequisite for sha256 verification). [src/web/services/manifest_builder.py:114]
+- **Cache stampede** — no async lock around the cache read-modify-write in `build_manifest`; concurrent requests on a cold/expired cache both fetch PyPI. Idempotent, last-write-wins, low severity at current traffic. **Ticketed: REVUE-379** (Low, related-to REVUE-374). [src/web/services/manifest_builder.py:65]
+- **Yanked wheels not skipped** — a withdrawn release could be served as `current_version`. Low likelihood under the current single-maintainer release flow. **Ticketed: REVUE-380** (Low, related-to REVUE-374). [src/web/services/manifest_builder.py:114]
 
 ---
 

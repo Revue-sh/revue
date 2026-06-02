@@ -69,6 +69,25 @@ Capture the last line of output as `SOURCE_BRANCH` for the cleanup step.
 
 If the script exits non-zero, print the error and stop.
 
+### Step 2b — Stop redundant CI pipelines
+
+The PR pipeline (`run-tests` + the AI `revue-review` step) is tied to the source
+branch and keeps running — burning AI tokens — after the merge lands. Stop any
+still-running pipeline for this PR:
+
+```bash
+source ~/.zshenv
+bash .claude/skills/bitbucket-merge-pr/scripts/stop_pr_pipelines.sh PR_NUMBER SOURCE_BRANCH
+```
+
+The script finds `IN_PROGRESS`/`PENDING` pipelines for the PR (and its source
+branch) and stops each via the Bitbucket `stopPipeline` API. It prints either
+`✅ Stopped #<build> <uuid>` per pipeline or `No in-progress pipelines to stop`.
+
+This is **best-effort cost-saving** — the merge has already landed. If it exits
+non-zero, surface the message but **do not** treat it as a blocker or retry the
+merge; continue to the sync steps.
+
 ### Step 3 — Sync local repo
 
 After a successful merge, bring the local repo up to date and remove the stale branch (and any worktree attached to it):
@@ -122,6 +141,7 @@ Report to the user. When a worktree was attached to the source branch:
 
 ```
 ✅ Merged: <pr title>
+✅ Stopped redundant CI pipeline(s): #<build> ...   (omit if none were running)
 ✅ main updated (git pull)
 ✅ Worktree <worktree-path> removed
 ✅ Branch <source-branch> deleted
@@ -135,6 +155,7 @@ When the source branch had no worktree:
 
 ```
 ✅ Merged: <pr title>
+✅ Stopped redundant CI pipeline(s): #<build> ...   (omit if none were running)
 ✅ main updated (git pull)
 ✅ Branch <source-branch> deleted
 ✅ GitHub main synced

@@ -1,7 +1,7 @@
 # Revue — Three-Package Distribution
 
 Internal guide for the team. Covers how the three Revue Python packages are
-built, signed, and published together as an atomic release set (REVUE-310).
+built and published together as an atomic release set (REVUE-310).
 
 ## Package graph
 
@@ -77,9 +77,8 @@ packaging/
     │   └── build_wheel.py         # assembles the platform wheel
     └── tests/
         ├── test_wheel_publishes_to_pypi.py
-        ├── test_release_artefact_signed.py
         ├── test_manifest_schema_validates.py
-        ├── test_signature_verification_in_installer.py
+        ├── test_install_doc_trust_model.py
         ├── test_agent_prompts_packaged.py
         └── test_vendored_sources_in_sync.py
 ```
@@ -158,9 +157,23 @@ revue install-skill --skip-verify --target-dir /tmp/skills  # skill installer
 served at `https://revue.sh/skills/manifest.json` (pre-MVP fallback:
 `https://raw.githubusercontent.com/cbscd/revue/main/manifest.json`).
 
-The install script fetches this manifest, validates it against the schema,
-then verifies the declared wheel hash + Sigstore signature before copying
-the skill into the user's home.
+The install path (`revue install-skill`, default — i.e. without
+`--skip-verify`) applies three checks before copying the skill into the user's
+home:
+
+1. **Transport** — the manifest URL is validated as `https` with a host, then
+   fetched (a wrapper script cannot redirect the fetch to `file://`/`http://`).
+2. **Schema** — the manifest is validated against `manifest.schema.json`.
+3. **Version** — the manifest's `current_version` must equal the installed
+   wheel's `__version__` (unless `--no-strict-version`), so a stale wheel is
+   not installed against a newer advertised release.
+
+The install path does **not** yet verify the artefact's `sha256` against
+`artefacts.wheel.sha256`, nor a Sigstore/cosign signature — `pip` already
+verifies the PyPI-provided hash of the wheel it downloads, and the additional
+anti-tamper check against a canonical signed manifest is **planned, not yet
+implemented** (tracked as REVUE-378). Until then the `sha256` field in the
+manifest is advisory only.
 
 The optional `revue_core_min_version` field (REVUE-310) lets the manifest
 declare the minimum `revue_core` version the skill was built against. If a
