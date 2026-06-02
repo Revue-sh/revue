@@ -436,7 +436,13 @@ pipelines:
               sed -i "s/^version = \"[^\"]*\"/version = \"${NEXT_VERSION}\"/" packaging/revue/pyproject.toml
               sed -i "s/\"revue_core~=[^\"]*\"/\"revue_core~=${NEXT_VERSION}\"/" packaging/revue-ci/pyproject.toml
               sed -i "s/\"revue_core~=[^\"]*\"/\"revue_core~=${NEXT_VERSION}\"/" packaging/revue/pyproject.toml
-              git add packaging/revue_core/pyproject.toml packaging/revue-ci/pyproject.toml packaging/revue/pyproject.toml
+              # REVUE-372: the skill wheel's runtime __version__ lives in __init__.py,
+              # not pyproject.toml. build_nuitka.py copies this file verbatim into the
+              # compiled wheel, and the customer-side `install-skill` strict check
+              # compares it against the manifest version. Bump it here too or every
+              # release after 0.1.0 fails to install.
+              sed -i "s/^__version__ = \"[^\"]*\"/__version__ = \"${NEXT_VERSION}\"/" packaging/revue/src/revue_skill/__init__.py
+              git add packaging/revue_core/pyproject.toml packaging/revue-ci/pyproject.toml packaging/revue/pyproject.toml packaging/revue/src/revue_skill/__init__.py
               git commit -m "chore(release): v${NEXT_VERSION}"
               git tag "v${NEXT_VERSION}"
               git push origin "v${NEXT_VERSION}"
