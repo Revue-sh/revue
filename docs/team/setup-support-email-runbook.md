@@ -370,6 +370,36 @@ Once the setup is live and stable, apply these security measures:
 
 ---
 
+## Appendix: Adding `legal@revue.sh` (REVUE-357)
+
+The legal pages (Terms + Privacy) use `legal@revue.sh` as the contact/DSAR address.
+Because the infra above already exists, adding it is a ~3-minute job with **no DNS changes**
+— the MX records already route all `*@revue.sh` mail to Cloudflare.
+
+### Inbound (receive)
+1. Cloudflare Dashboard → **revue.sh** → **Email Routing** → **Routing rules** tab.
+2. Under **Custom addresses** → **Create address**.
+3. Custom address: `legal` · Action: *Send to an email* · Destination: the **same verified Gmail
+   inbox** as `support@` (no re-verification needed).
+4. **Save.** Leave the catch-all **off** (unknown addresses must still bounce — see Test 5.5).
+
+### Outbound (reply as legal@)
+1. Gmail → Settings → **Accounts and Import** → **Send mail as** → **Add another email address**.
+2. Name `Revue Legal`, email `legal@revue.sh`, treat as alias.
+3. SMTP: `smtp-relay.brevo.com` : `587`, username = Brevo login, password = existing Brevo SMTP key, TLS on.
+4. Click the Gmail verification link (it arrives in the shared inbox via the new inbound rule).
+
+### Gmail send-as configuration (chosen 2026-06-02)
+- **Default send-as address: `support@revue.sh`** (new compose defaults to support).
+- **When replying:** *"Reply from the same address the message was sent to"* — so mail received at
+  `legal@` is replied from `legal@` automatically; support from support.
+- **Caveat:** a *brand-new* (non-reply) legal email must have `legal@` picked manually in the From
+  dropdown, since the default is `support@`.
+
+**Status:** ✅ Live 2026-06-02 — inbound routing + outbound (DKIM/SPF `d=revue.sh` pass) both working.
+
+---
+
 ## Summary Checklist
 
 - [x] Cloudflare Email Routing enabled; MX records present

@@ -36,6 +36,8 @@
 <body class="h-full bg-gray-950 text-gray-100">
     {% block body %}{% endblock %}
 
+    {% include "partials/footer.html" %}
+
     <script>
     function copyToClipboard(text, btnId) {
         navigator.clipboard.writeText(text).then(() => {

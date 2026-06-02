@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} — Revue{% endblock %}
+
+{% block body %}
+<style>
+  .legal-article { line-height: 1.7; color: #d1d5db; }
+  .legal-article h1 { font-size: 2rem; font-weight: 700; color: #fff; margin: 0 0 1.5rem; }
+  .legal-article h2 { font-size: 1.35rem; font-weight: 700; color: #fff; margin: 2.25rem 0 0.75rem; border-bottom: 1px solid #1f2937; padding-bottom: 0.4rem; }
+  .legal-article h3 { font-size: 1.1rem; font-weight: 600; color: #f3f4f6; margin: 1.5rem 0 0.5rem; }
+  .legal-article p { margin: 0.75rem 0; }
+  .legal-article ul, .legal-article ol { margin: 0.75rem 0; padding-left: 1.5rem; list-style: disc; }
+  .legal-article li { margin: 0.35rem 0; }
+  .legal-article strong { color: #fff; }
+  .legal-article a { color: #a78bfa; text-decoration: underline; }
+  .legal-article table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+  .legal-article th, .legal-article td { border: 1px solid #374151; padding: 0.5rem 0.75rem; text-align: left; }
+  .legal-article th { background: #111827; color: #f3f4f6; }
+  .legal-article code { background: #1f2937; color: #c4b5fd; padding: 0.1rem 0.35rem; border-radius: 0.25rem; font-family: monospace; font-size: 0.9em; }
+</style>
+<div style="max-width: 900px; margin: 0 auto; padding: 2rem;">
+  <div style="margin-bottom: 2rem;">
+    <a href="/" style="text-decoration: none; color: #a78bfa;">← Back to Home</a>
+  </div>
+
+  <article class="legal-article">
+    {{ content | safe }}
+  </article>
+
+  <div style="margin-top: 3rem; border-top: 1px solid #1f2937; padding-top: 2rem;">
+    <p style="text-align: center; color: #9ca3af; font-size: 0.9rem;">
+      Questions? <a href="mailto:legal@revue.sh" style="color: #a78bfa;">Contact us</a>
+    </p>
+  </div>
+</div>
+{% endblock %}

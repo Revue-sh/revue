@@ -85,7 +85,9 @@ async def test_usage_bar_requires_auth(client: AsyncClient):
 async def test_landing_page(client: AsyncClient):
     resp = await client.get("/")
     assert resp.status_code == 200
-    assert b"AI code review" in resp.content
+    # The landing hero is title-cased ("AI Code Review"); assert case-insensitively
+    # so the smoke check survives marketing copy casing (REVUE-281 cost-messaging).
+    assert b"ai code review" in resp.content.lower()
 
 
 @pytest.mark.asyncio

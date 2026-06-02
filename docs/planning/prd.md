@@ -961,6 +961,11 @@ A conversion tracking dashboard (Epic E6) will provide the data needed to make t
 - **Monorepos:** Multiple `.revue.yml` files are supported via path-scoped configuration. Each top-level service path can define its own team and agent settings.
 - **Token budget:** Each agent receives only the diff portions relevant to its trigger patterns, not the full diff. Cleo is responsible for routing the correct diff slices per agent.
 
+### Legal & Compliance (launch gate)
+- **Privacy Policy + Terms of Service are a hard public-launch gate**, not post-launch polish. `revue.sh` is a paid SaaS that collects emails at activation and processes payments, creating GDPR/DSA exposure in the EU; separately, Stripe payout setup will not activate without a live ToS URL. No money-in path exists until these pages are live. Tracked as **REVUE-357** (blocks **REVUE-315** Stripe).
+- **Open ownership risk:** the ToS/Privacy copy is template-adapted. Template legal text for a GDPR/DSA-exposed paid product is a liability until a named owner reviews and approves it before it goes live — this is a sign-off decision, not an engineering task.
+- **MVP scope boundary:** cookie-consent banner and an Enterprise-tier DPA are explicitly out of scope for launch (deferred per REVUE-357 Out-of-Scope).
+
 ### Non-Goals (v1.0)
 - Sage does **not** auto-commit fixes — suggestions require explicit developer acceptance
 - Sage does **not** fix issues that require context outside the diff — it defers those to humans

@@ -10,6 +10,7 @@ from routes.auth_routes import router as auth_router
 from routes.billing_routes import router as billing_router
 from routes.dashboard_routes import router as dashboard_router
 from routes.docs_routes import router as docs_router
+from routes.legal_routes import router as legal_router
 from routes.api_routes import router as api_router
 from routes.skills_routes import router as skills_router, make_manifest_builder
 
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
     application.include_router(billing_router)
     application.include_router(dashboard_router)
     application.include_router(docs_router)
+    application.include_router(legal_router)
     application.include_router(skills_router)
     application.include_router(api_router, prefix="/api")
 
