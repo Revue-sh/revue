@@ -1,11 +1,14 @@
 ---
 name: run-tests
 model: haiku
-description: Run the Revue test suite. Use when the user asks to run tests, check tests, or verify a change. Invoked as /run-tests (full suite) or /run-tests <target> [<target> ...] where target is a file or file::test_name relative to src/revue/tests/.
+description: Run the Revue test suite. Use when the user asks to run tests, check tests, or verify a change. Invoked as /run-tests (full suite) or /run-tests <target> [<target> ...] where target is a file or file::test_name path relative to the repo root.
 allowed-tools: Bash
 ---
 
-Run the Revue pytest suite from `src/`.
+Run the Revue pytest suite. The tree spans several disjoint test roots
+(`packaging/revue/tests`, `packaging/revue-ci/tests`, `packaging/revue_core/tests`,
+`src/web/tests`, and root `tests/`), each run as a separate pytest invocation
+against the repo virtualenv at `.venv`.
 
 ## Scripts
 
@@ -20,34 +23,41 @@ SKILL_DIR="/Volumes/LexarSSD/Projects/revue.io/.claude/skills/run-tests"
 
 ## Full suite
 
-No arguments — run everything:
+No arguments — run every test root:
 
 ```bash
 "$SKILL_DIR/scripts/run_all.sh"
 ```
 
-Output: full `pytest -q --tb=short`. Passing tests are dots; failures print a short traceback.
+Output contract:
+- **All pass** → one `<suite>: <pytest summary>` line per suite, then `ALL SUITES PASSED` (exit 0).
+- **Any fail** → each failing suite's last ~60 lines, a `SUITE SUMMARY` block, then a nonzero exit (the first failing suite's code).
+- A suite that collects zero tests (pytest rc 5) is reported as a `WARNING`, not a failure.
 
 ---
 
 ## Specific tests
 
-Pass one or more pytest node IDs relative to `src/revue/tests/`:
+Pass one or more pytest node IDs **relative to the repo root** (not to any
+suite). Use the path as it actually sits in the tree:
 
 ```bash
 # Whole file
-"$SKILL_DIR/scripts/run_tests.sh" comments/test_service.py
+"$SKILL_DIR/scripts/run_tests.sh" packaging/revue/tests/test_atomic_version_invariant.py
 
 # Single test
-"$SKILL_DIR/scripts/run_tests.sh" comments/test_service.py::test_collect_threads_uses_platform_for_store_lookup
+"$SKILL_DIR/scripts/run_tests.sh" tests/test_resolve_cli.py::test_main_invokes_service
 
 # Multiple tests (space-separated)
 "$SKILL_DIR/scripts/run_tests.sh" \
-  core/test_pipeline.py::test_foo \
-  core/test_pipeline.py::test_bar
+  packaging/revue/tests/test_packaging.py::test_foo \
+  packaging/revue/tests/test_packaging.py::test_bar
 ```
 
-The script also accepts full paths starting with `revue/tests/` — it won't double-prefix them.
+`src/` is placed on `PYTHONPATH` only for root `tests/` targets; packaging and
+`src/web` targets run without it (to avoid shadowing top-level modules). Don't
+mix root `tests/` targets with packaging/web targets in one call — run them
+separately (the script warns if you do).
 
 Output: last 30 lines of `pytest -v --tb=long`.
 
@@ -58,11 +68,11 @@ Output: last 30 lines of `pytest -v --tb=long`.
 | User says | Script to call | Argument(s) |
 |-----------|---------------|-------------|
 | `/run-tests` | `run_all.sh` | — |
-| `/run-tests comments/test_service.py` | `run_tests.sh` | `comments/test_service.py` |
-| `/run-tests comments/test_service.py::test_foo` | `run_tests.sh` | `comments/test_service.py::test_foo` |
-| `/run-tests core/test_pipeline.py::test_foo core/test_pipeline.py::test_bar` | `run_tests.sh` | both node IDs |
+| `/run-tests packaging/revue/tests/test_x.py` | `run_tests.sh` | `packaging/revue/tests/test_x.py` |
+| `/run-tests tests/test_x.py::test_foo` | `run_tests.sh` | `tests/test_x.py::test_foo` |
+| `/run-tests <fileA>::test_foo <fileA>::test_bar` | `run_tests.sh` | both node IDs |
 
-Strip any leading `src/revue/tests/` the user may have typed — the script normalises it.
+Pass paths through verbatim — `run_tests.sh` does not rewrite or prefix them.
 
 ---
 
