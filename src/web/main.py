@@ -11,6 +11,7 @@ from routes.billing_routes import router as billing_router
 from routes.dashboard_routes import router as dashboard_router
 from routes.docs_routes import router as docs_router
 from routes.api_routes import router as api_router
+from routes.skills_routes import router as skills_router, make_manifest_builder
 
 # Hosts on which paths are rewritten to add the `/api` prefix internally,
 # letting `api.<env>.revue.sh/<path>` serve the same handlers as
@@ -26,11 +27,25 @@ API_SUBDOMAIN_PASSTHROUGH_PATHS = {"/health"}
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     init_db()
-    yield
+    try:
+        yield
+    finally:
+        # Close the shared httpx client created in create_app() so the
+        # connection pool is drained on shutdown.
+        http_client = getattr(application.state, "http_client", None)
+        if http_client is not None:
+            await http_client.aclose()
 
 
 def create_app() -> FastAPI:
     application = FastAPI(title="Revue", docs_url=None, redoc_url=None, lifespan=lifespan)
+
+    # Compose skills-route dependencies on app state (no module-level globals).
+    # The client is created here and closed in `lifespan`.
+    from httpx import AsyncClient
+    http_client = AsyncClient()
+    application.state.http_client = http_client
+    application.state.manifest_builder = make_manifest_builder(http_client, {})
 
     @application.middleware("http")
     async def api_subdomain_path_rewrite(request: Request, call_next):
@@ -51,6 +66,7 @@ def create_app() -> FastAPI:
     application.include_router(billing_router)
     application.include_router(dashboard_router)
     application.include_router(docs_router)
+    application.include_router(skills_router)
     application.include_router(api_router, prefix="/api")
 
     @application.get("/health")

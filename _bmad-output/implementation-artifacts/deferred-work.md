@@ -4,6 +4,14 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+## Deferred from: code review of revue-374-version-manifest-endpoint (2026-06-02)
+
+- **Multi-platform wheel selection** — `manifest_builder._map_pypi_to_manifest` picks an arbitrary first `.whl`; revue publishes one wheel per platform (macOS arm64 + Linux x86_64). The schema exposes a single `wheel` slot and "multi-platform artefact representation" is explicitly out of scope for REVUE-374; the MVP `install-skill` client does version-equality only and never downloads from the manifest URL, so installs are not broken today. Revisit when the client consumes the artefact URL (relates to REVUE-377). [src/web/services/manifest_builder.py:114]
+- **Cache stampede** — no async lock around the cache read-modify-write in `build_manifest`; concurrent requests on a cold/expired cache both fetch PyPI. Idempotent, last-write-wins, low severity at current traffic. [src/web/services/manifest_builder.py:65]
+- **Yanked wheels not skipped** — a withdrawn release could be served as `current_version`. Low likelihood under the current single-maintainer release flow. [src/web/services/manifest_builder.py:114]
+
+---
+
 ## Deferred from: code review of spec-revue-314-revue-sh-domain (2026-05-21)
 
 - **D1** — `VALIDATE_URL` resolved at module import time in `packaging/revue_core/src/revue_core/core/license_validator.py:26`. Late env-var mutations are ignored. Pattern matches `usage_tracker._HOST` (project-wide convention); consider unifying on call-time resolution if any subsystem ever needs runtime overrides.

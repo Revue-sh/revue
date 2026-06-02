@@ -7,9 +7,8 @@
 #   create_pr.sh REVUE-167 "chore(tooling)[REVUE-167]: remove RuFlo" /tmp/desc.md develop
 #
 # Env (sourced from ~/.zshenv):
-#   BITBUCKET_USERNAME     — Bitbucket username / email
-#   BITBUCKET_APP_PASSWORD — App password (preferred for write calls)
-#   BITBUCKET_API_TOKEN    — API token (fallback)
+#   BITBUCKET_USERNAME  — Bitbucket username / email
+#   BITBUCKET_API_TOKEN — Atlassian API token (App Passwords are DEPRECATED — token only)
 set -euo pipefail
 source ~/.zshenv
 
@@ -23,10 +22,10 @@ if [[ ! -f "$DESC_FILE" ]]; then
     exit 1
 fi
 
-# Prefer app password for write calls; fall back to API token
-BB_PASS="${BITBUCKET_APP_PASSWORD:-${BITBUCKET_API_TOKEN:-}}"
+# Atlassian deprecated App Passwords — authenticate with the API token only.
+BB_PASS="${BITBUCKET_API_TOKEN:-}"
 if [[ -z "$BB_PASS" ]]; then
-    echo "Error: set BITBUCKET_APP_PASSWORD or BITBUCKET_API_TOKEN in ~/.zshenv" >&2
+    echo "Error: set BITBUCKET_API_TOKEN in ~/.zshenv (App Passwords are deprecated)" >&2
     exit 1
 fi
 if [[ -z "${BITBUCKET_USERNAME:-}" ]]; then

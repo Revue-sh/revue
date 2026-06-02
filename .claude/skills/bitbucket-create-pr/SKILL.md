@@ -13,13 +13,12 @@ Always `source ~/.zshenv` before any API or script call.
 
 | Variable | Purpose |
 |----------|---------|
-| `BITBUCKET_APP_PASSWORD` | App password — preferred for write (POST) calls |
-| `BITBUCKET_API_TOKEN` | API token — fallback if APP_PASSWORD not set |
+| `BITBUCKET_API_TOKEN` | Atlassian API token — used for ALL calls (reads and writes) |
 | `BITBUCKET_USERNAME` | Bitbucket username / email |
 | `JIRA_API_TOKEN` | Jira API token (for fetching ticket details) |
 
 - Workspace/repo: `cbscd/revue` (override via `BITBUCKET_WORKSPACE` / `BITBUCKET_REPO_SLUG`)
-- **Write auth note:** POST calls need Basic auth via `-u "${BITBUCKET_USERNAME}:${BITBUCKET_APP_PASSWORD}"`. Bearer tokens return 401 for writes.
+- **Auth note:** Atlassian **deprecated App Passwords** — `BITBUCKET_APP_PASSWORD` no longer authenticates (401). Use Basic auth via `-u "${BITBUCKET_USERNAME}:${BITBUCKET_API_TOKEN}"` for every call, reads and writes. Bearer tokens also 401 for writes.
 - PR template: `.bitbucket/pull_request_template.md` — fill **every** section, no placeholder left blank
 
 ## Script
@@ -28,7 +27,7 @@ Always `source ~/.zshenv` before any API or script call.
 .claude/skills/bitbucket-create-pr/scripts/create_pr.sh TICKET "PR title" description_file [destination]
 ```
 
-Sources `~/.zshenv` internally. Uses `BITBUCKET_APP_PASSWORD`, falls back to `BITBUCKET_API_TOKEN`.
+Sources `~/.zshenv` internally. Authenticates with `BITBUCKET_API_TOKEN` (App Passwords are deprecated).
 
 ---
 
@@ -108,10 +107,10 @@ bash .claude/skills/bitbucket-create-pr/scripts/create_pr.sh \
 
 The script outputs: `PR #<id>: https://bitbucket.org/cbscd/revue/pull-requests/<id>`
 
-If the script fails with an auth error, check that `BITBUCKET_APP_PASSWORD` is set:
+If the script fails with an auth error, check that `BITBUCKET_API_TOKEN` is set (App Passwords are deprecated and will 401):
 
 ```bash
-source ~/.zshenv && echo "APP_PASS set: ${BITBUCKET_APP_PASSWORD:+yes}"
+source ~/.zshenv && echo "API_TOKEN set: ${BITBUCKET_API_TOKEN:+yes}"
 ```
 
 ### Step 6 — Transition Jira to Code Review

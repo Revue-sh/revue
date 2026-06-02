@@ -98,10 +98,31 @@ definitions:
               fi
             }
 
+            # REVUE-374: the version manifest must be 200 and structurally sound.
+            # The route validates against the bundled schema and 5xx's on a bad
+            # body, so a 200 already implies schema conformance; the python check
+            # is belt-and-braces (schema_version, semver, 64-hex sha256, https url).
+            assert_manifest() {
+              out="$(mktemp)"
+              code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" "$1")"
+              if [ "$code" != "200" ]; then
+                echo "Expected 200 from $1, got $code" >&2
+                cat "$out" >&2
+                exit 1
+              fi
+              if ! python3 -c 'import json,re,sys; m=json.load(open(sys.argv[1],encoding="utf-8")); w=m["artefacts"]["wheel"]; raise SystemExit(not (m.get("schema_version")==1 and bool(re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", m.get("current_version") or "")) and bool(re.fullmatch(r"[0-9a-f]{64}", w.get("sha256") or "")) and str(w.get("url","")).startswith("https://") and "T" in (m.get("released_at") or "")))' "$out"
+              then
+                echo "Manifest from $1 failed structural validation" >&2
+                cat "$out" >&2
+                exit 1
+              fi
+            }
+
             assert_json_health "https://staging.revue.sh/health"
             assert_200 "https://api.staging.revue.sh/health"
             assert_422 "https://api.staging.revue.sh/license/validate"
             assert_422 "https://staging.revue.sh/api/license/validate"
+            assert_manifest "https://staging.revue.sh/skills/manifest.json"
 
     - step: &deploy-web-production
         name: "Deploy Web → Production"

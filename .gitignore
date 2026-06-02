@@ -60,3 +60,10 @@ atlassian-bitbucket-pipelines-runner/
 # Per-session Claude Code runtime state (sessionId/pid lock file)
 .claude/scheduled_tasks.lock
 _bmad/custom/config.user.toml
+
+# RuFlo / claude-flow local tooling state (machine-specific, not project files)
+.claude-flow/
+.swarm/
+*.rvf
+*.rvf.lock
+ruvector.db
