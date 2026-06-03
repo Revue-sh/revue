@@ -142,7 +142,7 @@ def _verify_jwt(token: str) -> dict:
     """
     return pyjwt.decode(
         token,
-        _jwt_keys.JWT_PUBLIC_KEY_PEM,
+        _jwt_keys.get_jwt_public_key(),
         algorithms=[_jwt_keys.JWT_ALGORITHM],
         options={
             "verify_exp": True,

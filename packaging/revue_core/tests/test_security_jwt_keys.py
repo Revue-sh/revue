@@ -145,6 +145,36 @@ def test_jwt_public_key_pem_round_trips_with_sign_and_verify(monkeypatch) -> Non
     assert claims["machine_fingerprint"] == "fp"
 
 
+def test_get_jwt_public_key_returns_embedded_constant() -> None:
+    """REVUE-334 AC1: ``get_jwt_public_key()`` returns the embedded
+    production key. Verify sites call this accessor (not the module
+    constant directly) so Nuitka cannot constant-fold the key value into
+    the compiled verify function body across the wheel boundary.
+    """
+    from revue_core.security.jwt_keys import (
+        JWT_PUBLIC_KEY_PEM,
+        get_jwt_public_key,
+    )
+
+    assert get_jwt_public_key() == JWT_PUBLIC_KEY_PEM
+    assert get_jwt_public_key().startswith("-----BEGIN PUBLIC KEY-----")
+
+
+def test_get_jwt_public_key_reads_at_call_time(monkeypatch) -> None:
+    """REVUE-334 AC1/AC2: the accessor must read the module global at call
+    time, not bind it at import. This is what keeps the plain-Python
+    monkeypatch-based tests (AC2) working after verify sites switch from
+    the constant to the accessor — and mirrors the constant-folding
+    resistance the compiled binary needs.
+    """
+    import revue_core.security.jwt_keys as jwt_keys_module
+
+    sentinel = "-----BEGIN PUBLIC KEY-----\nSENTINEL\n-----END PUBLIC KEY-----\n"
+    monkeypatch.setattr(jwt_keys_module, "JWT_PUBLIC_KEY_PEM", sentinel)
+
+    assert jwt_keys_module.get_jwt_public_key() == sentinel
+
+
 def test_jwt_public_key_pem_parses_as_rsa_public_key() -> None:
     """The PRODUCTION embedded key must parse as an RSA public key via
     ``cryptography`` — not just decode as base64. Catches the case where

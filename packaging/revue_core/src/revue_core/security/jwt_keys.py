@@ -44,3 +44,18 @@ This is the public half. The private half lives in Fly secret
 the public key at build time means the CLI can verify offline, which
 is the entire point of the daily-check + cache contract delivered by
 REVUE-278."""
+
+
+def get_jwt_public_key() -> str:
+    """Return the embedded JWT public key PEM at call time.
+
+    Using a function call instead of a module-level constant prevents Nuitka
+    from constant-folding the value into the compiled _verify_jwt body.
+    Every verify site reads the key via this accessor, ensuring the call
+    crosses a compiled-module boundary — Nuitka cannot inline the value
+    into the caller's machine code. This is REVUE-334 AC1.
+
+    Call this from every verify site; never bind the return value at module
+    import time.
+    """
+    return JWT_PUBLIC_KEY_PEM

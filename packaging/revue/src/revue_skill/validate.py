@@ -234,7 +234,7 @@ def _run_validation(jwt_token: str) -> int:
     try:
         decoded_claims = pyjwt.decode(
             jwt_token,
-            _jwt_keys.JWT_PUBLIC_KEY_PEM,
+            _jwt_keys.get_jwt_public_key(),
             algorithms=[_jwt_keys.JWT_ALGORITHM],
             options={
                 "verify_exp": True,
@@ -359,7 +359,7 @@ def _run_validation(jwt_token: str) -> int:
         try:
             pyjwt.decode(
                 refreshed_jwt,
-                _jwt_keys.JWT_PUBLIC_KEY_PEM,
+                _jwt_keys.get_jwt_public_key(),
                 algorithms=[_jwt_keys.JWT_ALGORITHM],
                 options={
                     "verify_exp": True,
