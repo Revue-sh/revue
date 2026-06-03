@@ -66,10 +66,18 @@ _bmad/custom/config.user.toml
 src/web/revue.db
 src/web/revue.db-wal
 src/web/revue.db-shm
+# Root-level copy created when DATABASE_PATH defaults to "revue.db" (e.g. running
+# tests/scripts from the repo root) — same artifact, different cwd.
+/revue.db
+/revue.db-wal
+/revue.db-shm
 
 # RuFlo / claude-flow local tooling state (machine-specific, not project files)
 .claude-flow/
 .swarm/
+.claude/memory.db
+.claude/memory.db-wal
+.claude/memory.db-shm
 *.rvf
 *.rvf.lock
 ruvector.db

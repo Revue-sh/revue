@@ -92,6 +92,38 @@ CREATE TABLE IF NOT EXISTS usage_events (
 
 CREATE INDEX IF NOT EXISTS idx_usage_events_workspace_received_at
     ON usage_events(workspace_id, received_at);
+
+-- REVUE-325: Activation attempt tracking for rate limiting.
+-- license_key_id is NULLABLE: attempts against keys that do not exist (brute
+-- force probes) are still logged with a NULL key id. ``blocked`` marks a 429
+-- throttle response — recorded for incident response but excluded from the
+-- per-IP count so retries cannot extend a lockout.
+CREATE TABLE IF NOT EXISTS activation_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    license_key_id INTEGER REFERENCES license_keys(id),
+    ip_address TEXT NOT NULL,
+    key_hash TEXT NOT NULL,
+    fingerprint_hash TEXT NOT NULL,
+    is_successful INTEGER DEFAULT 0,
+    blocked INTEGER DEFAULT 0,
+    attempted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activation_attempts_key_time
+    ON activation_attempts(license_key_id, attempted_at);
+CREATE INDEX IF NOT EXISTS idx_activation_attempts_ip_time
+    ON activation_attempts(ip_address, attempted_at);
+
+-- REVUE-325: Flood event tracking (when key crosses 10 activations in 24h)
+CREATE TABLE IF NOT EXISTS activation_flood_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    license_key_id INTEGER NOT NULL REFERENCES license_keys(id),
+    key_hash TEXT NOT NULL,
+    flood_detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activation_flood_events_key
+    ON activation_flood_events(license_key_id);
 """
 
 REVIEWS_LIMIT_BY_TIER: dict[str, int | None] = {
@@ -147,6 +179,11 @@ _REVIEW_RUNS_MIGRATIONS = [
     ("findings_by_severity", "ALTER TABLE review_runs ADD COLUMN findings_by_severity TEXT"),
 ]
 
+_ACTIVATION_ATTEMPTS_MIGRATIONS = [
+    # REVUE-325: dev DBs created earlier in this PR predate the ``blocked`` column.
+    ("blocked", "ALTER TABLE activation_attempts ADD COLUMN blocked INTEGER DEFAULT 0"),
+]
+
 
 def _run_migrations(conn: sqlite3.Connection) -> None:
     """Apply idempotent column migrations. SQLite doesn't support ADD COLUMN IF NOT EXISTS."""
@@ -158,6 +195,11 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     run_cols = {row[1] for row in conn.execute("PRAGMA table_info(review_runs)").fetchall()}
     for col_name, sql in _REVIEW_RUNS_MIGRATIONS:
         if col_name not in run_cols:
+            conn.execute(sql)
+
+    attempt_cols = {row[1] for row in conn.execute("PRAGMA table_info(activation_attempts)").fetchall()}
+    for col_name, sql in _ACTIVATION_ATTEMPTS_MIGRATIONS:
+        if attempt_cols and col_name not in attempt_cols:
             conn.execute(sql)
 
 

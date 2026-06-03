@@ -7,7 +7,15 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
+from rate_limiter import (
+    check_ip_rate_limit,
+    check_key_rate_limit,
+    emit_flood_event,
+    log_activation_attempt,
+    validate_activation_headers,
+    ActivationRateLimitError,
+)
+from pydantic import BaseModel, Field, ValidationError
 
 from database import REVIEWS_LIMIT_BY_TIER, get_db
 from auth import get_session
@@ -165,9 +173,24 @@ async def validate_license(body: ValidateRequest) -> JSONResponse:
         })
 
 
+def _rate_limited_response(error: ActivationRateLimitError) -> JSONResponse:
+    """Build the 429 envelope with a Retry-After header (REVUE-325 AC1)."""
+    response = JSONResponse(
+        {"error": "rate_limited", "message": error.reason},
+        status_code=429,
+    )
+    if error.retry_after_seconds is not None:
+        response.headers["Retry-After"] = str(error.retry_after_seconds)
+    return response
+
+
 @router.post("/v2/licence/activate")
-async def activate_licence(body: ActivateRequest) -> JSONResponse:
+async def activate_licence(request: Request) -> JSONResponse:
     """REVUE-277 AC1+AC4: exchange a licence key for a signed RS256 JWT.
+
+    REVUE-325: Rate-limited to prevent automated abuse:
+    - Per-IP limit: 5 requests / 10 minutes
+    - Per-key limit: 10 successful activations / 24 hours
 
     Success → 200 with ``{jwt, tier}``. The CLI verifies the JWT against
     the embedded public key, writes it to ``~/.config/revue/licence.jwt``
@@ -177,16 +200,90 @@ async def activate_licence(body: ActivateRequest) -> JSONResponse:
     ``error`` code so the CLI can produce actionable messages without
     string-matching the human-readable text.
     """
+    # AC5: validate required headers BEFORE parsing the body, so a malformed
+    # Content-Type is rejected with 400 (FastAPI's automatic body binding would
+    # otherwise mask it as a 422). The body is parsed manually below; field-level
+    # validation still yields 422 to preserve the REVUE-277 activation contract.
+    try:
+        validate_activation_headers(
+            user_agent=request.headers.get("user-agent"),
+            content_type=request.headers.get("content-type"),
+        )
+    except ValueError as e:
+        return JSONResponse(
+            {"error": "invalid_request", "message": str(e)},
+            status_code=400,
+        )
+
+    try:
+        raw_body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "invalid_request", "message": "Request body must be valid JSON."},
+            status_code=400,
+        )
+    try:
+        body = ActivateRequest.model_validate(raw_body)
+    except ValidationError:
+        return JSONResponse(
+            {"error": "invalid_request", "message": "Request body failed validation."},
+            status_code=422,
+        )
+
     # ``fullmatch`` (not ``match``) — default-flag ``$`` matches at
     # "end-of-string OR just before a trailing newline", which would let
     # ``"abc\n"`` through and sign the newline into the JWT claim.
     if not _FINGERPRINT_PATTERN.fullmatch(body.machine_fingerprint):
         return JSONResponse(_INVALID_FINGERPRINT_BODY, status_code=422)
 
+    # Trusted client IP. On Fly.io the edge sets ``Fly-Client-IP`` server-side
+    # and a client cannot forge it. ``X-Forwarded-For``'s leftmost entry is
+    # client-supplied and MUST NOT be trusted for a security decision — using it
+    # would let an attacker spoof a fresh IP per request and defeat AC1 entirely.
+    # ``.strip()`` so a present-but-blank header is treated as absent rather than
+    # silently falling through to the (shared) proxy peer address.
+    client_ip = (request.headers.get("fly-client-ip") or "").strip() or (
+        request.client.host if request.client else None
+    )
+    if not client_ip:
+        # Fail closed rather than bucket every caller under one sentinel IP.
+        return JSONResponse(
+            {
+                "error": "invalid_request",
+                "message": "Could not determine client address.",
+            },
+            status_code=400,
+        )
+
     with get_db() as conn:
+        # No explicit locking is needed for the check-then-write critical section:
+        # the web tier runs a SINGLE uvicorn worker (see Dockerfile) and this
+        # ``async`` handler performs only blocking sqlite3 calls between here and
+        # the response — there is no ``await`` inside the ``with get_db()`` block,
+        # so the event loop cannot interleave another request's count+insert. The
+        # section is therefore atomic on the event loop. If the web tier is ever
+        # scaled to multiple workers/machines, move this rate-limit state to
+        # Postgres (AC6's original intent) or add BEGIN IMMEDIATE + busy_timeout.
+
+        # AC1: per-IP limit runs BEFORE the key lookup so brute-forcing keys
+        # (each probe hitting a non-existent key) is throttled too.
+        try:
+            check_ip_rate_limit(conn, client_ip)
+        except ActivationRateLimitError as e:
+            log_activation_attempt(
+                conn, None, body.key, client_ip, body.machine_fingerprint,
+                is_successful=False, blocked=True,
+            )
+            return _rate_limited_response(e)
+
         lic = get_license_by_key(conn, body.key)
 
         if lic is None:
+            # AC3: log invalid-key attempts (NULL key id) so probes are visible.
+            log_activation_attempt(
+                conn, None, body.key, client_ip, body.machine_fingerprint,
+                is_successful=False,
+            )
             return JSONResponse(
                 {
                     "error": "invalid_key",
@@ -196,7 +293,23 @@ async def activate_licence(body: ActivateRequest) -> JSONResponse:
                 status_code=404,
             )
 
+        # AC2: per-key limit, regardless of source IP.
+        try:
+            check_key_rate_limit(conn, lic.id)
+        except ActivationRateLimitError as e:
+            # AC4: a key crossing its limit is the flood signal.
+            emit_flood_event(conn, lic.id, body.key)
+            log_activation_attempt(
+                conn, lic.id, body.key, client_ip, body.machine_fingerprint,
+                is_successful=False, blocked=True,
+            )
+            return _rate_limited_response(e)
+
         if not lic.is_active:
+            log_activation_attempt(
+                conn, lic.id, body.key, client_ip, body.machine_fingerprint,
+                is_successful=False,
+            )
             return JSONResponse(
                 {
                     "error": "inactive_licence",
@@ -213,6 +326,14 @@ async def activate_licence(body: ActivateRequest) -> JSONResponse:
                 machine_fingerprint=body.machine_fingerprint,
             )
         except JWTSigningKeyMissing as exc:
+            # Server-side misconfiguration (500) is not the caller's fault — mark
+            # the attempt ``blocked`` so it is recorded for incident response but
+            # excluded from the per-IP count, so a user retrying after the outage
+            # does not lock themselves out.
+            log_activation_attempt(
+                conn, lic.id, body.key, client_ip, body.machine_fingerprint,
+                is_successful=False, blocked=True,
+            )
             return JSONResponse(
                 {
                     "error": "server_misconfigured",
@@ -221,6 +342,11 @@ async def activate_licence(body: ActivateRequest) -> JSONResponse:
                 status_code=500,
             )
 
+        # AC3: record the successful activation (also drives the per-key counter).
+        log_activation_attempt(
+            conn, lic.id, body.key, client_ip, body.machine_fingerprint,
+            is_successful=True,
+        )
         return JSONResponse({"jwt": token, "tier": lic.tier})
 
 
