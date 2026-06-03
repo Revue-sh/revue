@@ -220,6 +220,8 @@ def tier_from_price_id(price_id: str) -> Optional[str]:
     Checks all configured price env vars and returns the matching tier.
     Returns None if the price ID is unrecognised.
     """
+    if not price_id:
+        return None
     mapping = {
         os.environ.get("STRIPE_PRICE_INDIE_MONTHLY"): "indie",
         os.environ.get("STRIPE_PRICE_INDIE_YEARLY"): "indie",
@@ -228,6 +230,9 @@ def tier_from_price_id(price_id: str) -> Optional[str]:
         os.environ.get("STRIPE_PRICE_ENT_STARTER"): "enterprise_starter",
         os.environ.get("STRIPE_PRICE_ENT_GROWTH"): "enterprise_growth",
     }
+    # Defect D: unset env vars all become a single None key (last wins ->
+    # enterprise_growth). Drop it so an unknown/None price never matches a tier.
+    mapping.pop(None, None)
     return mapping.get(price_id)
 
 
@@ -246,7 +251,12 @@ def process_webhook_event(event, conn) -> str:
     Returns:
         Human-readable description of what was done.
     """
-    from models import get_user_by_stripe_customer, update_user_tier, update_stripe_customer_id
+    from models import (
+        get_user_by_id,
+        get_user_by_stripe_customer,
+        update_user_tier,
+        update_stripe_customer_id,
+    )
 
     event_type = event["type"]
     obj = event["data"]["object"]
@@ -262,7 +272,10 @@ def process_webhook_event(event, conn) -> str:
     # -- checkout.session.completed: link customer ID to user --
     if event_type == "checkout.session.completed":
         customer_id = obj.get("customer")
-        metadata = obj.get("metadata", {})
+        # Stripe sends `metadata: null` (not absent) for sessions created
+        # outside Revue's flow; `get(..., {})` returns None on a null value,
+        # so coerce explicitly to avoid AttributeError -> HTTP 500 -> retries.
+        metadata = obj.get("metadata") or {}
         user_id = metadata.get("user_id")
         if user_id and customer_id:
             update_stripe_customer_id(conn, int(user_id), customer_id)
@@ -276,6 +289,17 @@ def process_webhook_event(event, conn) -> str:
 
     user = get_user_by_stripe_customer(conn, customer_id)
     if not user:
+        # Webhook delivery order is not guaranteed: customer.subscription.created
+        # can arrive before checkout.session.completed links the customer. Fall
+        # back to the user_id stamped into subscription_data.metadata at checkout
+        # and link the customer now, so the upgrade isn't lost to a race.
+        meta_user_id = (obj.get("metadata") or {}).get("user_id")
+        if meta_user_id:
+            user = get_user_by_id(conn, int(meta_user_id))
+            if user and not user.stripe_customer_id:
+                update_stripe_customer_id(conn, user.id, customer_id)
+                _LOG.info("Linked Stripe customer %s to user %s (via subscription metadata)", customer_id, user.id)
+    if not user:
         _LOG.warning("No user found for Stripe customer %s", customer_id)
         return f"skipped:unknown_customer:{customer_id}"
 
@@ -285,7 +309,8 @@ def process_webhook_event(event, conn) -> str:
         return f"downgraded:user={user.id}:free"
 
     # created / updated — find the tier from the price ID
-    items = obj.get("items", {}).get("data", [])
+    # `items` may arrive as null; coerce as with metadata above.
+    items = (obj.get("items") or {}).get("data", [])
     price_id = items[0]["price"]["id"] if items else None
     if not price_id:
         return "skipped:no_price_id"

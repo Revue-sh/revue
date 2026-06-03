@@ -4,10 +4,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from auth import get_session
+from auth import get_session, create_session
 from database import get_db
-from models import get_license_for_user, get_recent_reviews, get_all_runs_for_user, get_analytics, get_conversion_analytics
-from config import templates
+from models import get_license_for_user, get_recent_reviews, get_all_runs_for_user, get_analytics, get_conversion_analytics, get_user_by_id
+from config import templates, CURRENCY_SYMBOL
 
 router = APIRouter()
 
@@ -20,14 +20,17 @@ TIER_LABELS: dict[str, str] = {
     "enterprise_plus": "Enterprise Plus",
 }
 
-TIER_PRICES: dict[str, str] = {
-    "free": "$0/mo",
-    "indie": "$9/mo",
-    "pro": "$29/mo",
-    "enterprise_starter": "$59/mo",
-    "enterprise_growth": "$149/mo",
-    "enterprise_plus": "Custom",
+# Monthly amounts (currency-agnostic); the symbol comes from the single
+# CURRENCY_SYMBOL source so price display stays consistent site-wide.
+_TIER_MONTHLY: dict[str, int] = {
+    "free": 0,
+    "indie": 9,
+    "pro": 29,
+    "enterprise_starter": 59,
+    "enterprise_growth": 149,
 }
+TIER_PRICES: dict[str, str] = {t: f"{CURRENCY_SYMBOL}{amt}/mo" for t, amt in _TIER_MONTHLY.items()}
+TIER_PRICES["enterprise_plus"] = "Custom"
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -46,17 +49,28 @@ async def dashboard(request: Request) -> HTMLResponse:
 
     user_id = session["user_id"]
     with get_db() as conn:
+        user = get_user_by_id(conn, user_id)
         license_key = get_license_for_user(conn, user_id)
         reviews = get_recent_reviews(conn, user_id)
 
+    # Defect E: read tier from the DB, not the login session. A webhook upgrade
+    # (checkout -> pro) updates the DB but not the already-issued session cookie,
+    # so session["tier"] goes stale (badge shows FREE) until re-login. Sync both
+    # the rendered tier and the cookie here.
+    if user:
+        session["tier"] = user.tier
     tier = session.get("tier", "free")
-    return templates.TemplateResponse(request, "dashboard.html", {
+
+    response = templates.TemplateResponse(request, "dashboard.html", {
         "session": session,
         "license_key": license_key,
         "reviews": reviews,
         "tier_label": TIER_LABELS.get(tier, tier),
         "tier_price": TIER_PRICES.get(tier, ""),
     })
+    if user:
+        create_session(response, user.id, user.email, user.tier)
+    return response
 
 
 @router.get("/onboarding", response_class=HTMLResponse)

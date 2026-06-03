@@ -1,6 +1,7 @@
 """Stripe billing routes — Checkout, Billing Portal, and Webhook."""
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, Request
@@ -170,7 +171,7 @@ async def stripe_webhook(request: Request) -> Response:
     sig_header = request.headers.get("stripe-signature", "")
 
     try:
-        event = construct_webhook_event(payload, sig_header)
+        construct_webhook_event(payload, sig_header)  # verify HMAC; return value unused
     except ValueError as exc:
         _LOG.warning("Webhook config error: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -178,11 +179,17 @@ async def stripe_webhook(request: Request) -> Response:
         _LOG.warning("Webhook signature verification failed: %s", exc)
         return JSONResponse({"error": "Invalid signature"}, status_code=400)
 
+    # construct_event() returns a stripe.Event whose data.object is a
+    # StripeObject — NOT dict-compatible under stripe-python v15 (obj.get()
+    # raises AttributeError: get). Process the already-verified raw bytes as
+    # plain nested dicts so process_webhook_event's dict access works.
+    event = json.loads(payload)
+
     try:
         with get_db() as conn:
             result = process_webhook_event(event, conn)
-        _LOG.info("Webhook processed: %s → %s", event["type"], result)
+        _LOG.info("Webhook processed: %s → %s", event.get("type"), result)
         return JSONResponse({"status": "ok", "result": result})
     except Exception as exc:
-        _LOG.error("Webhook processing error for %s: %s", event["type"], exc)
+        _LOG.error("Webhook processing error for %s: %s", event.get("type"), exc)
         return JSONResponse({"error": "Processing failed"}, status_code=500)

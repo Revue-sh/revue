@@ -58,7 +58,7 @@
                 <div class="mb-4">
                     <h3 class="font-bold text-lg">{{ tier.label }}</h3>
                     <div class="flex items-baseline gap-1 mt-2">
-                        <span class="text-3xl font-bold">${{ tier.price_monthly }}</span>
+                        <span class="text-3xl font-bold">{{ currency_symbol }}{{ tier.price_monthly }}</span>
                         <span class="text-gray-500 text-sm">/month</span>
                     </div>
                     <p class="text-gray-400 text-sm mt-2">{{ tier.description }}</p>

@@ -264,6 +264,94 @@ def test_process_webhook_checkout_links_customer(monkeypatch, _tmp_db):
     assert user.stripe_customer_id == "cus_newlink"
 
 
+def test_process_webhook_checkout_null_metadata_does_not_crash(_tmp_db):
+    """Stripe sends metadata: null for sessions not created via Revue
+    (dashboard sessions, payment links). The handler must treat null as
+    empty and return gracefully — regression for the AttributeError -> 500
+    surfaced during REVUE-315 webhook E2E."""
+    from database import get_db
+    from billing import process_webhook_event
+
+    event = {
+        "type": "checkout.session.completed",
+        "data": {"object": {"customer": "cus_x", "metadata": None}},
+    }
+    with get_db() as conn:
+        result = process_webhook_event(event, conn)
+    assert result.startswith("checkout_linked")
+
+
+def test_process_webhook_subscription_null_items_does_not_crash(_tmp_db):
+    """A subscription event with items: null must not crash (same null-field
+    anti-pattern as null metadata). Regression for billing.py:288.
+
+    The customer must be *known* so execution reaches the items read; an
+    unknown customer short-circuits earlier and would never exercise the bug.
+    """
+    from database import get_db
+    from models import create_user, update_stripe_customer_id
+    from billing import process_webhook_event
+
+    with get_db() as conn:
+        user_id = create_user(conn, "nullitems@test.com", "hash")
+        update_stripe_customer_id(conn, user_id, "cus_nullitems")
+
+    event = {
+        "type": "customer.subscription.created",
+        "data": {"object": {"customer": "cus_nullitems", "items": None}},
+    }
+    with get_db() as conn:
+        result = process_webhook_event(event, conn)
+    # null items → no price → graceful skip, not an AttributeError/500.
+    assert result.startswith("skipped")
+
+
+def test_process_webhook_subscription_before_checkout_link(monkeypatch, _tmp_db):
+    """REVUE-315 Defect C: webhook order is not guaranteed. If
+    customer.subscription.created arrives BEFORE checkout.session.completed
+    links the customer, the tier must still upgrade — via the user_id stamped
+    into subscription_data.metadata at checkout."""
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_c")
+    from database import get_db
+    from models import create_user, get_user_by_email
+    from billing import process_webhook_event
+
+    with get_db() as conn:
+        uid = create_user(conn, "race@test.com", "hash")  # free, NOT linked
+
+    event = {
+        "type": "customer.subscription.created",
+        "data": {"object": {
+            "customer": "cus_race",
+            "items": {"data": [{"price": {"id": "price_pro_c"}}]},
+            "metadata": {"user_id": str(uid)},
+        }},
+    }
+    with get_db() as conn:
+        result = process_webhook_event(event, conn)
+    assert "upgraded" in result
+    with get_db() as conn:
+        user = get_user_by_email(conn, "race@test.com")
+    assert user.tier == "pro"
+    assert user.stripe_customer_id == "cus_race"  # linked via fallback
+
+
+def test_tier_from_price_id_none_and_unconfigured(monkeypatch):
+    """REVUE-315 Defect D: a None/unknown price must never map to a tier, even
+    when some STRIPE_PRICE_* env vars are unset — unset vars become None dict
+    keys that previously collided and made tier_from_price_id(None) return the
+    last tier (enterprise_growth)."""
+    from billing import tier_from_price_id
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_d")
+    for v in ("STRIPE_PRICE_INDIE_MONTHLY", "STRIPE_PRICE_INDIE_YEARLY",
+              "STRIPE_PRICE_PRO_YEARLY", "STRIPE_PRICE_ENT_STARTER",
+              "STRIPE_PRICE_ENT_GROWTH"):
+        monkeypatch.delenv(v, raising=False)
+    assert tier_from_price_id(None) is None
+    assert tier_from_price_id("price_unknown") is None
+    assert tier_from_price_id("price_pro_d") == "pro"
+
+
 def test_process_webhook_unknown_customer_skipped(monkeypatch, _tmp_db):
     monkeypatch.setenv("STRIPE_PRICE_INDIE_MONTHLY", "price_indie_test")
     from database import get_db
@@ -311,13 +399,26 @@ async def test_billing_page_renders(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+def test_currency_symbol_is_single_source():
+    """REVUE-315: one CURRENCY_SYMBOL constant feeds every surface (templates via
+    Jinja global, Python via import) — change it once, the whole site follows."""
+    from config import CURRENCY_SYMBOL, templates
+    assert templates.env.globals.get("currency_symbol") == CURRENCY_SYMBOL
+
+
+@pytest.mark.asyncio
 async def test_billing_page_shows_prices(client: AsyncClient):
     await _signup(client)
     resp = await client.get("/billing")
-    assert b"$9" in resp.content
-    assert b"$29" in resp.content
-    assert b"$59" in resp.content
-    assert b"$149" in resp.content
+    # USD pricing (REVUE-315, Anthropic-style) — display must match the charged currency.
+    # Symbol comes from the single config.CURRENCY_SYMBOL source (DRY).
+    assert "$9" in resp.text
+    assert "$29" in resp.text
+    assert "$59" in resp.text
+    assert "$149" in resp.text
+    # No stray pound-denominated plan prices remain on the billing page.
+    assert "£9" not in resp.text
+    assert "£29" not in resp.text
 
 
 @pytest.mark.asyncio
@@ -498,6 +599,50 @@ async def test_stripe_webhook_processes_subscription_created(client: AsyncClient
     assert user.tier == "pro"
 
 
+@pytest.mark.asyncio
+async def test_stripe_webhook_processes_real_stripe_object(client: AsyncClient, monkeypatch, _tmp_db):
+    """REVUE-315 Defect B regression: real webhooks arrive as a stripe.Event
+    (StripeObject), NOT a dict. Under stripe-python v15 `obj.get(...)` on a
+    StripeObject raises `AttributeError: get` -> HTTP 500. The route must
+    process the verified raw payload as a plain dict. The dict-based mock in
+    the test above does NOT exercise this path — this one does."""
+    import stripe
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_123")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_obj")
+
+    from database import get_db
+    from models import create_user, get_user_by_email
+    with get_db() as conn:
+        uid = create_user(conn, "obj@test.com", "hash")
+        conn.execute("UPDATE users SET stripe_customer_id = 'cus_obj' WHERE id = ?", (uid,))
+
+    event_payload = json.dumps({
+        "type": "customer.subscription.created",
+        "data": {"object": {
+            "customer": "cus_obj",
+            "items": {"data": [{"price": {"id": "price_pro_obj"}}]},
+        }},
+    }).encode()
+
+    # Return a real StripeObject from verification, exactly as construct_event
+    # produces at runtime — this is what the dict-based mock failed to model.
+    def _as_stripe_object(payload, sig):
+        return stripe.Event.construct_from(json.loads(payload), "k")
+
+    with patch("routes.billing_routes.construct_webhook_event", side_effect=_as_stripe_object):
+        resp = await client.post(
+            "/webhooks/stripe",
+            content=event_payload,
+            headers={"stripe-signature": "t=123,v1=abc"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert "pro" in resp.json()["result"]
+    with get_db() as conn:
+        assert get_user_by_email(conn, "obj@test.com").tier == "pro"
+
+
 # =====================================================================
 # DB helpers
 # =====================================================================
@@ -546,3 +691,21 @@ def test_dashboard_upgrade_link_points_to_billing(client):
     content = template.read_text()
     assert 'href="/billing"' in content
     assert "Coming soon" not in content
+
+
+@pytest.mark.asyncio
+async def test_dashboard_reflects_db_tier_after_upgrade(client: AsyncClient, _tmp_db):
+    """REVUE-315 Defect E: the dashboard badge must read tier from the DB, not
+    the login session. A webhook upgrade (free->pro) updates the DB but not the
+    already-issued session cookie, so the badge showed stale FREE until re-login."""
+    await _signup(client)  # session tier == free
+    from database import get_db
+    user = _get_user()
+    with get_db() as conn:
+        conn.execute("UPDATE users SET tier='pro' WHERE id=?", (user.id,))
+
+    resp = await client.get("/dashboard")
+    assert resp.status_code == 200
+    assert "Pro" in resp.text
+    assert "$29/mo" in resp.text          # pro price badge (USD)
+    assert "$0/mo" not in resp.text       # stale free badge gone

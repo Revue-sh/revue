@@ -61,6 +61,12 @@ atlassian-bitbucket-pipelines-runner/
 .claude/scheduled_tasks.lock
 _bmad/custom/config.user.toml
 
+# Local SQLite dev DB — runtime data, must never be tracked (a tracked copy
+# caused stale-schema crashes and clobbered live test accounts on git restore)
+src/web/revue.db
+src/web/revue.db-wal
+src/web/revue.db-shm
+
 # RuFlo / claude-flow local tooling state (machine-specific, not project files)
 .claude-flow/
 .swarm/
