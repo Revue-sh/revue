@@ -28,7 +28,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from revue.comments.models import (
+from revue_core.comments.models import (
     AgentFinding,
     Attribution,
     ConsolidatedFinding,
@@ -37,7 +37,7 @@ from revue.comments.models import (
     SynthesisGroup,
     SynthesisStrategy,
 )
-from revue.comments.consolidator import (
+from revue_core.comments.consolidator import (
     Consolidator,
     NoOpSuggestionDropper,
     NovaSingleShotStrategy,
@@ -332,8 +332,17 @@ def test_nova_strategy_fallback():
 
 
 def test_nova_strategy_singleton_passthrough():
-    """NovaSingleShotStrategy passes singleton groups through without an AI call."""
+    """NovaSingleShotStrategy synthesises singleton groups via Nova (REVUE-239: no passthrough path).
+
+    Since REVUE-239 Phase 1, all groups — including singletons — route through Nova
+    so the synthesiser can use file context to anchor the comment. The old passthrough
+    was removed; Nova is always called and returns a ConsolidatedFinding.
+    """
     mock_client = MagicMock()
+    mock_result = MagicMock()
+    mock_result.text = "invalid json"
+    mock_client.complete_with_tools.return_value = mock_result
+
     strategy = NovaSingleShotStrategy(ai_client=mock_client)
 
     finding = _make_finding(agent_name="leo", issue="Solo finding")
@@ -346,9 +355,12 @@ def test_nova_strategy_singleton_passthrough():
 
     result = strategy.synthesise(group)
 
-    mock_client.complete.assert_not_called()
+    # Nova is always called for all groups (no passthrough)
+    mock_client.complete_with_tools.assert_called_once()
     assert isinstance(result, ConsolidatedFinding)
-    assert result.issue == "Solo finding"
+    # Invalid JSON → deterministic fallback, which preserves the finding content
+    # (prefixed by attribution, e.g. "[leo] Solo finding"). Assert content survives.
+    assert "Solo finding" in result.issue
 
 
 def test_nova_strategy_fallback_on_network_error():
@@ -455,16 +467,22 @@ def test_noop_suggestion_dropper_no_replacement():
 
 
 def test_unanchored_extractor_demotes():
-    """Finding with no snippet and no code_replacement is removed from inline stream."""
+    """UnanchoredFindingExtractor is a stable pass-through since REVUE-239.
+
+    The old heuristic (demote findings with no snippet/no code_replacement) was removed
+    when Nova became authoritative for line anchoring in REVUE-239 Phase 1. The
+    extractor now always returns the finding so the poster can anchor by line number.
+    Genuine unanchored detection lives in the position adapter and poster.
+    """
     sink: list[ConsolidatedFinding] = []
     extractor = UnanchoredFindingExtractor(summary_sink=sink)
 
     finding = _make_consolidated(snippet="", code_replacement=None)
     result = extractor.process(finding)
 
-    assert result is None
-    assert len(sink) == 1
-    assert sink[0] is finding
+    # Pass-through: finding is returned, sink is NOT populated by this stage
+    assert result is finding
+    assert len(sink) == 0
 
 
 def test_unanchored_extractor_keeps_anchored():
@@ -480,12 +498,17 @@ def test_unanchored_extractor_keeps_anchored():
 
 
 def test_unanchored_after_noop():
-    """Finding with only a no-op code_replacement and no snippet is unanchored after NoOpSuggestionDropper."""
+    """UnanchoredFindingExtractor passes findings through regardless of code_replacement state.
+
+    Since REVUE-239, UnanchoredFindingExtractor is a pass-through. NoOpSuggestionDropper still
+    nullifies no-op code_replacements, but the extractor no longer demotes findings to the sink.
+    Unanchored detection happens in the poster/position-adapter layer.
+    """
     dropper = NoOpSuggestionDropper()
     sink: list[ConsolidatedFinding] = []
     extractor = UnanchoredFindingExtractor(summary_sink=sink)
 
-    # Finding with real code_replacement and no snippet — dropper keeps it, extractor keeps it (anchored)
+    # Finding with real code_replacement and no snippet — dropper keeps it, extractor keeps it
     finding = _make_consolidated(
         snippet="",
         code_replacement=["x = 1"],  # non-empty, doesn't match empty snippet → kept by dropper
@@ -493,7 +516,7 @@ def test_unanchored_after_noop():
     after_dropper = dropper.process(finding)
     assert after_dropper is not None
     result_anchored = extractor.process(after_dropper)
-    assert result_anchored is not None  # code_replacement present → anchored
+    assert result_anchored is not None  # pass-through
 
     # Finding where code_replacement is a no-op (empty line matches empty snippet)
     finding2 = _make_consolidated(
@@ -503,10 +526,10 @@ def test_unanchored_after_noop():
     after_dropper2 = dropper.process(finding2)
     assert after_dropper2 is not None
     assert after_dropper2.code_replacement is None  # dropper nullified the no-op replacement
-    # Extractor sees neither snippet nor code_replacement → unanchored → sent to sink
+    # Extractor is a pass-through even when code_replacement=None and snippet=""
     result = extractor.process(after_dropper2)
-    assert result is None
-    assert len(sink) == 1
+    assert result is not None
+    assert len(sink) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -516,23 +539,19 @@ def test_unanchored_after_noop():
 
 def test_pipeline_no_longer_imports_dedup_consolidator():
     """pipeline.py source does not contain an import from core.dedup_consolidator."""
-    import os
-    pipeline_path = os.path.join(
-        os.path.dirname(__file__),
-        "../../src/revue/core/pipeline.py",
-    )
-    with open(os.path.normpath(pipeline_path)) as fh:
-        source = fh.read()
+    import inspect
+    import revue_core.core.pipeline as _pipeline_mod
+    source = inspect.getsource(_pipeline_mod)
 
     assert "from revue.core.dedup_consolidator" not in source
     assert "from .dedup_consolidator import" not in source
     # Import via orchestration modules is allowed but must not reference consolidate/AIContradictionSynthesiser
-    assert "from revue.core.dedup_consolidator import" not in source
+    assert "from revue_core.core.dedup_consolidator import" not in source
 
 
 def test_dedup_consolidator_retains_nova_consolidator():
     """from core.dedup_consolidator import NovaConsolidator succeeds after migration."""
-    from revue.core.dedup_consolidator import NovaConsolidator  # noqa: F401
+    from revue_core.core.dedup_consolidator import NovaConsolidator  # noqa: F401
     assert NovaConsolidator is not None
 
 
@@ -716,11 +735,15 @@ def test_build_group_payload_language_defaults_to_unknown() -> None:
 
 
 def test_nova_uses_injected_system_prompt_not_constant() -> None:
-    """AC7: NovaSingleShotStrategy passes the injected system_prompt to ai_client.complete()."""
+    """AC7: NovaSingleShotStrategy passes the injected system_prompt to the AI client.
+
+    MagicMock auto-creates complete_with_tools (the preferred code path since REVUE-239),
+    so we assert against complete_with_tools, not the legacy complete method.
+    """
     mock_client = MagicMock()
     mock_result = MagicMock()
     mock_result.text = "invalid json"
-    mock_client.complete.return_value = mock_result
+    mock_client.complete_with_tools.return_value = mock_result
 
     custom_prompt = "Custom synthesis prompt for testing."
     strategy = NovaSingleShotStrategy(ai_client=mock_client, system_prompt=custom_prompt)
@@ -736,8 +759,8 @@ def test_nova_uses_injected_system_prompt_not_constant() -> None:
     )
     strategy.synthesise(group)
 
-    mock_client.complete.assert_called_once()
-    call_kwargs = mock_client.complete.call_args[1]
+    mock_client.complete_with_tools.assert_called_once()
+    call_kwargs = mock_client.complete_with_tools.call_args[1]
     assert call_kwargs["system"] == custom_prompt
     assert call_kwargs["system"] != _SYNTHESIS_SYSTEM_PROMPT
 

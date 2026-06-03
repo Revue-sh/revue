@@ -5,11 +5,14 @@ These tests exercise the pure compute_*_score functions only.
 No database required.
 """
 import json
+import sys
+import pathlib
 from pathlib import Path
 
 import pytest
 
-from src.db.auto_scorer import compute_clarity_score, compute_actionability_score
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "src"))
+from db.auto_scorer import compute_clarity_score, compute_actionability_score
 
 
 # ---------------------------------------------------------------------------

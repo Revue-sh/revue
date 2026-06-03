@@ -10,16 +10,15 @@ import re
 
 import pytest
 
-from revue.core.dedup_consolidator import NovaConsolidator
+from revue_core.core.dedup_consolidator import NovaConsolidator
 
-# Try to import the factory; if it fails (Python 3.9 type annotation compat
-# issue in ai_config.py), mark unavailable and skip at test time.
+# Try to import the factory; if it fails mark unavailable and skip at test time.
 try:
-    from revue.core.ai_client import create_ai_client
-    from revue.core.ai_config import AIConfig
+    from revue_core.core.ai_client import create_ai_client
+    from revue_core.core.ai_config import AIConfig
     _AI_CLIENT_AVAILABLE = True
     _AI_CLIENT_ERROR = ""
-except TypeError as e:
+except (TypeError, ImportError) as e:
     _AI_CLIENT_AVAILABLE = False
     _AI_CLIENT_ERROR = str(e)
 

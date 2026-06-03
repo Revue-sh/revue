@@ -209,6 +209,7 @@ definitions:
           - python3 -m pytest packaging/revue_core/tests/ -q --rootdir=packaging/revue_core
           - python3 -m pytest packaging/revue-ci/tests/ -q --rootdir=packaging/revue-ci
           - python3 -m pytest packaging/revue/tests/ -q --rootdir=packaging/revue
+          - python3 -m pytest tests/ --ignore=tests/integration -q
           # Fresh-venv smoke test (REVUE-310) — gated behind @pytest.mark.slow
           # so it doesn't run during local `pytest`, but CI runs it explicitly
           # so package-graph regressions surface before tag time.

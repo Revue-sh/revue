@@ -20,7 +20,7 @@ Test Cases:
 """
 
 import pytest
-import psycopg2
+psycopg2 = pytest.importorskip("psycopg2")  # skip entire module if psycopg2 not installed
 import os
 from pathlib import Path
 

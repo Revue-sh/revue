@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+psycopg2 = pytest.importorskip("psycopg2")  # skip entire module if psycopg2 not installed
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -20,11 +22,12 @@ pytestmark = [
     ),
 ]
 
-import psycopg2
 from psycopg2.extras import RealDictCursor
 
-from src.db.auto_scorer import score_finding, score_findings
-from src.db.import_review import (
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "src"))
+from db.auto_scorer import score_finding, score_findings
+from db.import_review import (
     get_lookup_id,
     get_or_create_model,
     import_comparison,

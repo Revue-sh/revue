@@ -28,7 +28,13 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install openai anthropic httpx pyyaml tomli-w --quiet
+        # Install the revue-ci console script (post monorepo-split). revue-ci's
+        # runtime deps live in requirements-ci.txt; revue_core must install
+        # editable first so the revue_core~=0.1.0 pin resolves against local
+        # source, not PyPI.
+        run: |
+          pip install --quiet -r requirements-ci.txt
+          pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/
 
       - name: Generate diff
         run: |
@@ -49,15 +55,15 @@ jobs:
           || { echo ""; echo "========================================================================"; echo "‼️  WARNING: PR DESCRIPTION COULD NOT BE FETCHED"; echo "⚠️  THE REVIEW WILL PROCEED WITHOUT AUTHOR CONTEXT."; echo "⚠️  REVIEW QUALITY MAY BE REDUCED."; echo "⚠️  CHECK: GITHUB_TOKEN IS SET CORRECTLY."; echo "========================================================================"; echo ""; }
 
       - name: Validate config
-        run: PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
+        run: revue-ci validate --config .revue.yml
 
       - name: AI Code Review
         env:
-          # Provider and model are read from .revue.yml — no CLI flags needed.
-          # Set the API key matching your configured provider:
-          #   anthropic → REVUE_ANTHROPIC_API_KEY
-          #   openai    → OPENAI_API_KEY  (see REVUE-148 for per-provider key docs)
-          REVUE_ANTHROPIC_API_KEY: ${{ secrets.REVUE_ANTHROPIC_API_KEY }}
+          # This mirror overrides .revue.yml's provider (openrouter) with the
+          # repo's AI_PROVIDER/AI_MODEL vars (anthropic) via the --provider/
+          # --model flags below. key_resolver resolves the provider's default
+          # env var (ANTHROPIC_API_KEY), so map the stored secret onto it.
+          ANTHROPIC_API_KEY: ${{ secrets.REVUE_ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           REVUE_TIER_OVERRIDE: ${{ vars.REVUE_TIER_OVERRIDE }}
           GITHUB_TOKEN: ${{ secrets.REVUE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -65,12 +71,14 @@ jobs:
           APP_ENV: staging
           REVUE_METRICS_ENABLED: "1"
         run: |
-          echo "[revue] Starting AI code review..."
-          PYTHONPATH="$(pwd)/src" python3 -u src/revue/cli.py review \
+          echo "[revue] Starting AI code review (provider=${{ vars.AI_PROVIDER }} model=${{ vars.AI_MODEL }})..."
+          revue-ci review \
             --diff /tmp/revue_pr.diff \
             --platform github \
             --pr-id "${{ github.event.pull_request.number }}" \
             --config .revue.yml \
+            --provider "${{ vars.AI_PROVIDER }}" \
+            --model "${{ vars.AI_MODEL }}" \
             --comment-style per-issue \
             --pr-description-file /tmp/revue_pr_description.txt
           echo "[revue] Review complete"

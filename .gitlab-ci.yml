@@ -13,8 +13,17 @@ unit-tests:
   variables:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
   script:
-    - pip install openai anthropic httpx pyyaml tomli-w pytest --quiet
-    - cd src && PYTHONPATH=$(pwd) python3 -m pytest revue/tests/ -q --log-cli-level=DEBUG
+    # Mirror bitbucket-pipelines.yml `run-tests`: install all three packages
+    # (revue_core editable first so revue-ci/revue resolve the local copy, not
+    # PyPI), then exercise each suite. git is needed by REVUE-369 customer-path
+    # coverage. The monorepo split moved code out of the old flat src/revue/.
+    - apt-get update -qq && apt-get install -y -qq git
+    - pip install --quiet -r requirements-ci.txt
+    - pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/ -e packaging/revue/
+    - python3 -m pytest packaging/revue_core/tests/ -q --rootdir=packaging/revue_core
+    - python3 -m pytest packaging/revue-ci/tests/ -q --rootdir=packaging/revue-ci
+    - python3 -m pytest packaging/revue/tests/ -q --rootdir=packaging/revue
+    - python3 -m pytest tests/ --ignore=tests/integration -q
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -45,7 +54,11 @@ revue-review:
     expire_in: 30 days
   script:
     - apt-get update -qq && apt-get install -y -qq git curl
-    - pip install openai anthropic httpx pyyaml tomli-w --quiet
+    # Install the revue-ci console script (post monorepo-split). revue-ci's
+    # runtime deps live in requirements-ci.txt; revue_core must install editable
+    # first so the revue_core~=0.1.0 pin resolves against local source, not PyPI.
+    - pip install --quiet -r requirements-ci.txt
+    - pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/
 
     # Generate diff using GitLab's computed MR diff base (correct regardless of mirror state)
     - git diff $CI_MERGE_REQUEST_DIFF_BASE_SHA HEAD > /tmp/revue_pr.diff
@@ -62,18 +75,23 @@ revue-review:
       || { echo ""; echo "========================================================================"; echo "‼️  WARNING: MR DESCRIPTION COULD NOT BE FETCHED"; echo "⚠️  THE REVIEW WILL PROCEED WITHOUT AUTHOR CONTEXT."; echo "⚠️  REVIEW QUALITY MAY BE REDUCED."; echo "⚠️  CHECK: GITLAB_TOKEN IS SET CORRECTLY."; echo "========================================================================"; echo ""; }
 
     # Validate config
-    - PYTHONPATH="$(pwd)/src" python3 -m revue.cli validate --config .revue.yml
+    - revue-ci validate --config .revue.yml
 
-    # Run AI code review
-    # Provider and model are read from .revue.yml — no --provider/--model flags needed.
-    # Set the API key CI variable matching your provider (e.g. OPENAI_API_KEY). (REVUE-148)
-    - echo "[revue] Starting AI code review..."
+    # Run AI code review.
+    # This mirror overrides .revue.yml's provider (openrouter) with the project's
+    # AI_PROVIDER/AI_MODEL CI variables (openai) via --provider/--model.
+    # key_resolver resolves the provider default env var (OPENAI_API_KEY), which
+    # GitLab injects from the project CI/CD variable of the same name.
+    # --platform gitlab reads GITLAB_TOKEN + CI_PROJECT_PATH from the env.
+    - echo "[revue] Starting AI code review (provider=$AI_PROVIDER model=$AI_MODEL)..."
     - |
-      PYTHONPATH="$(pwd)/src" python3 -u src/revue/cli.py review \
+      revue-ci review \
         --diff /tmp/revue_pr.diff \
         --platform gitlab \
         --pr-id "$CI_MERGE_REQUEST_IID" \
         --config .revue.yml \
+        --provider "$AI_PROVIDER" \
+        --model "$AI_MODEL" \
         --comment-style per-issue \
         --pr-description-file /tmp/revue_mr_description.txt
     - echo "[revue] Review complete"

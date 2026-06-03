@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from revue.core.pipeline import _INFRASTRUCTURE_AGENTS, _LICENCE_NAME_TO_AGENT, _VIRTUAL_AGENTS, _is_premium_tier
+from revue_core.core.pipeline import _INFRASTRUCTURE_AGENTS, _LICENCE_NAME_TO_AGENT, _VIRTUAL_AGENTS, _is_premium_tier
 
 
 class TestLicenceNameMapping:

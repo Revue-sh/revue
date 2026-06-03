@@ -13,14 +13,17 @@ Test Cases:
 """
 import json
 import os
+import sys
+import pathlib
 import pytest
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import psycopg2
+psycopg2 = pytest.importorskip("psycopg2")  # skip entire module if psycopg2 not installed
 
-from src.db.import_review import (
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "src"))
+from db.import_review import (
     load_findings,
     import_review,
     import_pr_description,
@@ -342,7 +345,7 @@ def test_import_comparison_links_baseline_contextual(db_connection, temp_compari
     db_connection.rollback()
 
 
-@patch('src.db.import_review.get_db_connection')
+@patch('db.import_review.get_db_connection')
 def test_graceful_degradation_db_unreachable(mock_conn, temp_comparison_dir, capsys):
     """AC4: Graceful degradation when DB unreachable."""
     mock_conn.side_effect = psycopg2.OperationalError("Connection refused")

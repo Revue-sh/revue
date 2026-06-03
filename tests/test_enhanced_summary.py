@@ -5,18 +5,17 @@ Covers AC1–AC7 as specified in the Jira story.
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Ensure src/ is on the path for revue imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from revue.cli import _build_enhanced_summary, _star_rating, SEVERITY_EMOJI
+from revue_core.comments.summary_builder import (
+    _star_rating,
+    build_enhanced_summary as _build_enhanced_summary,
+)
+from revue_core.core.display import SEVERITY_EMOJIS as SEVERITY_EMOJI
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +189,8 @@ def test_summary_ac7_shows_last_updated():
 
 def test_summary_ac6_update_increments_revision(tmp_path):
     """AC6/AC7: Second review call updates existing comment and bumps revision."""
-    from revue.comments.file_store import CommentFileStore
-    from revue.comments.models import Platform, SummaryComment
+    from revue_core.comments.file_store import CommentFileStore
+    from revue_core.comments.models import Platform, SummaryComment
     from datetime import datetime, timezone
 
     store = CommentFileStore(tmp_path)
@@ -247,8 +246,8 @@ def test_summary_ac6_update_increments_revision(tmp_path):
 
 def test_summary_ac6_fallback_to_new_comment_on_404(tmp_path):
     """AC6 TC4: If update returns False (404), a new comment is posted and stored."""
-    from revue.comments.file_store import CommentFileStore
-    from revue.comments.models import Platform, SummaryComment
+    from revue_core.comments.file_store import CommentFileStore
+    from revue_core.comments.models import Platform, SummaryComment
     from datetime import datetime, timezone
 
     store = CommentFileStore(tmp_path)

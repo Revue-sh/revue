@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.revue.comments.file_store import CommentFileStore
-from src.revue.comments.fingerprint import fingerprint
-from src.revue.comments.models import CommentState, Platform, PRComment, SummaryComment
+from revue_core.comments.file_store import CommentFileStore
+from revue_core.comments.fingerprint import fingerprint
+from revue_core.comments.models import CommentState, Platform, PRComment, SummaryComment
 
 
 @pytest.fixture

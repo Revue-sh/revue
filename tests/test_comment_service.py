@@ -6,13 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.revue.comments.models import (
+from revue_core.comments.models import (
     CommentState,
     Platform,
     PRComment,
     SummaryComment,
 )
-from src.revue.comments.service import CommentResolutionService
+from revue_core.comments.service import CommentResolutionService
 
 
 @pytest.fixture
