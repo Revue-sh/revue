@@ -145,11 +145,15 @@ persistence is Step 5b-2's job (a deterministic foreground script that serialise
 with concurrent merges; a backgrounded git push races them). Wait for the
 completion notification before proceeding to 5b-2:
 
+The compass is **lean and forward-looking** — "done" is a count plus a capped
+"Recently shipped (last 5)" list, NOT a per-ticket archive (full history lives in
+Jira). The edit must keep it that way:
+
 ```
 Agent(
   description: "Update mvp-compass.md after <TICKET-KEY> merge",
   run_in_background: true,
-  prompt: "Edit `docs/planning/mvp-compass.md` in the repo at /Volumes/LexarSSD/Projects/revue.io to reflect that <TICKET-KEY> has just been merged to main. Read the file first, mark the ticket as shipped, adjust any blockers or priorities that changed, and keep the document's existing structure intact. EDIT ONLY — do NOT git add / commit / push; persistence is handled separately."
+  prompt: "Edit `docs/planning/mvp-compass.md` in the repo at /Volumes/LexarSSD/Projects/revue.io to reflect that <TICKET-KEY> has just been merged to main. Read the file first, then make ONLY these changes: (1) in the Progress line, increment the 'X / Y done' count, and decrement the strongly-should count if <TICKET-KEY> was one; (2) prepend <TICKET-KEY> (one line: key + short description) to 'Recently shipped (last 5)' and DELETE the oldest entry so the list stays at exactly five; (3) remove <TICKET-KEY> from its open bucket (Strongly-should / Pre-launch polish / Post-launch deferred / Tooling follow-up); (4) if a Parallelism same-file-collision row now has only one open ticket left, drop that row; (5) update the '0 hard launch blockers' line or a bucket's 'why' note ONLY if this merge genuinely changed it, and keep any such edit to one line. Do NOT append a per-ticket 'Done' narrative, do NOT add a Done table or changelog paragraph, and do NOT re-grow any archive — the full Done history is Jira's job; this doc stays lean. Keep every other section intact. EDIT ONLY — do NOT git add / commit / push; persistence is handled separately."
 )
 ```
 
