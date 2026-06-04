@@ -1,0 +1,85 @@
+{
+  "__comment": "REVUE-362 — /api/v2/licence/activate observability dashboard. Grafana provisioned dashboard reading the Prometheus series emitted by src/web/metrics.py. Bound to those series names by src/web/tests/test_observability_config.py.",
+  "title": "Revue — /activate observability",
+  "uid": "revue-activate-observability",
+  "tags": ["revue", "activate", "observability"],
+  "schemaVersion": 39,
+  "timezone": "utc",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "route",
+        "type": "constant",
+        "query": "/api/v2/licence/activate",
+        "current": { "text": "/api/v2/licence/activate", "value": "/api/v2/licence/activate" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate (RPS)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(revue_http_requests_total{route=\"$route\"}[5m]))",
+          "legendFormat": "rps"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Error rate (5xx ratio)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(revue_http_requests_total{route=\"$route\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(revue_http_requests_total{route=\"$route\"}[5m])), 1e-9)",
+          "legendFormat": "5xx ratio"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latency p50 / p95 / p99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(revue_http_request_duration_seconds_bucket{route=\"$route\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(revue_http_request_duration_seconds_bucket{route=\"$route\"}[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(revue_http_request_duration_seconds_bucket{route=\"$route\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Status-code distribution",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate(revue_http_requests_total{route=\"$route\"}[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    }
+  ]
+}

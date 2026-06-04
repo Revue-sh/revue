@@ -1,0 +1,119 @@
+# REVUE-362 — production observability alert rules for /api/v2/licence/activate.
+#
+# Format: Grafana provisioned alerting (apiVersion 1). Deploy to Fly's managed
+# Grafana (Prometheus datasource = the org Prometheus that scrapes the app's
+# /metrics endpoint — see fly.toml [metrics]). The PromQL reads the exact series
+# emitted by src/web/metrics.py; src/web/tests/test_observability_config.py binds
+# these names so they cannot drift apart.
+#
+# Notification routing (page vs notify) is defined by the Grafana contact points
+# below. The actual paging integration key / webhook URL is a Grafana SECRET and
+# is NEVER committed here — only the contact-point *names* are referenced. See
+# docs/runbooks/activate-observability.md for wiring the secret.
+#
+# AC mapping:
+#   AC1 error-rate   (>5% 5xx over 5min)      -> ActivateErrorRateHigh   -> page
+#   AC2 latency      (p95 > 2s over 5min)     -> ActivateLatencyP95High  -> page
+#   AC3 traffic      (>10x baseline RPS)      -> ActivateTrafficAnomaly  -> notify
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: activate-observability
+    folder: Revue
+    interval: 1m
+    rules:
+      # ── AC1: error-rate alert — page when 5xx ratio > 5% over 5 min ──────────
+      - uid: activate-error-rate-high
+        title: ActivateErrorRateHigh
+        condition: A
+        for: 5m
+        labels:
+          severity: page
+          service: revue-activate
+        annotations:
+          summary: "/activate 5xx error rate > 5% over 5m"
+          runbook_url: "https://github.com/revue/docs/runbooks/activate-observability.md"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              expr: |
+                (
+                  sum(rate(revue_http_requests_total{route="/api/v2/licence/activate",status=~"5.."}[5m]))
+                  /
+                  clamp_min(sum(rate(revue_http_requests_total{route="/api/v2/licence/activate"}[5m])), 1e-9)
+                ) > 0.05
+              instant: true
+
+      # ── AC2: latency alert — page when p95 > 2s over 5 min ──────────────────
+      - uid: activate-latency-p95-high
+        title: ActivateLatencyP95High
+        condition: A
+        for: 5m
+        labels:
+          severity: page
+          service: revue-activate
+        annotations:
+          summary: "/activate p95 latency > 2s over 5m"
+          runbook_url: "https://github.com/revue/docs/runbooks/activate-observability.md"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              expr: |
+                histogram_quantile(
+                  0.95,
+                  sum by (le) (
+                    rate(revue_http_request_duration_seconds_bucket{route="/api/v2/licence/activate"}[5m])
+                  )
+                ) > 2
+              instant: true
+
+      # ── AC3: traffic-anomaly alert — notify when RPS > 10x 1h baseline ──────
+      - uid: activate-traffic-anomaly
+        title: ActivateTrafficAnomaly
+        condition: A
+        for: 5m
+        labels:
+          severity: notify
+          service: revue-activate
+        annotations:
+          summary: "/activate request rate > 10x its 1h baseline (possible abuse or incident)"
+          runbook_url: "https://github.com/revue/docs/runbooks/activate-observability.md"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              expr: |
+                sum(rate(revue_http_requests_total{route="/api/v2/licence/activate"}[5m]))
+                >
+                10 * sum(rate(revue_http_requests_total{route="/api/v2/licence/activate"}[1h] offset 5m))
+              instant: true
+
+# ── Notification policy ────────────────────────────────────────────────────────
+# Routes severity=page -> the on-call paging contact point; severity=notify ->
+# the lower-urgency notify channel. Both contact points are provisioned with
+# their integration secret OUT OF BAND (Grafana secret store), never in this file.
+policies:
+  - orgId: 1
+    receiver: notify-default
+    routes:
+      - receiver: page-oncall
+        object_matchers:
+          - ["severity", "=", "page"]
+      - receiver: notify-default
+        object_matchers:
+          - ["severity", "=", "notify"]
+
+# Contact points are referenced by name only. Provision the secret separately:
+#   - page-oncall  -> on-call pager (e.g. PagerDuty/Opsgenie); key is a Grafana secret
+#   - notify-default -> lower-urgency channel (e.g. Slack); webhook is a Grafana secret
+contactPoints:
+  - orgId: 1
+    name: page-oncall
+  - orgId: 1
+    name: notify-default

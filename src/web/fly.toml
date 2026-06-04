@@ -12,6 +12,13 @@ primary_region = "lhr"
   source = "revue_data"
   destination = "/data"
 
+# REVUE-362: Fly's managed Prometheus scrapes the app's /metrics endpoint.
+# Series land under the org Prometheus and feed the Grafana alert rules +
+# dashboard in src/web/infra/observability/. See docs/runbooks/activate-observability.md.
+[metrics]
+  port = 8080
+  path = "/metrics"
+
 [[services]]
   internal_port = 8080
   protocol = "tcp"

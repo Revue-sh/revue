@@ -13,6 +13,14 @@ primary_region = "lhr"
   source = "revue_data_staging"
   destination = "/data"
 
+# REVUE-362: Fly's managed Prometheus scrapes the app's /metrics endpoint.
+# Staging carries the same scrape config so alert/dashboard PromQL can be
+# validated against staging before production. See
+# docs/runbooks/activate-observability.md.
+[metrics]
+  port = 8080
+  path = "/metrics"
+
 [[services]]
   internal_port = 8080
   protocol = "tcp"
