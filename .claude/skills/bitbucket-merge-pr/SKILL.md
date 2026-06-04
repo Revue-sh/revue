@@ -137,24 +137,45 @@ Skill(skill: "epic-progress", args: "<TICKET-KEY>")
 
 Format and rules live inside `/epic-progress`; do not hand-roll JQL here.
 
-**5b — Update mvp-compass.md (background, wait for completion)**
+**5b — Update mvp-compass.md (background EDIT only, wait for completion)**
 
-Dispatch a background Agent to update the compass. Wait for the completion notification before proceeding to 5c:
+Dispatch a background Agent to **edit** the compass (this is the token-heavy
+step — backgrounding it saves context). The agent **must not commit or push** —
+persistence is Step 5b-2's job (a deterministic foreground script that serialises
+with concurrent merges; a backgrounded git push races them). Wait for the
+completion notification before proceeding to 5b-2:
 
 ```
 Agent(
   description: "Update mvp-compass.md after <TICKET-KEY> merge",
   run_in_background: true,
-  prompt: "Update `_bmad-output/planning-artifacts/mvp-compass.md` in the repo at /Volumes/LexarSSD/Projects/revue.io to reflect that <TICKET-KEY> has just been merged to main. Read the file first, mark the ticket as shipped, adjust any blockers or priorities that changed, and keep the document's existing structure intact."
+  prompt: "Edit `docs/planning/mvp-compass.md` in the repo at /Volumes/LexarSSD/Projects/revue.io to reflect that <TICKET-KEY> has just been merged to main. Read the file first, mark the ticket as shipped, adjust any blockers or priorities that changed, and keep the document's existing structure intact. EDIT ONLY — do NOT git add / commit / push; persistence is handled separately."
 )
 ```
 
-**5c — PM commentary on MVP delivery (foreground, after 5b completes)**
+**5b-2 — Persist the compass (foreground, after 5b completes)**
+
+Run the `commit-compass` skill's script in the **foreground** (never background —
+it commits + pushes `main` and must serialise with concurrent merges). It commits
+the edited compass to `main`, pushes to **Bitbucket only**, and cycles the single
+reusable `compass-auto` Jira ticket (In Progress → Done after a confirmed push):
+
+```bash
+bash .claude/skills/commit-compass/scripts/commit_compass.sh "<TICKET-KEY> merged — <one-line summary>"
+```
+
+A non-zero exit means strictly **the compass did not reach origin** (its ticket
+is left In Progress) — surface the error verbatim and fix the push. Do **not**
+retry the PR merge (already landed). A clean exit with a ⚠️ "could not be set
+Done" means the compass **did** land but its Jira ticket needs a manual
+transition — no re-push.
+
+**5c — PM commentary on MVP delivery (foreground, after 5b-2 completes)**
 
 Once the compass is updated, invoke `bmad-agent-pm` so the commentary reflects the current MVP state:
 
 ```
-Skill(skill: "bmad-agent-pm", args: "The ticket <TICKET-KEY> has just been merged and `_bmad-output/planning-artifacts/mvp-compass.md` has been updated. As the Product Owner, read the updated compass and give me a brief commentary on MVP delivery: are we on track, what is now unblocked, and what is the next priority?")
+Skill(skill: "bmad-agent-pm", args: "The ticket <TICKET-KEY> has just been merged and `docs/planning/mvp-compass.md` has been updated. As the Product Owner, read the updated compass and give me a brief commentary on MVP delivery: are we on track, what is now unblocked, and what is the next priority?")
 ```
 
 Print the PM's response after the recap output.
