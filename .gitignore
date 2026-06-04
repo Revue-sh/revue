@@ -20,6 +20,7 @@ venv_new/
 .skill-build-venv/
 .revue-core-build-venv/
 .test-venv/
+.venv-web/
 .playwright-cli/
 
 # Test artifacts
