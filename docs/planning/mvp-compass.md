@@ -1,6 +1,6 @@
 # MVP Compass — /revue-local public launch
 
-**Last updated:** 2026-06-04 (REVUE-403 merged — chore(tooling): track mvp-compass.md in git + commit-compass skill for safe post-merge persistence. Done count 44→45. Earlier 2026-06-04: REVUE-331 merged — E2E activate round-trip: CLI activate happy path + browser paste-key fallback. Strongly-should count 4→3. REVUE-360 confirmed Done — unsupported-platform guard + supported-list consistency; was shipped but not reflected in compass. REVUE-400 merged — fixed bitbucket-merge-pr skill Step 5 dispatch pattern + added context-aware mvp-compass.md automation. REVUE-395 merged — install-wizard edge-case hardening: AC1 truly-unset-HOME `set -u` crash fixed [caught by a new Docker e2e harness, not the unit tests], AC2 dscl whitespace-tolerant, AC3 no-path project-scope warning, pty test harness for interactive prompts, committed Docker e2e tool under `packaging/revue/tests/e2e/`, CLAUDE_HOME guard consolidated into `resolve_scope`; 45 unit + 24 e2e green. REVUE-354 merged earlier 2026-06-04 — interactive install wizard [global-vs-project scope + path prompt] — **launch blocker closed.** 3 follow-ups filed from 395's review: REVUE-397 [licence-validator retry-on-transient], REVUE-398 [run install suite on macOS runner for dscl/AC2 CI coverage], REVUE-399 [consolidate install-wizard stub fixtures]. REVUE-396 merged — risk-tiered review classifier + Step-10 gate; REVUE-325 merged — rate-limit + auth on `/api/v2/licence/activate`; REVUE-393 merged — `src/web/tests/` gated in CI. Earlier 2026-06-03: REVUE-315/390/391/334 merged; REVUE-381 rerouted to pre-revenue sole-trader launch [1st Formations KYC rejected])
+**Last updated:** 2026-06-04 (REVUE-362 merged — production observability on /api/v2/licence/activate: Prometheus /metrics, Fly alert-rules, Grafana dashboard, observability runbook. Done count 45→46. Strongly-should count 3→2. ⚠️ do-not-run-automation-after-merge label applies — staging validation required before ticket moves to Done. Earlier 2026-06-04: REVUE-403 merged — chore(tooling): track mvp-compass.md in git + commit-compass skill for safe post-merge persistence. Done count 44→45. REVUE-331 merged — E2E activate round-trip: CLI activate happy path + browser paste-key fallback. Strongly-should count 4→3. REVUE-360 confirmed Done — unsupported-platform guard + supported-list consistency; was shipped but not reflected in compass. REVUE-400 merged — fixed bitbucket-merge-pr skill Step 5 dispatch pattern + added context-aware mvp-compass.md automation. REVUE-395 merged — install-wizard edge-case hardening: AC1 truly-unset-HOME `set -u` crash fixed [caught by a new Docker e2e harness, not the unit tests], AC2 dscl whitespace-tolerant, AC3 no-path project-scope warning, pty test harness for interactive prompts, committed Docker e2e tool under `packaging/revue/tests/e2e/`, CLAUDE_HOME guard consolidated into `resolve_scope`; 45 unit + 24 e2e green. REVUE-354 merged earlier 2026-06-04 — interactive install wizard [global-vs-project scope + path prompt] — **launch blocker closed.** 3 follow-ups filed from 395's review: REVUE-397 [licence-validator retry-on-transient], REVUE-398 [run install suite on macOS runner for dscl/AC2 CI coverage], REVUE-399 [consolidate install-wizard stub fixtures]. REVUE-396 merged — risk-tiered review classifier + Step-10 gate; REVUE-325 merged — rate-limit + auth on `/api/v2/licence/activate`; REVUE-393 merged — `src/web/tests/` gated in CI. Earlier 2026-06-03: REVUE-315/390/391/334 merged; REVUE-381 rerouted to pre-revenue sole-trader launch [1st Formations KYC rejected])
 **Source of truth — refresh after every story ships.**
 
 ---
@@ -13,14 +13,14 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## MVP scope (epic REVUE-269 / fixVersion `MVP`)
 
-**Headline progress: 45 Done / 69 active (65%) — 0 hard launch blockers — 3 strongly-should remain** (denominator 65→69: +3 follow-ups filed from REVUE-395's review — REVUE-397/398/399; +1 for REVUE-400 now Done. +1 Done on 2026-06-04: REVUE-403 — mvp-compass.md git tracking + commit-compass skill. +1 Done on 2026-06-04: REVUE-331 — E2E activate round-trip (CLI happy path + browser paste-key fallback). +1 Done on 2026-06-04: REVUE-400 — bitbucket-merge-pr Step 5 dispatch fix + mvp-compass automation. +2 Done on 2026-06-04: REVUE-354 — interactive install wizard (**launch blocker closed**) + REVUE-395 — install-wizard edge-case hardening + Docker e2e tool. Earlier 2026-06-04: REVUE-393 merged — `src/web/tests/` gated in CI (PR #206); REVUE-396 merged — risk-tiered review classifier + Step-10 gate (PR #209); REVUE-325 merged — activation endpoint rate-limited + header-authed. REVUE-334/315/390/391 merged 2026-06-03.)
+**Headline progress: 46 Done / 69 active (67%) — 0 hard launch blockers — 2 strongly-should remain** (+1 Done on 2026-06-04: REVUE-362 — production observability on /api/v2/licence/activate (Prometheus /metrics, Fly alert-rules, Grafana dashboard, observability runbook); ⚠️ do-not-run-automation-after-merge — staging validation required before ticket moves to Done. Denominator 65→69: +3 follow-ups filed from REVUE-395's review — REVUE-397/398/399; +1 for REVUE-400 now Done. +1 Done on 2026-06-04: REVUE-403 — mvp-compass.md git tracking + commit-compass skill. +1 Done on 2026-06-04: REVUE-331 — E2E activate round-trip (CLI happy path + browser paste-key fallback). +1 Done on 2026-06-04: REVUE-400 — bitbucket-merge-pr Step 5 dispatch fix + mvp-compass automation. +2 Done on 2026-06-04: REVUE-354 — interactive install wizard (**launch blocker closed**) + REVUE-395 — install-wizard edge-case hardening + Docker e2e tool. Earlier 2026-06-04: REVUE-393 merged — `src/web/tests/` gated in CI (PR #206); REVUE-396 merged — risk-tiered review classifier + Step-10 gate (PR #209); REVUE-325 merged — activation endpoint rate-limited + header-authed. REVUE-334/315/390/391 merged 2026-06-03.)
 
 | Bucket | Count | Meaning |
 |--------|------:|---------|
-| ✅ Done | 45 | Shipped. +1 on 2026-06-04: REVUE-403 (mvp-compass.md git tracking + commit-compass skill for safe post-merge persistence). +1 on 2026-06-04: REVUE-331 (E2E activate round-trip — CLI happy path + browser paste-key fallback). +1 on 2026-06-04: REVUE-360 (unsupported-platform guard + single-source platform list — was merged earlier, not captured in compass until now). +1 on 2026-06-04: REVUE-400 (bitbucket-merge-pr Step 5 dispatch fix + mvp-compass automation). +2 on 2026-06-04: REVUE-354 (interactive install wizard — merged PR #210, **launch blocker closed**) + REVUE-395 (install-wizard edge-case hardening + Docker e2e tool — merged PR #212). Earlier 2026-06-04: REVUE-393 (gate `src/web/tests/` — PR #206) + REVUE-396 (risk-tiered review classifier — PR #209) + REVUE-325 (rate-limit + auth `/activate` — PR #205). +4 on 2026-06-03: REVUE-334 + REVUE-315 + REVUE-390 + REVUE-391. +1 on 2026-06-02: REVUE-357. +2 on 2026-06-02: REVUE-374 + REVUE-372. +3 on 2026-06-01: REVUE-369/370/371 |
+| ✅ Done | 46 | Shipped. +1 on 2026-06-04: REVUE-362 (production observability on /api/v2/licence/activate — Prometheus /metrics, Fly alert-rules, Grafana dashboard, observability runbook; ⚠️ do-not-run-automation-after-merge — staging validation required before ticket moves to Done). +1 on 2026-06-04: REVUE-403 (mvp-compass.md git tracking + commit-compass skill for safe post-merge persistence). +1 on 2026-06-04: REVUE-331 (E2E activate round-trip — CLI happy path + browser paste-key fallback). +1 on 2026-06-04: REVUE-360 (unsupported-platform guard + single-source platform list — was merged earlier, not captured in compass until now). +1 on 2026-06-04: REVUE-400 (bitbucket-merge-pr Step 5 dispatch fix + mvp-compass automation). +2 on 2026-06-04: REVUE-354 (interactive install wizard — merged PR #210, **launch blocker closed**) + REVUE-395 (install-wizard edge-case hardening + Docker e2e tool — merged PR #212). Earlier 2026-06-04: REVUE-393 (gate `src/web/tests/` — PR #206) + REVUE-396 (risk-tiered review classifier — PR #209) + REVUE-325 (rate-limit + auth `/activate` — PR #205). +4 on 2026-06-03: REVUE-334 + REVUE-315 + REVUE-390 + REVUE-391. +1 on 2026-06-02: REVUE-357. +2 on 2026-06-02: REVUE-374 + REVUE-372. +3 on 2026-06-01: REVUE-369/370/371 |
 | 🔵 In Code Review | 0 | — |
 | 🔴 Launch blocker | 0 | **All hard launch blockers cleared.** Install path closed (354 + 395 ✅). Platform guard shipped (360 ✅). (389 Stripe go-live is **deferred post-launch** behind 381 entity reg — pre-revenue test-mode launch.) |
-| 🟠 Strongly-should | 3 | High risk to ship without; close before launch if at all possible |
+| 🟠 Strongly-should | 2 | High risk to ship without; close before launch if at all possible |
 | 🟡 Pre-launch polish | 6 | Nice-to-have; safe to slip post-launch |
 | ⚪ Post-launch deferred | 5 | Edge cases / code quality; explicitly not gating |
 | 🔧 Tooling follow-up | 6 | **REVUE-397** — licence-validator retry transient API-unreachable before failing (HIGH; filed 2026-06-04 from PR #210 transient pipeline failure; relates 278/371). **REVUE-398** — run install suite on macOS Bitbucket runner for dscl/AC2 CI coverage (filed from 395 review; relates 395). **REVUE-399** — consolidate install-wizard stub fixtures into a shared factory (INFO; relates 395). REVUE-373 — `install.sh` calls non-existent `revue --version` (Low; non-gating). REVUE-387 — Tailwind Typography plugin for prose pages (Low; cosmetic). REVUE-386 — reconcile /revue-local vs /revue name across docs (Low; non-gating). (REVUE-393 ✅ done. REVUE-403 ✅ done — mvp-compass.md git tracking + commit-compass skill.) |
@@ -63,7 +63,6 @@ Sequencing + parallelization across all open tickets (not just blockers) is in t
 |------|-------|-----------------|
 | REVUE-339 | Cooperative deadline + finalize budget reservation for agent_timeout | Users see truncated/garbage output on hard-kills instead of a graceful finalize — terrible first impression on the very feature we're selling |
 | REVUE-361 | Validate transactional email deliverability for activate flow | JWT-via-email landing in spam = zero activations = silent launch failure. **Now unblocked — REVUE-358 shipped the DNS auth (SPF/DKIM/DMARC all pass, mail-tester 8/10) 2026-05-29.** |
-| REVUE-362 | Production observability on `/api/v2/licence/activate` | **Now unblocked — REVUE-325 ✅ done 2026-06-04** (hardening half shipped; this is the matching observability half). REVUE-325 already emits a `licence.activation.flood` structured event + `activation_attempts` rows; 362 wires those into prod alerts/dashboards. Without alerts, abuse and outages are invisible until users complain publicly |
 
 ---
 
@@ -106,7 +105,7 @@ Built from formal Jira `Blocks` issue-links (`inwardIssue=blocker`, `outwardIssu
 
 ```
 REVUE-357 (Privacy/ToS)         ──✅ DONE──▶ REVUE-315 (Stripe config) ──✅ DONE──▶ [DEFERRED] REVUE-389 (Stripe live)
-REVUE-325 (rate-limit /activate)──✅ DONE──▶ REVUE-362 (observability layer — now unblocked)
+REVUE-325 (rate-limit /activate)──✅ DONE──▶ REVUE-362 (observability layer) ──✅ DONE──
 REVUE-369 (wheel distribution)  ──✅ DONE──▶ REVUE-269 (customer wheel now installs)
 REVUE-370 (licence env bypass)  ──✅ DONE──▶ REVUE-269
 REVUE-371 (cache-trust bypass)  ──✅ DONE──▶ REVUE-269
@@ -124,12 +123,12 @@ The **REVUE-381 (entity registration) → REVUE-389 (Stripe live)** chain is **d
 1. ✅ **REVUE-325 (rate-limit /activate).** Merged 2026-06-04. Unblocked **REVUE-362** (observability, strongly-should).
 2. ✅ **REVUE-354 (install wizard).** Merged 2026-06-04 (PR #210) — install-path blocker closed. Hardened by ✅ **REVUE-395** (PR #212).
 3. ✅ **REVUE-360** (wheel platform coverage) — **Done.** Platform guard + single-source list shipped.
-4. **REVUE-362** (observability on /activate) — unblocked by 325.
+4. ✅ **REVUE-362** (observability on /activate) — merged 2026-06-04. ⚠️ do-not-run-automation-after-merge — staging validation required before Jira moves to Done.
 5. ✅ **REVUE-393 (gate `src/web/tests/` in CI).** Merged 2026-06-04 (PR #206).
 
 ### Ready-to-start (no open blockers)
 
-315/357/372/374/334/325/**354/395/393/360/331** merged — all hard launch blockers cleared. The **REVUE-381 → REVUE-389** revenue go-live chain is deferred post-launch. REVUE-325 ✅ done unblocked REVUE-362 (observability, strongly-should). Next priority: REVUE-362, REVUE-361, REVUE-339.
+315/357/372/374/334/325/**354/395/393/360/331/362** merged — all hard launch blockers cleared. The **REVUE-381 → REVUE-389** revenue go-live chain is deferred post-launch. REVUE-362 ✅ done (observability). Next priority: REVUE-361, REVUE-339.
 
 ### Worktree slots for 5-way parallel work
 
@@ -171,7 +170,7 @@ Per memory `feedback_worktrees`: previously moved off worktrees for solo story w
 
 | Slot | Ticket | Surface | Safe to run with |
 |---|---|---|---|
-| 1 | **REVUE-362** (observability on /activate) — strongly-should | `src/web/` (consumes REVUE-325's flood event + `activation_attempts`) | 2, 3 |
+| 1 | ✅ **REVUE-362** (observability on /activate) — merged 2026-06-04; ⚠️ do-not-run-automation-after-merge | `src/web/` (consumes REVUE-325's flood event + `activation_attempts`) | — |
 | 2 | **REVUE-339** (cooperative deadline + agent_timeout finalize) — strongly-should | `revue_core` agent_timeout config | 1, 3 |
 | 3 | **REVUE-397** (licence-validator retry on transient) — HIGH tooling follow-up | `revue_core/.../license_validator.py` | 1, 2 |
 | +  | **REVUE-398** (install suite on macOS runner) — follow-up | `bitbucket-pipelines.yml` (new step) | conflict-free from all above (360 done) |
@@ -180,29 +179,29 @@ Per memory `feedback_worktrees`: previously moved off worktrees for solo story w
 - **REVUE-362 + REVUE-361** (email deliverability): both likely touch `src/web/` — verify file overlap before starting together; default to serialise.
 - **REVUE-339 + REVUE-341** (per-surface agent_timeout defaults): explicit same-file collision on the agent_timeout config.
 
-**Net parallelism (as of 2026-06-04 — all hard blockers cleared; REVUE-331 ✅ done):** zero hard launch blockers remain. Cleanest 3-way parallel: **362 + 339 + 397** — three distinct codebases, zero shared files. The **REVUE-381 → 389** revenue chain stays **deferred to post-launch** (pre-revenue sole-trader launch + 1st Formations KYC rejection).
+**Net parallelism (as of 2026-06-04 — all hard blockers cleared; REVUE-331 + REVUE-362 ✅ done):** zero hard launch blockers remain. Cleanest 2-way parallel: **339 + 397** — distinct codebases, zero shared files. REVUE-361 (email deliverability) is independent too. The **REVUE-381 → 389** revenue chain stays **deferred to post-launch** (pre-revenue sole-trader launch + 1st Formations KYC rejection).
 
 Worktree creation:
 
 ```bash
-# REVUE-315/325/354/395/393/360 ✅ DONE. Revenue go-live = REVUE-389 (after REVUE-381 entity reg, externally blocked).
-git worktree add ../revue-362 REVUE-362-activation-observability  # src/web — top strongly-should
+# REVUE-315/325/354/395/393/360/362 ✅ DONE. Revenue go-live = REVUE-389 (after REVUE-381 entity reg, externally blocked).
 git worktree add ../revue-339 REVUE-339-agent-timeout-deadline    # revue_core agent_timeout
 git worktree add ../revue-397 REVUE-397-licence-retry             # revue_core license_validator (HIGH follow-up)
 # REVUE-398 safe alongside any of the above — pipelines.yml only, 360 no longer competing
 git worktree add ../revue-398 REVUE-398-macos-install-ci
 ```
 
-The **REVUE-381 → REVUE-389** chain is the active revenue pole (deferred post-launch) — REVUE-315 (Stripe config) is ✅ done and staging-verified; going live needs the registered entity (381) then the live key/prices/portal (389). The install cluster (354/395/369/370/371/372 + 374), the legal pages (357), the billing config (315), the web-suite CI gate (393), the platform guard (360), and the E2E activate round-trip (331) are fully done. **All hard launch blockers are cleared.** Top priority: REVUE-362 (observability, strongly-should).
+The **REVUE-381 → REVUE-389** chain is the active revenue pole (deferred post-launch) — REVUE-315 (Stripe config) is ✅ done and staging-verified; going live needs the registered entity (381) then the live key/prices/portal (389). The install cluster (354/395/369/370/371/372 + 374), the legal pages (357), the billing config (315), the web-suite CI gate (393), the platform guard (360), the E2E activate round-trip (331), and the observability layer (362) are fully done. **All hard launch blockers are cleared.** Top priority: REVUE-361 (email deliverability), REVUE-339 (cooperative deadline + agent_timeout).
 
 > ⚠️ **Conflict note for 315 vs 325:** both touch `src/web` (Stripe wiring + `api/licence.py`) — review file-level overlap before running in parallel. 374 already registered its manifest router in `src/web/main.py`; any new web ticket that adds a router must coordinate that file to avoid a merge clash. REVUE-357 is ✅ done and no longer a parallel concern.
 
 ---
 
-## ✅ Done (45 of 69)
+## ✅ Done (46 of 69)
 
 | Jira | Story | Shipped |
 |------|-------|---------|
+| REVUE-362 | Production observability on `/api/v2/licence/activate` — Prometheus /metrics endpoint, Fly.io alert-rules, Grafana dashboard, observability runbook. ⚠️ do-not-run-automation-after-merge label applies — staging validation required before ticket moves to Done in Jira. | 2026-06-04 |
 | REVUE-403 | chore(tooling): track mvp-compass.md in git + commit-compass skill for safe post-merge persistence (compass now committed on every merge; commit-compass skill handles the safe single-commit flow) | 2026-06-04 |
 | REVUE-331 | E2E test for activate flow — CLI activate happy path + browser paste-key fallback round-trip (re-scoped 2026-06-02 to CLI-first; REVUE-382/383/384 cover activation flow redesign) | 2026-06-04 |
 | REVUE-400 | Fix bitbucket-merge-pr skill Step 5 dispatch pattern + add context-aware mvp-compass.md automation (post-merge epic-progress recap now context-driven; dispatch pattern corrected so Step 5 fires reliably) | 2026-06-04 |
