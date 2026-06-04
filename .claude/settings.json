@@ -3,10 +3,10 @@
     "deny": [
       "Read(./.env)",
       "Read(./.env.*)"
-    ]
+    ],
+    "allow": []
   },
-  "statusLine": {
-    "type": "command",
-    "command": "sh -c 'D=\"${CLAUDE_PROJECT_DIR:-.}\"; [ -f \"$D/.claude/helpers/statusline.cjs\" ] || D=\"${HOME}\"; exec node \"$D/.claude/helpers/statusline.cjs\"'"
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   }
 }
