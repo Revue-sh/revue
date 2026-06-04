@@ -148,6 +148,9 @@ def test_create_checkout_session_uses_existing_customer_id(monkeypatch):
 
 def test_create_billing_portal_session(monkeypatch):
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_123")
+    # Neutralise any ambient APP_BASE_URL (e.g. a dev shell exporting
+    # http://localhost:8000) so the assertion verifies the production default.
+    monkeypatch.delenv("APP_BASE_URL", raising=False)
     mock_session = MagicMock()
     mock_session.url = "https://billing.stripe.com/session/test"
 
