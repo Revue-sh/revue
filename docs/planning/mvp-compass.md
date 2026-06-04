@@ -1,6 +1,6 @@
 # MVP Compass — /revue-local public launch
 
-**Last updated:** 2026-06-04 (REVUE-397 merged). Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
+**Last updated:** 2026-06-04 (REVUE-406 merged). Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
 **Source of truth for "next pick."** Jira's priority field ≠ launch-path order; *this doc* is the launch-path order.
 
 ---
@@ -13,15 +13,15 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**48 / 69 done (70%) · 0 hard launch blockers · 1 strongly-should remaining.**
+**49 / 69 done (71%) · 0 hard launch blockers · 1 strongly-should remaining.**
 The narrative critical path (REVUE-275 → 280 → 281) and the whole launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped.
 
 **Recently shipped (last 5):**
+- **REVUE-406** — align Step-5b prompt with the lean compass model
 - **REVUE-397** — licence-validator retries transient API-unreachable before failing (bounded retry + backoff; SRP refactor)
 - **REVUE-339** — cooperative deadline + finalize budget reservation for agent_timeout (no lost findings on hard-kill)
 - **REVUE-362** — production observability on `/api/v2/licence/activate` (Prometheus `/metrics`, Fly alerts, Grafana dashboard) · ⚠️ staging-alert validation pending (`do-not-run-automation-after-merge`)
 - **REVUE-331** — E2E activate round-trip (CLI happy path + browser paste-key fallback)
-- **REVUE-403** — track mvp-compass.md in git + commit-compass skill for safe post-merge persistence
 
 ---
 
