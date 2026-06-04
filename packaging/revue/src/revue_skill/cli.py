@@ -99,6 +99,21 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 def cmd_version(_: argparse.Namespace) -> int:
     print(__version__)
+    # REVUE-360 AC3: surface the platform from the single source of truth
+    # (revue_core.platform_support) so a source/editable install on an
+    # unsupported box is visible rather than silently mis-run.
+    import platform
+
+    from revue_core.platform_support import (
+        format_platform_status_line,
+        is_supported,
+        unsupported_message,
+    )
+
+    system, machine = platform.system(), platform.machine()
+    print(format_platform_status_line(system, machine))
+    if not is_supported(system, machine):
+        print(unsupported_message(system, machine), file=sys.stderr)
     return 0
 
 
@@ -237,6 +252,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if code != 0:
             print(support_footer(), file=sys.stderr)
         return code
+
+    # REVUE-360: `revue --version` / `-V` is the installer's final verify step,
+    # but the outer parser uses required subcommands (dest="cmd", required=True),
+    # so a bare `--version` would error with exit 2. Pre-route it to cmd_version
+    # — same interception pattern as `local-run` above — so it prints the version
+    # + platform line and exits 0, consistent with the `version` subcommand.
+    if argv_list and argv_list[0] in ("--version", "-V"):
+        return cmd_version(argparse.Namespace())
 
     parser = build_parser()
     args = parser.parse_args(argv_list)

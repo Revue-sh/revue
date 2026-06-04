@@ -217,12 +217,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     list_models.set_defaults(func=cmd_list_models)
 
+    # -- version --
+    version_p = sub.add_parser(
+        "version",
+        help="Print the installed revue-ci version and the current platform",
+    )
+    version_p.set_defaults(func=cmd_version)
+
     return parser
 
 
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
+
+def cmd_version(_: argparse.Namespace) -> int:
+    """Print the installed revue-ci version and the current platform.
+
+    REVUE-360 AC3: the platform line comes from the single source of truth
+    (``revue_core.platform_support``), so revue-ci never hardcodes its own
+    supported-platform list.
+    """
+    import platform
+    from importlib.metadata import PackageNotFoundError, version
+
+    from revue_core.platform_support import (
+        format_platform_status_line,
+        is_supported,
+        unsupported_message,
+    )
+
+    try:
+        ver = version("revue-ci")
+    except PackageNotFoundError:  # source-tree / editable run without dist metadata
+        ver = "unknown"
+    sysname, machine = platform.system(), platform.machine()
+    print(f"revue-ci {ver}")
+    print(format_platform_status_line(sysname, machine))
+    if not is_supported(sysname, machine):
+        print(unsupported_message(sysname, machine), file=sys.stderr)
+    return 0
+
 
 def cmd_review(
     args: argparse.Namespace,

@@ -136,6 +136,29 @@ def installer_env(tmp_path: Path) -> dict[str, Path | str]:
     }
 
 
+def _make_uname_stub(bin_dir: Path, *, system: str, machine: str) -> None:
+    """Stub ``uname`` so the platform guard sees a chosen ``-s``/``-m`` pair.
+
+    Shadows the real ``uname`` on PATH; only the installer's platform guard
+    consults it, so the rest of the script still uses the real OS for home-dir
+    resolution etc.
+    """
+    script = bin_dir / "uname"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env bash
+            case "$1" in
+              -s) echo "{system}" ;;
+              -m) echo "{machine}" ;;
+              *) echo "{system} {machine}" ;;
+            esac
+            """
+        )
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+
 def test_install_script_exists_and_is_executable():
     # Arrange / Act
     exists = INSTALL_SCRIPT.exists()
@@ -1001,3 +1024,86 @@ def test_dscl_home_with_spaces_is_not_truncated(installer_env, tmp_path):
     # Assert — the error names the FULL spaced path (proves no awk truncation).
     combined = result.stdout + result.stderr
     assert str(spaced_home) in combined, f"spaced home was truncated; output={combined}"
+
+
+# ---------------------------------------------------------------------------
+# REVUE-360 — supported-platform guard (AC1 / TC1 / TC2)
+# ---------------------------------------------------------------------------
+
+# The canonical install-page URL the guard must link. Mirrors
+# revue_core.platform_support.INSTALL_PAGE_URL (pinned by the consistency test).
+_INSTALL_PAGE_URL = "https://github.com/cbscd/revue/blob/main/docs/guides/install.md"
+
+
+def test_guard_blocks_linux_arm64_with_actionable_message(installer_env):
+    # Arrange — simulate an unsupported Linux ARM (Graviton) box.
+    bin_dir: Path = installer_env["bin"]
+    _make_uname_stub(bin_dir, system="Linux", machine="aarch64")
+
+    # Act
+    result = _run_installer(env=installer_env["env"], cwd=installer_env["workspace"])
+
+    # Assert — non-zero exit, and the message carries all three AC1 parts.
+    assert result.returncode != 0, "guard must fail non-zero on an unsupported platform"
+    assert "Linux aarch64" in result.stderr, "message must name the detected platform"
+    assert _INSTALL_PAGE_URL in result.stderr, "message must link the install page"
+    assert "revue-ci" in result.stderr, "message must state the /revue-CI workaround"
+
+
+def test_guard_blocks_intel_mac_naming_the_platform(installer_env):
+    # Arrange — Intel Macs report x86_64 under Darwin; explicitly unsupported.
+    bin_dir: Path = installer_env["bin"]
+    _make_uname_stub(bin_dir, system="Darwin", machine="x86_64")
+
+    # Act
+    result = _run_installer(env=installer_env["env"], cwd=installer_env["workspace"])
+
+    # Assert
+    assert result.returncode != 0
+    assert "Darwin x86_64" in result.stderr
+
+
+def test_guard_runs_before_pip_so_no_package_manager_is_invoked(installer_env):
+    # Arrange — unsupported platform with uv available; guard must short-circuit
+    # BEFORE any install, so uv is never called and no partial state is created.
+    bin_dir: Path = installer_env["bin"]
+    _make_uname_stub(bin_dir, system="Windows", machine="amd64")
+    _make_stub(bin_dir, "uv")
+
+    # Act
+    result = _run_installer(env=installer_env["env"], cwd=installer_env["workspace"])
+
+    # Assert — failed, and uv was never invoked (no uv.log written).
+    assert result.returncode != 0
+    assert not (bin_dir / "uv.log").exists(), "pip/uv must not run on an unsupported platform"
+
+
+def test_guard_allows_supported_linux_x86_64_and_install_proceeds(installer_env):
+    # Arrange — simulate a supported Linux x86_64 box; full install should run.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    _make_uname_stub(bin_dir, system="Linux", machine="x86_64")
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=installer_env["env"], cwd=installer_env["workspace"])
+
+    # Assert — guard passed; uv install ran to completion.
+    assert result.returncode == 0, result.stderr
+    assert (bin_dir / "uv.log").exists(), "supported platform must reach the uv install step"
+
+
+def test_guard_normalises_amd64_alias_to_x86_64_for_linux(installer_env):
+    # Arrange — some toolchains report amd64; it is an alias for x86_64 (supported).
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    _make_uname_stub(bin_dir, system="Linux", machine="amd64")
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=installer_env["env"], cwd=installer_env["workspace"])
+
+    # Assert — amd64 treated as x86_64, so the install proceeds.
+    assert result.returncode == 0, result.stderr

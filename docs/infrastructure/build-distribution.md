@@ -66,16 +66,33 @@ is to configure an SSH key pair in **Bitbucket → Repository settings → Pipel
 
 ### Supported platforms
 
+We publish per-OS Nuitka wheels for these two platforms **only** (REVUE-360):
+
 | Platform | Build runner | Rationale |
 |---|---|---|
 | Linux x86_64 | Bitbucket Cloud managed | ~50% of target users (servers, CI, Linux devs). Zero infrastructure cost. |
-| macOS ARM64 | Self-hosted on dev machine | ~30% of target users. Apple Silicon is the majority of new Mac sales since 2021. Intel Mac users run ARM64 binaries via Rosetta 2 with near-zero overhead. |
+| macOS ARM64 | Self-hosted on dev machine | ~30% of target users. Apple Silicon is the majority of new Mac sales since 2021. |
 
-### Dropped platforms
+The canonical supported-platform list lives in
+`packaging/revue_core/src/revue_core/platform_support.py` and is enforced across
+the installer, the install page, and the published packages by
+`tests/test_supported_platforms_consistency.py`.
+
+### Unsupported platforms
 
 | Platform | Reason |
 |---|---|
-| Linux ARM64 | <1% of target users for a developer CLI tool. Requires a self-hosted runner with no available hardware. Linux ARM64 users can install from source via `pip install revue`. |
+| macOS Intel (x86_64) | Apple Silicon is the majority of new Mac sales since 2021. We do **not** publish an Intel wheel and do **not** rely on Rosetta. |
+| Linux ARM64 (aarch64 / Graviton) | <1% of target users for a developer CLI tool. Requires a self-hosted runner with no available hardware. |
+| Windows | Not in the Phase 2.a distribution scope. |
+
+There is **no source distribution** on PyPI — publishing `.py` would expose the
+Nuitka-protected IP — so a raw `pip install revue` on an unsupported platform
+fails with pip's generic `No matching distribution found` error. The `revue.sh`
+installer detects this first and exits with a clear, platform-named message.
+Unsupported-platform users should run Revue in CI via the **`revue-ci`**
+integration instead. See `docs/guides/install.md` for the authoritative list and
+the workaround.
 
 ---
 

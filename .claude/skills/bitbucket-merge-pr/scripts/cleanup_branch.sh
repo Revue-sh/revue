@@ -47,7 +47,7 @@ if [[ -n "$WT_PATH" ]]; then
     echo "✅ Worktree $WT_PATH removed"
 fi
 
-BRANCH_ERR=$(git -C "$REPO" branch -d "$BRANCH" 2>&1)
+BRANCH_ERR=$(git -C "$REPO" branch -D "$BRANCH" 2>&1)
 RC=$?
 if [[ $RC -eq 0 ]]; then
     echo "✅ Branch $BRANCH deleted"

@@ -48,6 +48,18 @@ else
 fi
 readonly REVUE_YML=".revue.yml"
 
+# ── Supported-platform policy (REVUE-360 AC1) ────────────────────────────────
+# SINGLE SOURCE OF TRUTH: revue_core/platform_support.py::SUPPORTED_PLATFORMS.
+# This shell copy is pinned to the Python list by
+# tests/test_supported_platforms_consistency.py — edit BOTH together or CI fails.
+# Format: "<uname -s, lowercased> <uname -m, lowercased+normalised>".
+readonly SUPPORTED_PLATFORMS=(
+  "darwin arm64"   # macOS ARM64 (Apple Silicon)
+  "linux x86_64"   # Linux x86_64
+)
+# Mirrors revue_core.platform_support.INSTALL_PAGE_URL.
+readonly INSTALL_PAGE_URL="https://github.com/cbscd/revue/blob/main/docs/guides/install.md"
+
 # ANSI colour codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -65,6 +77,44 @@ warn() {
 
 info() {
   printf "${GREEN}✓${NC} %s\n" "$@"
+}
+
+# Supported-platform guard (REVUE-360 AC1). Runs FIRST in main(), before any
+# package manager or directory is touched, so an unsupported platform fails fast
+# with a clear, actionable message instead of pip's opaque "no matching
+# distribution" error. Normalises the amd64 alias to x86_64 (mirrors
+# revue_core.platform_support.normalise_machine); every other arch is compared
+# verbatim against SUPPORTED_PLATFORMS.
+check_supported_platform() {
+  local raw_sys raw_mach sys mach key supported
+  raw_sys="$(uname -s 2>/dev/null || echo unknown)"
+  raw_mach="$(uname -m 2>/dev/null || echo unknown)"
+  # Lowercase and strip ALL whitespace — parity with the Python side's
+  # .strip().lower(); OS/arch tokens never contain internal spaces, so this is
+  # safe and defends against any stray whitespace in uname output.
+  sys="$(printf '%s' "$raw_sys" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  mach="$(printf '%s' "$raw_mach" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  case "$mach" in
+    amd64) mach="x86_64" ;;
+  esac
+
+  key="${sys} ${mach}"
+  for supported in "${SUPPORTED_PLATFORMS[@]}"; do
+    if [[ "$key" == "$supported" ]]; then
+      return 0
+    fi
+  done
+
+  # Unsupported: name the platform, link the install page, state the workaround.
+  printf "${RED}error:${NC} Revue does not publish a wheel for your platform: %s %s\n" \
+    "$raw_sys" "$raw_mach" >&2
+  # Message components (labels + workaround) are pinned to
+  # revue_core.platform_support by tests/test_supported_platforms_consistency.py
+  # so this hand-written copy can never silently drift from the policy module.
+  printf "Supported platforms: macOS ARM64, Linux x86_64.\n" >&2
+  printf "See %s for the supported-platform list.\n" "$INSTALL_PAGE_URL" >&2
+  printf "Workaround: run Revue in your CI pipeline via the revue-ci integration (github/gitlab/bitbucket) instead.\n" >&2
+  exit 1
 }
 
 # Detect Claude Code presence.
@@ -472,6 +522,12 @@ main() {
       *) warn "Ignoring unrecognised argument: ${arg}" ;;
     esac
   done
+
+  # Step 0 (REVUE-360): supported-platform guard BEFORE anything else. We publish
+  # per-OS wheels for macOS ARM64 + Linux x86_64 only; on any other platform pip
+  # would later fail with an opaque "no matching distribution" error, so fail fast
+  # here with a message that names the platform and the CI workaround.
+  check_supported_platform
 
   # Step 1: Detect Claude Code (always required — both scopes need the CLI host).
   if ! detect_claude_code; then

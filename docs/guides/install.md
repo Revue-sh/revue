@@ -1,5 +1,30 @@
 # Installing `/revue-local`
 
+## Supported platforms
+
+Revue ships per-OS, Nuitka-compiled wheels for these platforms only:
+
+- **macOS ARM64** (Apple Silicon — M1 and later)
+- **Linux x86_64**
+
+Every other platform — **Intel Mac, Linux ARM/Graviton (aarch64), and Windows** —
+is **not supported** for local install. The one-command installer detects your
+platform first and, on an unsupported one, exits with a message that names your
+platform and points back to this page rather than failing deep inside `pip`.
+
+**Workaround for unsupported platforms:** run Revue in your CI pipeline via the
+**`revue-ci`** integration (GitHub, GitLab, or Bitbucket) instead of installing
+locally. See the [canonical install page](https://github.com/cbscd/revue/blob/main/docs/guides/install.md)
+for the authoritative supported-platform list.
+
+> **Raw `pip install revue` on an unsupported platform.** Because we publish no
+> source distribution (that would expose the Nuitka-protected IP), a bare
+> `pip install revue` on an unsupported platform fails with pip's generic
+> `ERROR: No matching distribution found for revue`. That is expected, not a
+> bug — pip's error text is outside our control. Use the one-command installer
+> (which gives a clear, platform-named message) or the `revue-ci` CI workaround
+> above.
+
 ## One-command install (recommended)
 
 Revue offers a single curl-pipe-bash installer that sets up `/revue-local` in Claude Code and configures your workspace in under 5 minutes:
