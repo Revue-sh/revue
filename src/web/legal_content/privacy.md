@@ -1,13 +1,12 @@
 # Privacy Policy
 
-**Last updated: June 2, 2026**
-
-<!-- [PENDING LEGAL REVIEW] — This draft accurately reflects actual data flows. Counsel sign-off required before public launch. -->
-<!-- [PENDING REGISTRATION] — "Token Labs Ltd" is not yet incorporated at Companies House. Confirm the registered name + company number before launch. -->
+**Last updated: June 4, 2026**
 
 ## Introduction
 
-This Privacy Policy explains how Token Labs Ltd ("Token Labs," "Company," "we," "us," or "our"), the operator of the Revue service, collects, uses, discloses, and safeguards information when you use our website (revue.sh), service, and code review skill ("Service"). Token Labs Ltd is a company registered in England & Wales.
+This Privacy Policy explains how **Daniel Sánchez Cisneros, a UK sole trader trading as Revue** ("we," "us," or "our"), the operator of the Revue service, collects, uses, discloses, and safeguards information when you use our website (revue.sh), service, and code review skill ("Service"). The data controller for Revue is Daniel Sánchez Cisneros, trading as Revue.
+
+If Revue is transferred to a limited company after future company registration, we will update this Privacy Policy with the registered company name, company number, and controller details. Until that update is published, the sole-trader operator named above remains the data controller.
 
 Please read this Privacy Policy carefully. If you do not agree with our policies and practices, please do not use the Service. By using the Service, you acknowledge that you have read, understood, and agree to be bound by all the terms of this Privacy Policy.
 

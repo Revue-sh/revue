@@ -1,15 +1,14 @@
 # Terms of Service
 
-**Last updated: June 2, 2026**
-
-<!-- [PENDING LEGAL REVIEW] — This draft adapted from standard paid-SaaS template. Counsel sign-off required before public launch. -->
-<!-- [PENDING REGISTRATION] — "Token Labs Ltd" is not yet incorporated at Companies House. Confirm the registered name + company number before launch. -->
+**Last updated: June 4, 2026**
 
 ## Introduction
 
 These Terms of Service ("Terms") govern your use of the Revue service, including our website (revue.sh) and the Revue code review skill for Claude Code ("Service"). By accessing or using Revue, you agree to be bound by these Terms. If you do not agree, you may not use the Service.
 
-The Service is operated by **Token Labs Ltd**, a company registered in England & Wales. References to "we," "us," "our," or "Company" mean Token Labs Ltd. References to "you" or "your" mean the individual or organization accessing the Service.
+The Service is currently operated by **Daniel Sánchez Cisneros, a UK sole trader trading as Revue**. References to "we," "us," "our," or "Revue" mean that operator. References to "you" or "your" mean the individual or organization accessing the Service.
+
+If Revue is transferred to a limited company after future company registration, we will update these Terms with the registered company name and company number. Until that update is published, these Terms are between you and the sole-trader operator named above.
 
 ## 1. Service Description
 
@@ -78,7 +77,9 @@ We reserve the right to change pricing for new subscriptions. Existing subscript
 
 ### 5.3 Refund Policy
 
-We do not offer refunds for Pro Tier subscriptions. All charges are final. You may cancel your subscription at any time; cancellation takes effect at the end of your current billing period. Nothing in this clause affects your statutory rights under UK consumer law.
+All subscription charges are final and non-refundable once billed. If you cancel after a monthly subscription renews, you will not receive a refund for that month; you may continue using the Pro Tier until the end of your current billing period, and the recurring charge will stop from the next billing cycle. The same rule applies to annual subscriptions: cancellation stops the next annual renewal but does not refund the current annual term.
+
+We may review exceptional refund requests case by case and may issue a refund at our discretion. Nothing in this clause affects your statutory rights under UK consumer law.
 
 ### 5.4 Free Tier to Pro Tier
 

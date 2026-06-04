@@ -45,6 +45,19 @@ async def test_terms_covers_required_clauses(client: AsyncClient):
     assert b"legal@revue.sh" in body
 
 
+@pytest.mark.asyncio
+async def test_terms_explains_no_refunds_and_cancel_at_period_end(client: AsyncClient):
+    """Terms must explain cancellation timing for monthly and annual plans."""
+    resp = await client.get("/terms")
+    body = resp.content
+    assert b"All subscription charges are final and non-refundable" in body
+    assert b"at our discretion" in body
+    assert b"end of your current billing period" in body
+    assert b"monthly subscription" in body
+    assert b"annual subscription" in body
+    assert b"next billing cycle" in body
+
+
 # =====================================================================
 # Content completeness — AC2 (Privacy Policy must enumerate real data flows)
 # =====================================================================
@@ -84,13 +97,28 @@ async def test_legal_pages_use_mailto_links_for_contact(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_terms_uk_jurisdiction_and_entity(client: AsyncClient):
-    """Terms must reflect the real operator + jurisdiction, not US placeholders."""
+    """Terms must identify the current operator, not a pending company."""
     resp = await client.get("/terms")
     body = resp.content
-    assert b"Token Labs Ltd" in body
+    assert b"UK sole trader trading as Revue" in body
+    assert b"future company registration" in body
+    assert b"Token Labs Ltd" not in body
+    assert b"PENDING REGISTRATION" not in body
     assert b"England &amp; Wales" in body or b"England & Wales" in body
     assert b"Delaware" not in body
     assert b"Revue Inc." not in body
+
+
+@pytest.mark.asyncio
+async def test_privacy_identifies_current_data_controller(client: AsyncClient):
+    """Privacy policy must name the active controller before incorporation."""
+    resp = await client.get("/privacy")
+    body = resp.content
+    assert b"UK sole trader trading as Revue" in body
+    assert b"data controller" in body
+    assert b"future company registration" in body
+    assert b"Token Labs Ltd" not in body
+    assert b"PENDING REGISTRATION" not in body
 
 
 @pytest.mark.asyncio
