@@ -62,6 +62,7 @@ def test_main_branch_pipeline_promotes_single_image_from_staging_to_prod() -> No
     expected_order = [
         "Run Tests",
         "Run Web Tests",  # REVUE-393: web suite gates the build/deploy chain
+        "Run Activate E2E",  # REVUE-331: activate round-trip e2e joins the gate
         "Build Web Image → Fly Registry",
         "Deploy Web → Staging",
         "Smoke Test → Staging",

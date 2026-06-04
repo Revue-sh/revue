@@ -21,6 +21,18 @@ definitions:
         files:
           - src/web/requirements.txt
       path: .venv-web
+    # REVUE-331: the activate round-trip e2e needs BOTH the web stack and the
+    # three editable packages (plus Playwright), so its venv is keyed on both
+    # dependency sources. Separate from web-venv/ci-venv so neither lean step
+    # inherits the heavy combo.
+    e2e-venv:
+      key:
+        files:
+          - src/web/requirements.txt
+          - packaging/revue_core/pyproject.toml
+          - packaging/revue-ci/pyproject.toml
+          - packaging/revue/pyproject.toml
+      path: .venv-e2e
 
   steps:
     # -----------------------------------------------------------------------
@@ -216,7 +228,13 @@ definitions:
           - pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/ -e packaging/revue/
           - python3 -m pytest packaging/revue_core/tests/ -q --rootdir=packaging/revue_core
           - python3 -m pytest packaging/revue-ci/tests/ -q --rootdir=packaging/revue-ci
-          - python3 -m pytest packaging/revue/tests/ -q --rootdir=packaging/revue
+          # REVUE-331: --ignore=packaging/revue/tests/e2e is LOAD-BEARING.
+          # This step runs in the lean ci-venv (no fastapi/uvicorn/playwright);
+          # the activate round-trip e2e imports all three at module/conftest
+          # load, so collecting it here would error the whole step. It is run
+          # for real in the dedicated &run-activate-e2e step instead. Mirrors
+          # the --ignore=src/web/tests/e2e precedent in &run-web-tests.
+          - python3 -m pytest packaging/revue/tests/ --ignore=packaging/revue/tests/e2e -q --rootdir=packaging/revue
           # REVUE-393: this step runs against requirements-ci.txt (no fastapi).
           # tests/test_activation_rate_limit.py imports fastapi at module top —
           # since the PR #206 importorskip stopgap was removed, it would error
@@ -265,6 +283,40 @@ definitions:
           - python3 -c "import fastapi, uvicorn" 2>/dev/null || pip install --quiet -r src/web/requirements.txt
           - python3 -m pytest src/web/tests/ --ignore=src/web/tests/e2e -q
           - python3 -m pytest tests/test_activation_rate_limit.py -q
+
+    # -----------------------------------------------------------------------
+    # REVUE-331: activate round-trip E2E. This is the ONE step that exercises
+    # the real licence-server -> CLI seam end to end, so it needs an env that
+    # no other step has: the three editable packages (revue_core/revue-ci/
+    # revue) AND the FastAPI web stack (src/web/requirements.txt) AND a
+    # Playwright Chromium. It boots a live licence server, signs a JWT with a
+    # test key, and verifies the CLI accepts it — catching the key-mismatch
+    # regression (AC5) before it reaches a paying customer.
+    #
+    # AC7: runs unconditionally on every PR + main (a strict superset of "PRs
+    # that touch packaging/revue, packaging/revue_core/licence, or the activate
+    # route"). Gating on changesets would fail by silently SKIPPING the step —
+    # the exact "silent brick" failure class this ticket exists to kill — so we
+    # run it always and accept the CI cost.
+    #
+    # AC8: the round-trips run in-process (editable-install fallback) because
+    # ACTIVATE_URL / VALIDATE_URL / the embedded public key are all hardcoded
+    # with no override, so the compiled binary cannot be pointed at a local
+    # test server. A dedicated .venv-e2e (e2e-venv cache) keeps this heavy combo
+    # out of the lean ci-venv/web-venv.
+    - step: &run-activate-e2e
+        name: "Run Activate E2E"
+        image: python:3.12-slim
+        caches:
+          - e2e-venv
+        script:
+          - test -x .venv-e2e/bin/python || python3 -m venv .venv-e2e
+          - export PATH="$PWD/.venv-e2e/bin:$PATH"
+          - python3 -c "import fastapi, uvicorn" 2>/dev/null || pip install --quiet -r src/web/requirements.txt
+          - pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/ -e packaging/revue/
+          - python3 -c "import pytest_playwright" 2>/dev/null || pip install --quiet pytest-playwright
+          - python3 -m playwright install --with-deps chromium
+          - python3 -m pytest packaging/revue/tests/e2e -q --rootdir=packaging/revue
 
     # -----------------------------------------------------------------------
     # AI self-review on every PR — runs the revue-ci CLI against the PR diff.
@@ -451,9 +503,11 @@ pipelines:
     main:
       # REVUE-393: unit + web suites run in parallel (independent — separate
       # venvs/deps/code), gating the build → deploy chain.
+      # REVUE-331: the activate round-trip e2e joins the gate (independent venv).
       - parallel:
           - step: *run-tests
           - step: *run-web-tests
+          - step: *run-activate-e2e
       - step: *build-web-image-fly
       - step: *deploy-web-staging
       - step: *smoke-web-staging
@@ -562,9 +616,12 @@ pipelines:
       # REVUE-393: unit + web suites in parallel (independent). The AI review runs
       # ONLY if both pass — fail-fast on the cheap test gates before spending AI
       # tokens reviewing a PR that's already red.
+      # REVUE-331 AC7: the activate round-trip e2e runs on every PR, gating the
+      # AI review alongside the unit + web suites.
       - parallel:
           - step: *run-tests
           - step: *run-web-tests
+          - step: *run-activate-e2e
       - step: *revue-review
 
   custom:
