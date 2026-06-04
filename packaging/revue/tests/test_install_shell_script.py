@@ -44,7 +44,14 @@ def _make_stub(bin_dir: Path, name: str, exit_code: int = 0, log_path: Path | No
 
 
 def _make_revue_stub(bin_dir: Path, *, claude_skills_dir: Path) -> Path:
-    """Stub the ``revue`` CLI so it simulates ``install-skill`` writing files."""
+    """Stub the ``revue`` CLI so it simulates ``install-skill`` writing files.
+
+    The stub logs every invocation (including ``--target-dir`` so AC4 can be
+    asserted from the log) and honours ``--target-dir`` by writing the skill
+    files under the *parsed* parent dir rather than a hardcoded location. When
+    ``--target-dir`` is absent it falls back to ``claude_skills_dir`` so the
+    global-scope tests keep working unchanged.
+    """
     log = bin_dir / "revue.log"
     script = bin_dir / "revue"
     script.write_text(
@@ -53,8 +60,18 @@ def _make_revue_stub(bin_dir: Path, *, claude_skills_dir: Path) -> Path:
             #!/usr/bin/env bash
             echo "revue $*" >> "{log}"
             if [ "$1" = "install-skill" ]; then
-                mkdir -p "{claude_skills_dir}/revue"
-                printf '# revue skill\\n' > "{claude_skills_dir}/revue/SKILL.md"
+                target="{claude_skills_dir}"
+                # Parse --target-dir <dir> out of the arguments so the stub
+                # writes the skill where the installer asked it to.
+                prev=""
+                for arg in "$@"; do
+                    if [ "$prev" = "--target-dir" ]; then
+                        target="$arg"
+                    fi
+                    prev="$arg"
+                done
+                mkdir -p "$target/revue"
+                printf '# revue skill\\n' > "$target/revue/SKILL.md"
             fi
             exit 0
             """
@@ -64,15 +81,27 @@ def _make_revue_stub(bin_dir: Path, *, claude_skills_dir: Path) -> Path:
     return log
 
 
-def _run_installer(*, env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
+def _run_installer(
+    *,
+    env: dict[str, str],
+    cwd: Path,
+    args: list[str] | None = None,
+    detach_tty: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    cmd = ["bash", str(INSTALL_SCRIPT), *(args or [])]
     return subprocess.run(  # noqa: S603 — controlled script, controlled env
-        ["bash", str(INSTALL_SCRIPT)],
+        cmd,
         env=env,
         cwd=cwd,
         capture_output=True,
         text=True,
         check=False,
         timeout=30,
+        # detach from the controlling terminal so ``/dev/tty`` cannot be opened —
+        # this deterministically exercises the AC7 no-tty fallback even when the
+        # test suite is launched from an interactive shell. (capture_output alone
+        # only redirects stdout/stderr; the child still inherits the tty.)
+        start_new_session=detach_tty,
     )
 
 
@@ -88,6 +117,10 @@ def installer_env(tmp_path: Path) -> dict[str, Path | str]:
 
     claude_dir = home / ".claude"
     claude_dir.mkdir()  # signal: Claude Code is "installed"
+
+    # REVUE-354 finding #4: detection now gates on the `claude` host CLI being on
+    # PATH (not the ~/.claude dir), so the fixture stubs it for the success path.
+    _make_stub(bin_dir, "claude")
 
     env = {
         "HOME": str(home),
@@ -297,3 +330,543 @@ def test_install_skipped_when_neither_uv_nor_pipx_available(installer_env):
     assert result.returncode != 0
     combined = result.stdout + result.stderr
     assert "uv" in combined and "pipx" in combined
+
+
+# ---------------------------------------------------------------------------
+# REVUE-354 — interactive install wizard: scope (global vs project) + path.
+#
+# These tests drive the resolved *branch* of the wizard via env vars / CLI
+# flags (deterministic, no pty). The interactive prompt *wording* (AC1/AC2/AC10
+# text) is not asserted here — that requires a pty harness and is deferred:
+#   # TODO REVUE-354 pty test — assert prompt strings via a pty/expect harness.
+# ---------------------------------------------------------------------------
+
+
+def test_wizard_dash_y_flag_forces_global_default(installer_env):
+    """AC8: ``--yes`` forces global scope and skips all prompts."""
+    # Arrange — drop the legacy non-interactive var so only --yes drives scope.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    env = dict(installer_env["env"])
+    env.pop("REVUE_INSTALL_NONINTERACTIVE", None)
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(
+        env=env, cwd=installer_env["workspace"], args=["--yes"]
+    )
+
+    # Assert — global paths written under ~/.claude, never the workspace.
+    assert result.returncode == 0, result.stderr
+    assert (home / ".claude" / "commands" / "revue-local.md").exists()
+    assert (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
+    workspace: Path = installer_env["workspace"]
+    assert not (workspace / ".claude").exists(), "global install must not write project .claude/"
+
+
+def test_wizard_env_vars_skip_prompt_global(installer_env):
+    """AC6: ``REVUE_INSTALL_SCOPE=global`` resolves to global non-interactively."""
+    # Arrange
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    env = dict(installer_env["env"])
+    env.pop("REVUE_INSTALL_NONINTERACTIVE", None)
+    env["REVUE_INSTALL_SCOPE"] = "global"
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=installer_env["workspace"])
+
+    # Assert — command + skill land under ~/.claude.
+    assert result.returncode == 0, result.stderr
+    assert (home / ".claude" / "commands" / "revue-local.md").exists()
+    assert (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
+
+
+def test_wizard_env_vars_skip_prompt_project(installer_env):
+    """AC3/AC4/AC5/AC6: ``REVUE_INSTALL_SCOPE=project`` writes everything under <project>."""
+    # Arrange — project dir is distinct from cwd (workspace) so AC5 discriminates.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    project = workspace / "myrepo"
+    project.mkdir()
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "project"  # outranks legacy NONINTERACTIVE
+    env["REVUE_INSTALL_PATH"] = str(project)
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace)
+
+    # Assert — AC3 command, AC4 skill, AC5 .revue.yml all under <project>.
+    assert result.returncode == 0, result.stderr
+    assert (project / ".claude" / "commands" / "revue-local.md").exists(), "AC3"
+    assert (project / ".claude" / "skills" / "revue" / "SKILL.md").exists(), "AC4"
+    assert (project / ".revue.yml").exists(), "AC5"
+    # Global locations must NOT be written for a project install.
+    assert not (home / ".claude" / "commands" / "revue-local.md").exists()
+    # AC5: .revue.yml goes in the project, never in cwd.
+    assert not (workspace / ".revue.yml").exists()
+
+
+def test_wizard_project_scope_passes_target_dir_to_revue_install_skill(installer_env):
+    """AC4: project install passes ``--target-dir <project>/.claude/skills``."""
+    # Arrange
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    project = workspace / "myrepo"
+    project.mkdir()
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "project"
+    env["REVUE_INSTALL_PATH"] = str(project)
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace)
+
+    # Assert — the revue stub log records the project-scoped --target-dir.
+    assert result.returncode == 0, result.stderr
+    revue_log = (bin_dir / "revue.log").read_text()
+    expected = f"--target-dir {project}/.claude/skills"
+    assert expected in revue_log, f"expected {expected!r} in revue.log, got:\n{revue_log}"
+
+
+def test_wizard_env_path_supports_tilde_expansion(installer_env):
+    """AC2: ``REVUE_INSTALL_PATH=~/x`` expands to ``$HOME/x``."""
+    # Arrange — project under HOME, referenced via a literal leading tilde.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    project = home / "tildeproj"
+    project.mkdir()
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "project"
+    env["REVUE_INSTALL_PATH"] = "~/tildeproj"
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=installer_env["workspace"])
+
+    # Assert — files land under the expanded $HOME/tildeproj path.
+    assert result.returncode == 0, result.stderr
+    assert (project / ".claude" / "commands" / "revue-local.md").exists()
+    assert (project / ".revue.yml").exists()
+
+
+def test_wizard_falls_back_to_global_when_no_tty(installer_env):
+    """AC7: no /dev/tty → global fallback, one-line message, exit 0."""
+    # Arrange — strip every resolution var so the installer reaches the tty
+    # probe; detach the controlling terminal so /dev/tty cannot be opened.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    env = dict(installer_env["env"])
+    for key in (
+        "REVUE_INSTALL_NONINTERACTIVE",
+        "REVUE_INSTALL_SCOPE",
+        "REVUE_INSTALL_PATH",
+    ):
+        env.pop(key, None)
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act — detach_tty makes /dev/tty unopenable in the child.
+    result = _run_installer(
+        env=env, cwd=installer_env["workspace"], detach_tty=True
+    )
+
+    # Assert — exit 0, global install performed, fallback message surfaced.
+    assert result.returncode == 0, result.stderr
+    assert (home / ".claude" / "commands" / "revue-local.md").exists()
+    combined = (result.stdout + result.stderr).lower()
+    assert "global" in combined and "tty" in combined
+
+
+def test_wizard_aborts_on_missing_project_path(installer_env):
+    """AC9: non-interactive project install with a missing path → hard error."""
+    # Arrange — point at a project dir that does not exist.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    missing = workspace / "does-not-exist"
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "project"
+    env["REVUE_INSTALL_PATH"] = str(missing)
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace)
+
+    # Assert — non-zero exit with an actionable message naming the path.
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert str(missing) in combined
+    assert not (missing / ".claude").exists()
+
+
+def test_yes_flag_completes_quick_update_when_global_install_exists(installer_env):
+    """``--yes`` + an existing global install completes the FULL install flow.
+
+    NOTE (finding D, test honesty): this asserts only the *non-interactive*
+    --yes path — it does NOT exercise the interactive AC10 "[Q]uick update /
+    [M]odify scope?" prompt. ``--yes`` hits the first precedence rule and never
+    enters resolve_scope's interactive existing-install branch, so the detection
+    block could be deleted and this test would still pass. The interactive Q/M
+    prompt + detection is pty-deferred:
+    # TODO REVUE-354 pty test — assert the interactive [Q]/[M] prompt + that
+    #   Quick reuses the existing global scope.
+    What this DOES guarantee: --yes with a stale install still runs the package
+    install with --force and refreshes the skill with --overwrite (the quick
+    update IS the normal flow, not a short-circuit).
+    """
+    # Arrange — pre-seed an existing (stale) global skill install.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    skills_dir = home / ".claude" / "skills"
+    (skills_dir / "revue").mkdir(parents=True)
+    (skills_dir / "revue" / "SKILL.md").write_text("# stale skill\n")
+    env = dict(installer_env["env"])
+    env.pop("REVUE_INSTALL_NONINTERACTIVE", None)
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=skills_dir)
+
+    # Act — --yes must NOT hang; it completes the full flow non-interactively.
+    result = _run_installer(
+        env=env, cwd=installer_env["workspace"], args=["--yes"]
+    )
+
+    # Assert — completes, re-runs the package install (--force), uses --overwrite.
+    assert result.returncode == 0, result.stderr
+    uv_log = (bin_dir / "uv.log").read_text()
+    assert "tool install" in uv_log and "--force" in uv_log
+    revue_log = (bin_dir / "revue.log").read_text()
+    assert "--overwrite" in revue_log, "quick-update must overwrite the stale skill"
+
+
+def test_wizard_global_revue_yml_stays_in_cwd(installer_env):
+    """Regression: a global install still writes .revue.yml into $(pwd)."""
+    # Arrange — explicit global scope, cwd == workspace.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    env = dict(installer_env["env"])
+    env.pop("REVUE_INSTALL_NONINTERACTIVE", None)
+    env["REVUE_INSTALL_SCOPE"] = "global"
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace)
+
+    # Assert — .revue.yml created in cwd (workspace), not under ~/.claude.
+    assert result.returncode == 0, result.stderr
+    assert (workspace / ".revue.yml").exists()
+
+
+# ---------------------------------------------------------------------------
+# REVUE-354 — code-review rework (findings #3, #4, #5, #7).
+#
+# Findings #1, #2, #6 are interactive-only (existing-install ordering, project
+# existing-install notice, prompts on the controlling terminal). They have no
+# deterministic harness here and are exercised manually; see the implementation
+# and the pty TODO below. The four findings tested here are env/flag-driven.
+#   # TODO REVUE-354 pty test — cover #1/#2/#6 with a pty/expect harness.
+# ---------------------------------------------------------------------------
+
+
+def test_install_path_ignored_warning_when_scope_global(installer_env):
+    """Finding #3: REVUE_INSTALL_PATH set + global scope → one-line WARN, not dropped silently."""
+    # Arrange — explicit global scope but a project path is also provided.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    env = dict(installer_env["env"])
+    env.pop("REVUE_INSTALL_NONINTERACTIVE", None)
+    env["REVUE_INSTALL_SCOPE"] = "global"
+    env["REVUE_INSTALL_PATH"] = str(workspace / "unused-project")
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace)
+
+    # Assert — install is global AND the warning is surfaced (not a hard error).
+    assert result.returncode == 0, result.stderr
+    assert (home / ".claude" / "commands" / "revue-local.md").exists()
+    combined = result.stdout + result.stderr
+    assert "REVUE_INSTALL_PATH ignored" in combined
+    # The unused project path must NOT have received an install.
+    assert not (workspace / "unused-project" / ".claude").exists()
+
+
+def test_project_scope_succeeds_without_claude_home_dir(tmp_path):
+    """Finding #4: project scope works on a fresh machine with no ~/.claude, given the claude host CLI."""
+    # Arrange — HOME has NO ~/.claude directory; the `claude` host CLI IS on PATH.
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    project = tmp_path / "project"
+    home.mkdir()
+    bin_dir.mkdir()
+    project.mkdir()
+    assert not (home / ".claude").exists(), "precondition: no ~/.claude on this fresh machine"
+    _make_stub(bin_dir, "claude")  # host CLI present → detection should pass
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+    env = {
+        "HOME": str(home),
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "REVUE_INSTALL_SCOPE": "project",
+        "REVUE_INSTALL_PATH": str(project),
+    }
+
+    # Act
+    result = _run_installer(env=env, cwd=tmp_path)
+
+    # Assert — succeeds and writes under the project, despite ~/.claude absence.
+    assert result.returncode == 0, result.stderr
+    assert (project / ".claude" / "commands" / "revue-local.md").exists()
+    assert (project / ".claude" / "skills" / "revue" / "SKILL.md").exists()
+    assert (project / ".revue.yml").exists()
+    assert not (home / ".claude").exists(), "project install must not create ~/.claude"
+
+
+def test_install_aborts_when_claude_host_cli_missing(tmp_path):
+    """Finding #4: with no `claude` host CLI on PATH, detection fails (even if ~/.claude exists)."""
+    # Arrange — ~/.claude dir present, but the `claude` binary is NOT on PATH.
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    home.mkdir()
+    bin_dir.mkdir()
+    (home / ".claude").mkdir()  # stale dir must NOT be treated as detection signal
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+    env = {
+        "HOME": str(home),
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "REVUE_INSTALL_NONINTERACTIVE": "1",
+    }
+
+    # Act
+    result = _run_installer(env=env, cwd=tmp_path)
+
+    # Assert — aborts with the Claude Code message; no package install attempted.
+    assert result.returncode != 0
+    assert "Claude Code" in (result.stdout + result.stderr)
+    assert not (bin_dir / "uv.log").exists(), "must abort before the package install"
+
+
+def test_install_tilde_user_path_rejected_when_unresolvable(installer_env):
+    """Finding #5: a ~user path that cannot be resolved → actionable error, no eval."""
+    # Arrange — a bogus username that getent/dscl cannot resolve.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "project"
+    env["REVUE_INSTALL_PATH"] = "~revue_nonexistent_user_xyz/sub"
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=installer_env["workspace"])
+
+    # Assert — non-zero exit with a clear message; package install never runs.
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "revue_nonexistent_user_xyz" in combined
+    assert "resolve home directory" in combined
+    assert not (bin_dir / "uv.log").exists(), "must reject before the package install"
+
+
+def test_install_tilde_slash_path_expands_to_home(installer_env):
+    """Finding #5 (safe form): ``~/sub`` expands to ``$HOME/sub`` (no eval, no ~user lookup)."""
+    # Arrange — bare ~/ form pointing at an existing dir under HOME.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    project = home / "sub"
+    project.mkdir()
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "project"
+    env["REVUE_INSTALL_PATH"] = "~/sub"
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=installer_env["workspace"])
+
+    # Assert — files land under $HOME/sub.
+    assert result.returncode == 0, result.stderr
+    assert (project / ".claude" / "commands" / "revue-local.md").exists()
+    assert (project / ".revue.yml").exists()
+
+
+def test_install_fails_fast_before_package_install_on_unwritable_target(installer_env):
+    """Finding #7: a target dir that cannot be created aborts BEFORE the package install."""
+    # Arrange — project path exists, but a FILE sits where <project>/.claude must
+    # be a directory, so `mkdir -p <project>/.claude/skills` fails.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    project = workspace / "proj"
+    project.mkdir()
+    (project / ".claude").write_text("not a directory\n")  # blocks mkdir -p
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "project"
+    env["REVUE_INSTALL_PATH"] = str(project)
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace)
+
+    # Assert — non-zero AND the package install never ran (no partial state).
+    assert result.returncode != 0
+    assert not (bin_dir / "uv.log").exists(), (
+        "target-dir creation must fail BEFORE the uv package install (no partial install)"
+    )
+    # The skill was never installed either.
+    assert not (project / ".claude" / "skills" / "revue").exists()
+
+
+# ---------------------------------------------------------------------------
+# REVUE-354 — 2nd review pass (findings A, B, C, D, E).
+# Finding D is a rename (above). Finding E (fd-3 EXIT trap) is correct by
+# construction but is NOT covered deterministically here: the only abort paths
+# the suite can trigger reach error() with the tty never opened (SCOPE=project
+# wins precedence before open_tty; the no-tty tests fail to open fd 3 by design),
+# so none exercise "error after open_tty" — the exact leak the trap fixes.
+#   # TODO REVUE-354 pty test — assert fd 3 is closed when error() fires after
+#   #   an interactive open_tty.
+# A/B/C add deterministic cases below.
+# ---------------------------------------------------------------------------
+
+
+def test_install_creates_no_dirs_when_no_package_manager(installer_env):
+    """Finding A.1: with neither uv nor pipx, the installer creates NO .claude dirs."""
+    # Arrange — no uv/pipx stubs; only the claude host CLI (from the fixture).
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "global"
+    # Deliberately do NOT stub uv or pipx.
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace)
+
+    # Assert — fails for lack of a package manager BEFORE creating any target dir.
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "uv" in combined and "pipx" in combined
+    assert not (home / ".claude" / "commands").exists(), (
+        "must not create commands dir when no package manager is available"
+    )
+    assert not (home / ".claude" / "skills").exists(), (
+        "must not create skills dir when no package manager is available"
+    )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses 0500 dir write protection")
+def test_install_fails_fast_when_revue_yml_dir_unwritable(installer_env, tmp_path):
+    """Finding A.2: an unwritable revue_yml_dir (global $(pwd)) fails BEFORE package install."""
+    # Arrange — global scope; cwd is an existing dir made non-writable, so the
+    # .revue.yml write would fail. The preflight must catch this up front.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "global"
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    unwritable_cwd = tmp_path / "ro_cwd"
+    unwritable_cwd.mkdir()
+    os.chmod(unwritable_cwd, 0o500)  # r-x: file creation denied for non-root
+    try:
+        # Act — cwd is the unwritable dir, which is the global revue_yml_dir.
+        result = _run_installer(env=env, cwd=unwritable_cwd)
+
+        # Assert — fails fast: no package install ran, no skill written.
+        assert result.returncode != 0
+        assert not (bin_dir / "uv.log").exists(), (
+            "unwritable .revue.yml dir must fail BEFORE the uv package install"
+        )
+        assert not (home / ".claude" / "skills" / "revue").exists()
+        combined = result.stdout + result.stderr
+        assert "not writable" in combined.lower()
+    finally:
+        os.chmod(unwritable_cwd, 0o700)  # restore so pytest can clean up
+
+
+def test_install_honours_claude_config_dir_for_global_scope(installer_env, tmp_path):
+    """Finding B: CLAUDE_CONFIG_DIR relocates the global config dir."""
+    # Arrange — global scope with CLAUDE_CONFIG_DIR pointing at a custom dir.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    cfg = tmp_path / "cfg"
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "global"
+    env["CLAUDE_CONFIG_DIR"] = str(cfg)
+    _make_stub(bin_dir, "uv")
+    # Skill stub falls back here only if --target-dir is absent; the installer
+    # passes --target-dir <cfg>/skills, which the stub honours.
+    _make_revue_stub(bin_dir, claude_skills_dir=cfg / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace)
+
+    # Assert — commands + skills land under CLAUDE_CONFIG_DIR, not ~/.claude.
+    assert result.returncode == 0, result.stderr
+    assert (cfg / "commands" / "revue-local.md").exists()
+    assert (cfg / "skills" / "revue" / "SKILL.md").exists()
+    assert not (home / ".claude" / "commands" / "revue-local.md").exists(), (
+        "must not write to ~/.claude when CLAUDE_CONFIG_DIR is set"
+    )
+
+
+def test_yes_flag_warns_scope_project_override(installer_env):
+    """Finding C: ``--yes`` overriding REVUE_INSTALL_SCOPE=project emits a named warning."""
+    # Arrange — --yes forces global, but the user also asked for project scope.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    env = dict(installer_env["env"])
+    env.pop("REVUE_INSTALL_NONINTERACTIVE", None)
+    env["REVUE_INSTALL_SCOPE"] = "project"
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace, args=["--yes"])
+
+    # Assert — install is global AND a cause-named warning is surfaced.
+    assert result.returncode == 0, result.stderr
+    combined = result.stdout + result.stderr
+    assert "--yes forces global scope" in combined
+    assert "REVUE_INSTALL_SCOPE=project ignored" in combined
+
+
+def test_noninteractive_warns_path_override(installer_env):
+    """Finding C: REVUE_INSTALL_NONINTERACTIVE=1 overriding REVUE_INSTALL_PATH names the cause."""
+    # Arrange — NONINTERACTIVE forces global; user also set a project PATH.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    env = dict(installer_env["env"])  # fixture already sets NONINTERACTIVE=1
+    env["REVUE_INSTALL_PATH"] = str(workspace / "ignored-proj")
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace)
+
+    # Assert — global install, cause-named warning, PATH substring preserved.
+    assert result.returncode == 0, result.stderr
+    combined = result.stdout + result.stderr
+    assert "REVUE_INSTALL_NONINTERACTIVE=1 forces global scope" in combined
+    assert "REVUE_INSTALL_PATH ignored" in combined
+    assert not (workspace / "ignored-proj" / ".claude").exists()
