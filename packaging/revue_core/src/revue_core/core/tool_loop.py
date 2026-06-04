@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import time
 from types import SimpleNamespace
 from typing import Any, Callable, Final
 
@@ -33,6 +34,14 @@ from .tools import ToolResult
 
 ToolHandler = Callable[..., ToolResult]
 DEFAULT_MAX_TOOL_ITERATIONS: Final[int] = 5
+
+# REVUE-339: wall-clock budget reserved for the forced-finalize call. Once the
+# loop crosses ``deadline - finalize_reserve`` it stops issuing tool-use
+# iterations and goes straight to the tool-free finalize call, so a slow
+# synthesis (common with reasoning-enabled models) is not killed mid-HTTP by
+# the global ``agent_timeout_seconds`` boundary. 30s is empirical from
+# reasoning-enabled models (AC5).
+DEFAULT_FINALIZE_RESERVE_SECONDS: Final[float] = 30.0
 
 # REVUE-241 Gap 2: when the loop hits max_iterations while the model is still
 # calling tools, this prompt is appended to the message history and one more
@@ -46,6 +55,20 @@ FINALIZE_PROMPT: Final[str] = (
 )
 
 _log = logging.getLogger(__name__)
+
+
+def _is_timeout_exception(exc: BaseException) -> bool:
+    """True when *exc* is an HTTP/SDK timeout (REVUE-339 AC7).
+
+    Matched by class-name rather than ``isinstance`` so we don't hard-import
+    ``openai`` / ``httpx`` at module load just to classify an error. Covers
+    ``openai.APITimeoutError`` (the SDK wrapper) and the underlying
+    ``httpx.TimeoutException`` family (ReadTimeout, ConnectTimeout, ...).
+    """
+    names = {cls.__name__ for cls in type(exc).__mro__}
+    return bool(
+        names & {"APITimeoutError", "TimeoutException", "ReadTimeout", "Timeout"}
+    )
 
 
 def _summarise_tool_input(tool_input: dict[str, Any]) -> str:
@@ -536,6 +559,8 @@ def openai_tool_loop(
     tool_choice_first_turn: str = "auto",
     extra_body: "dict[str, Any] | None" = None,
     response_format_override: "dict[str, Any] | None" = None,
+    deadline: "float | None" = None,
+    finalize_reserve: float = DEFAULT_FINALIZE_RESERVE_SECONDS,
 ) -> "CompletionResult":  # type: ignore[name-defined]
     """Run the OpenAI-compatible tool-use loop.
 
@@ -580,8 +605,38 @@ def openai_tool_loop(
     last_usage: Any = None
     last_reasoning_details: "list[dict[str, Any]] | None" = None
     hit_cap_in_tool_use = False
+    _last_remain: "float | None" = None
 
     for iter_idx in range(max_iterations):
+        # REVUE-339 AC3 + AC6 + AC7: cooperative wall-clock deadline check.
+        #
+        # This deadline is shared across all concurrent agents. It is not
+        # per-agent. If you need per-agent timeouts, see REVUE-320.
+        #
+        # ``deadline`` is the raw wall-clock instant (time.monotonic()-based)
+        # at which the global ``agent_timeout_seconds`` budget expires. We stop
+        # issuing tool-use iterations once we cross ``deadline -
+        # finalize_reserve`` so the last ``finalize_reserve`` seconds are kept
+        # for the tool-free finalize call below (whose HTTP timeout is sized to
+        # the remaining wall clock, AC4). Without this reservation a finalize
+        # that starts at t≈timeout gets killed mid-HTTP and the findings the
+        # model already synthesised are discarded.
+        if deadline is not None:
+            now = time.monotonic()
+            remain = deadline - now
+            _log.info(
+                "[deadline-check] agent=%s iter=%d deadline=%.3f time_now=%.3f remain=%.3f",
+                agent_name or "?", iter_idx, deadline, now, remain,
+            )
+            if now > deadline - finalize_reserve:
+                _log.info(
+                    "[deadline-exceeded] agent=%s iter=%d — breaking to finalize",
+                    agent_name or "?", iter_idx,
+                )
+                hit_cap_in_tool_use = True
+                break
+            # Capture the most recent remain value for consistent finalize timeout.
+            _last_remain = remain
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": current_messages,
@@ -716,7 +771,32 @@ def openai_tool_loop(
             finalize_kwargs["extra_body"] = {**finalize_kwargs.get("extra_body", {}), **extra_body}
         # Deliberately omit `tools` — forces text-only response.
 
-        finalize_resp = sdk_client.chat.completions.create(**finalize_kwargs)
+        # REVUE-339 AC4: bound the finalize HTTP call to the remaining wall
+        # clock. The OpenAI SDK ``timeout=`` covers the full request-response
+        # cycle (not just response headers), so a slow finalize stream cannot
+        # outlast the global ``agent_timeout_seconds`` boundary. Floor at 1s so
+        # a deadline that has already elapsed still gets one bounded attempt
+        # rather than a 0/negative timeout the SDK would reject.
+        # Reuse the captured deadline budget (``_last_remain``) rather than
+        # recomputing it fresh, so the timeout is consistent with the logged
+        # ``remain`` value from the deadline-check block.
+        if deadline is not None:
+            finalize_kwargs["timeout"] = max(1.0, _last_remain if _last_remain is not None else deadline - time.monotonic())
+
+        # REVUE-339 AC7: when the finalize HTTP timeout fires, emit a dedicated
+        # [finalize-timeout] line then let the exception propagate to the
+        # existing error handler in agent_runner._run_one (which records it as a
+        # status=error AgentRunResult). We do not swallow it — a silent empty
+        # result would be indistinguishable from "the model had nothing to say".
+        try:
+            finalize_resp = sdk_client.chat.completions.create(**finalize_kwargs)
+        except Exception as exc:
+            if _is_timeout_exception(exc):
+                _log.warning(
+                    "[finalize-timeout] agent=%s — HTTP timeout fired (%s: %s)",
+                    agent_name or "?", type(exc).__name__, exc,
+                )
+            raise
         finalize_choice = finalize_resp.choices[0]
         last_text = getattr(finalize_choice.message, "content", None) or ""
         # REVUE-337: capture reasoning_details from finalize response

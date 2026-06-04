@@ -452,6 +452,7 @@ class LoadedAgent:
         user_content: str,
         system_blocks: list[dict],
         diff_hash: str,
+        deadline: "float | None" = None,
     ) -> "CompletionResult":
         """Dispatch to ``complete_with_tools`` when the agent owns a tool and
         the client supports it; otherwise fall back to ``complete``.
@@ -490,6 +491,7 @@ class LoadedAgent:
                     max_tokens=self._max_tokens,
                     output_config=output_config_for_three_state(),
                     reasoning_enabled=True,  # REVUE-337: opt into reasoning channel for reviewer agents
+                    deadline=deadline,  # REVUE-339: shared global wall-clock deadline
                 )
             except Exception as exc:
                 exc.call_site = call_site  # type: ignore[attr-defined]
@@ -511,6 +513,7 @@ class LoadedAgent:
         self,
         changes: list[FileChange],
         shared: "SharedAnalysisResult | None" = None,
+        deadline: "float | None" = None,
     ) -> "AgentVerdict":
         """
         Run this agent's analysis on the provided changes.
@@ -551,7 +554,7 @@ class LoadedAgent:
             "problems, and code quality concerns. "
             f"{_REVIEW_INSTRUCTIONS}"
         )
-        result = self._invoke_client(user_content, system_blocks, diff_hash)
+        result = self._invoke_client(user_content, system_blocks, diff_hash, deadline)
         raw = result.text
         Log.agent.info(
             "[revue]     [%s] raw response (%d chars, starts: %r)",

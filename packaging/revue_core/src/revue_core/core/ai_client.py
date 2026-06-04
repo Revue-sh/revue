@@ -377,6 +377,7 @@ def _openai_complete_with_tools(
     tool_choice_first_turn: str = "auto",
     model_cfg: "ModelConfig | None" = None,
     reasoning_enabled: bool = False,
+    deadline: "float | None" = None,
 ) -> "CompletionResult":
     """Shared tool-loop driver for all OpenAI-compatible clients.
 
@@ -446,6 +447,7 @@ def _openai_complete_with_tools(
             tool_choice_first_turn=tool_choice_first_turn,
             extra_body=extra_body,
             response_format_override=response_format_override,
+            deadline=deadline,
         )
 
     return _with_retry(_call, max_attempts=max_attempts)
@@ -563,6 +565,7 @@ class OpenAIClient:
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
         reasoning_enabled: bool = False,
+        deadline: "float | None" = None,  # REVUE-339: shared global wall-clock deadline
     ) -> CompletionResult:
         resolved_max_tokens, tool_choice_first_turn = _apply_model_knobs(
             self._model_cfg, max_tokens
@@ -576,6 +579,7 @@ class OpenAIClient:
             agent_name=agent_name, metrics=self._metrics,
             tool_choice_first_turn=tool_choice_first_turn,
             model_cfg=self._model_cfg, reasoning_enabled=reasoning_enabled,
+            deadline=deadline,
         )
 
 
@@ -677,6 +681,7 @@ class AnthropicClient:
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
         reasoning_enabled: bool = False,  # REVUE-337: accepted but unused — Anthropic uses output_config grammar
+        deadline: "float | None" = None,  # REVUE-339: accepted for interface parity; the cooperative-deadline guardrail is implemented on the OpenAI-compatible path (the live DeepSeek/OpenRouter route). The Anthropic loop does not yet consume it.
     ) -> CompletionResult:
         # REVUE-241 P1: the tool loop must inherit the same retry contract as
         # complete() — without _with_retry a single transient 429 collapses a
@@ -773,6 +778,7 @@ class AzureOpenAIClient:
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
         reasoning_enabled: bool = False,
+        deadline: "float | None" = None,  # REVUE-339: shared global wall-clock deadline
     ) -> CompletionResult:
         # REVUE-337: reasoning_enabled accepted but unused — Azure OpenAI does not route DeepSeek
         # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
@@ -790,6 +796,7 @@ class AzureOpenAIClient:
             output_config=output_config,
             agent_name=agent_name, metrics=self._metrics,
             tool_choice_first_turn=tool_choice_first_turn,
+            deadline=deadline,
         )
 
 
@@ -917,6 +924,7 @@ class OpenRouterClient:
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
         reasoning_enabled: bool = False,
+        deadline: "float | None" = None,  # REVUE-339: shared global wall-clock deadline
     ) -> CompletionResult:
         # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
         # their 3-attempt retry budget on the new default path.
@@ -933,6 +941,7 @@ class OpenRouterClient:
             agent_name=agent_name, metrics=self._metrics,
             tool_choice_first_turn=tool_choice_first_turn,
             model_cfg=self._model_cfg, reasoning_enabled=reasoning_enabled,
+            deadline=deadline,
         )
 
 
@@ -1002,6 +1011,7 @@ class CustomGatewayClient:
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
         reasoning_enabled: bool = False,
+        deadline: "float | None" = None,  # REVUE-339: shared global wall-clock deadline
     ) -> CompletionResult:
         # REVUE-241 P1: wrap the tool loop in _with_retry so reviewers keep
         # their 3-attempt retry budget on the new default path.
@@ -1018,6 +1028,7 @@ class CustomGatewayClient:
             agent_name=agent_name, metrics=self._metrics,
             tool_choice_first_turn=tool_choice_first_turn,
             model_cfg=self._model_cfg, reasoning_enabled=reasoning_enabled,
+            deadline=deadline,
         )
 
 

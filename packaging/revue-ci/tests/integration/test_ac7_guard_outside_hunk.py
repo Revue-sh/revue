@@ -192,6 +192,7 @@ class _ScriptedClient:
         agent_name: "str | None" = None,
         output_config: "dict[str, Any] | None" = None,
         reasoning_enabled: bool = False,
+        deadline: "float | None" = None,  # REVUE-339: shared global wall-clock deadline
     ) -> CompletionResult:
         self.complete_with_tools_calls.append({
             "messages": messages,

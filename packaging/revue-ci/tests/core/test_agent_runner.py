@@ -208,3 +208,108 @@ def test_configurable_timeout_passed_through():
 
     result = run_agents_parallel([_FastAgent()], [_fc()], timeout_seconds=120.0)
     assert result.agent_results[0].success is True
+
+
+# ---------------------------------------------------------------------------
+# REVUE-339: cooperative deadline + finalize budget reservation.
+#
+# run_agents_parallel computes a single global deadline ONCE before submitting
+# futures and forwards it to every agent whose analyse() accepts a ``deadline``
+# keyword. The deadline is shared across all concurrent agents (NOT per-agent —
+# see REVUE-320). Legacy agents whose analyse() does not accept ``deadline``
+# must keep working unchanged.
+# ---------------------------------------------------------------------------
+
+from revue_core.core.agent_runner import DEFAULT_FINALIZE_RESERVE_SECONDS  # noqa: E402
+
+
+def test_default_finalize_reserve_matches_empirical_thirty_seconds():
+    """AC5: finalize_reserve defaults to 30s."""
+    assert DEFAULT_FINALIZE_RESERVE_SECONDS == 30.0
+
+
+def test_deadline_forwarded_to_agents_that_accept_it():
+    """AC1: a global deadline is computed once and passed to each agent's
+    analyse() when that agent declares a ``deadline`` parameter."""
+    captured: dict[str, float] = {}
+
+    class _DeadlineAwareAgent:
+        name = "deadline-aware"
+        def analyse(self, changes, shared=None, deadline=None):
+            captured["deadline"] = deadline
+            return []
+
+    before = time.monotonic()
+    run_agents_parallel(
+        [_DeadlineAwareAgent()], [_fc()],
+        timeout_seconds=90.0,
+    )
+    after = time.monotonic()
+
+    assert "deadline" in captured
+    deadline = captured["deadline"]
+    assert deadline is not None
+    # Deadline ≈ start + timeout_seconds (raw wall-clock); the loop subtracts
+    # finalize_reserve itself. Must land in the expected window.
+    assert before + 90.0 <= deadline <= after + 90.0
+
+
+def test_single_global_deadline_shared_across_concurrent_agents():
+    """AC1: all concurrent agents must receive the SAME deadline value — it is
+    computed once, not per-agent."""
+    seen: list[float] = []
+    import threading
+    lock = threading.Lock()
+
+    class _Recorder:
+        def __init__(self, name: str):
+            self.name = name
+        def analyse(self, changes, shared=None, deadline=None):
+            with lock:
+                seen.append(deadline)
+            return []
+
+    agents = [_Recorder(f"agent-{i}") for i in range(3)]
+    run_agents_parallel(agents, [_fc()], timeout_seconds=90.0)
+
+    assert len(seen) == 3
+    assert all(d is not None for d in seen)
+    # Every agent saw the identical deadline float — one global value.
+    assert len(set(seen)) == 1
+
+
+def test_legacy_agent_without_deadline_param_still_runs():
+    """AC1 / Liskov: agents whose analyse() predates the deadline param must
+    keep working — run_agents_parallel must not pass deadline to them."""
+    class _LegacyAgent:
+        name = "legacy"
+        def analyse(self, changes, shared=None):
+            return [_review()]
+
+    result = run_agents_parallel([_LegacyAgent()], [_fc()], timeout_seconds=90.0)
+    assert result.agent_results[0].success is True
+    assert len(result.all_findings) == 1
+
+
+def test_finalize_reserve_is_configurable():
+    """AC1/AC5: the reserve can be overridden by the caller; the default is 30s
+    but a caller may tune it. The computed deadline is independent of reserve
+    (reserve is subtracted inside the loop, not here)."""
+    captured: dict[str, float] = {}
+
+    class _DeadlineAwareAgent:
+        name = "deadline-aware"
+        def analyse(self, changes, shared=None, deadline=None):
+            captured["deadline"] = deadline
+            return []
+
+    before = time.monotonic()
+    run_agents_parallel(
+        [_DeadlineAwareAgent()], [_fc()],
+        timeout_seconds=90.0,
+        finalize_reserve=45.0,
+    )
+    after = time.monotonic()
+
+    # Deadline is raw wall-clock regardless of reserve value.
+    assert before + 90.0 <= captured["deadline"] <= after + 90.0

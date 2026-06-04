@@ -417,3 +417,57 @@ def test_openai_complete_with_tools_translates_tool_def_to_openai_format(
     assert openai_tools[0]["type"] == "function"
     assert openai_tools[0]["function"]["name"] == "read_file"
     assert openai_tools[0]["function"]["parameters"] == _READ_FILE_TOOL_DEF["input_schema"]
+
+
+# ---------------------------------------------------------------------------
+# REVUE-339 AC2 — complete_with_tools accepts ``deadline`` and forwards it
+# (with finalize_reserve) to openai_tool_loop.
+# ---------------------------------------------------------------------------
+
+
+@patch("revue_core.core.tool_loop.openai_tool_loop")
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openai_complete_with_tools_forwards_deadline_to_tool_loop(
+    mock_openai_cls: MagicMock,
+    mock_loop: MagicMock,
+) -> None:
+    """AC2: a ``deadline`` passed to complete_with_tools must reach
+    openai_tool_loop verbatim so the loop can enforce the wall-clock budget."""
+    from revue_core.core.ai_client import CompletionResult, TokenUsage
+    mock_loop.return_value = CompletionResult(text="ok", usage=TokenUsage())
+    client = OpenAIClient(_make_config(provider="openai"))
+
+    client.complete_with_tools(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[_READ_FILE_TOOL_DEF],
+        tool_handlers={"read_file": MagicMock()},
+        deadline=12345.678,
+    )
+
+    assert mock_loop.call_count == 1
+    loop_kwargs = mock_loop.call_args.kwargs
+    assert loop_kwargs["deadline"] == 12345.678
+    # finalize_reserve is left to the loop's own default (DEFAULT_FINALIZE_
+    # RESERVE_SECONDS); the client forwards only the deadline.
+
+
+@patch("revue_core.core.tool_loop.openai_tool_loop")
+@patch("revue_core.core.ai_client.openai.OpenAI")
+def test_openai_complete_with_tools_default_deadline_is_none(
+    mock_openai_cls: MagicMock,
+    mock_loop: MagicMock,
+) -> None:
+    """AC2 / backward compat: when no deadline is supplied, the loop receives
+    deadline=None and behaves exactly as before."""
+    from revue_core.core.ai_client import CompletionResult, TokenUsage
+    mock_loop.return_value = CompletionResult(text="ok", usage=TokenUsage())
+    client = OpenAIClient(_make_config(provider="openai"))
+
+    client.complete_with_tools(
+        messages=[{"role": "user", "content": "x"}],
+        tools=[_READ_FILE_TOOL_DEF],
+        tool_handlers={"read_file": MagicMock()},
+    )
+
+    loop_kwargs = mock_loop.call_args.kwargs
+    assert loop_kwargs["deadline"] is None
