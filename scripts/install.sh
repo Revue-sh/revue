@@ -29,7 +29,23 @@ set -euo pipefail
 # Finding B: Claude Code honours CLAUDE_CONFIG_DIR to relocate its config dir.
 # A global install must write where the host CLI will actually read, so respect
 # that override; fall back to ~/.claude when it is unset.
-readonly CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
+#
+# AC1 (REVUE-395) — resolve SAFELY under `set -u`. A bare `${HOME}/.claude` here
+# crashes with "HOME: unbound variable" when HOME is entirely unset (minimal CI /
+# `env -i`), BEFORE expand_tilde's guard can run; and `${HOME:-}/.claude` would
+# silently become the root-relative "/.claude". So: when neither CLAUDE_CONFIG_DIR
+# nor HOME is set, leave CLAUDE_HOME EMPTY and defer the error to the point a
+# GLOBAL install is actually chosen (resolve_install_dirs). A project install with
+# an absolute path needs no HOME; a project install with a ~/-path is owned by
+# expand_tilde's "HOME is unset" message. CLAUDE_HOME is only read for global
+# detection (an empty value makes those existence checks harmlessly false).
+if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+  readonly CLAUDE_HOME="${CLAUDE_CONFIG_DIR}"
+elif [[ -n "${HOME:-}" ]]; then
+  readonly CLAUDE_HOME="${HOME}/.claude"
+else
+  readonly CLAUDE_HOME=""
+fi
 readonly REVUE_YML=".revue.yml"
 
 # ANSI colour codes for output
@@ -225,6 +241,12 @@ expand_tilde() {
 
   # Bare `~` or `~/...` → $HOME-prefixed.
   if [[ "$raw" == "~" || "$raw" == "~/"* ]]; then
+    # AC1 (REVUE-395): guard an empty/unset HOME. Without this, `~/x` would
+    # expand to the root-relative `/x` silently and install into the wrong place.
+    if [[ -z "${HOME:-}" ]]; then
+      printf "${RED}error:${NC} Cannot expand '~' — HOME is unset. Provide an absolute path instead.\n" >&2
+      return 1
+    fi
     printf '%s' "${raw/#\~/$HOME}"
     return 0
   fi
@@ -242,7 +264,10 @@ expand_tilde() {
     user_home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)"
   elif command_exists dscl; then
     # macOS has no getent; query Directory Services without eval.
-    user_home="$(dscl . -read "/Users/${user}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+    # AC2 (REVUE-395): strip the "NFSHomeDirectory: " label and keep the REST of
+    # the line — `awk '{print $2}'` truncated home dirs containing spaces (e.g.
+    # "/Users/john doe" → "/Users/john").
+    user_home="$(dscl . -read "/Users/${user}" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory:[[:space:]]*//p')"
   fi
 
   if [[ -z "$user_home" ]]; then
@@ -329,6 +354,15 @@ resolve_scope() {
   #   * REVUE_INSTALL_NONINTERACTIVE=1 over REVUE_INSTALL_PATH
   #   * an explicit REVUE_INSTALL_SCOPE=global alongside REVUE_INSTALL_PATH
   if [[ "$INSTALL_SCOPE" == "global" ]]; then
+    # AC1 (REVUE-395): a global install writes to CLAUDE_HOME, which is empty only
+    # when neither CLAUDE_CONFIG_DIR nor HOME is set. Validate it HERE — at scope
+    # resolution, the single owner of scope viability — so main() can rely on a
+    # global scope always having a usable target and never re-checks. Fail fast
+    # rather than crashing on `set -u` or defaulting to the root-relative /.claude.
+    if [[ -z "$CLAUDE_HOME" ]]; then
+      error "Cannot determine the global config directory — neither CLAUDE_CONFIG_DIR nor HOME is set. Set one, or choose a project install with an absolute path."
+    fi
+
     # Determine what forced global, for an accurate cause string.
     local forced_by=""
     if [[ "$yes_flag" == "1" ]]; then
@@ -375,7 +409,11 @@ resolve_project_dir() {
     IFS= read -r raw <&3 || raw=""
     [[ -z "$raw" ]] && raw="$(pwd)"
   else
+    # AC3 (REVUE-395): project scope chosen, but no REVUE_INSTALL_PATH and no
+    # terminal to prompt (e.g. CI). Fall back to $(pwd) but WARN — installing
+    # into wherever the job happens to be standing should not be a silent surprise.
     raw="$(pwd)"
+    warn "REVUE_INSTALL_SCOPE=project but no REVUE_INSTALL_PATH set and no terminal to prompt — using current directory: ${raw}"
   fi
 
   if ! PROJECT_DIR="$(expand_tilde "$raw")"; then
@@ -456,6 +494,7 @@ main() {
     revue_yml_dir="${PROJECT_DIR}"
     info "Install scope: project (${PROJECT_DIR})"
   else
+    # resolve_scope already validated CLAUDE_HOME is non-empty for global scope.
     commands_dir="${CLAUDE_HOME}/commands"
     skills_dir="${CLAUDE_HOME}/skills"
     revue_yml_dir="$(pwd)"  # global .revue.yml stays in the current directory

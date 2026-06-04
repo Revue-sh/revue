@@ -870,3 +870,134 @@ def test_noninteractive_warns_path_override(installer_env):
     assert "REVUE_INSTALL_NONINTERACTIVE=1 forces global scope" in combined
     assert "REVUE_INSTALL_PATH ignored" in combined
     assert not (workspace / "ignored-proj" / ".claude").exists()
+
+
+# --- REVUE-395: edge-case hardening (AC1 HOME guard, AC2 dscl spaces, AC3 no-path) ---
+
+
+def test_tilde_path_with_unset_home_aborts(installer_env):
+    """AC1: a ``~/`` path with HOME unset must abort, not silently expand to ``/``."""
+    # Arrange — project scope, a ~/ path, and an EMPTY HOME.
+    bin_dir: Path = installer_env["bin"]
+    _make_stub(bin_dir, "uv")
+    env = {
+        "PATH": str(installer_env["env"]["PATH"]),
+        "HOME": "",  # unset/empty
+        "REVUE_INSTALL_SCOPE": "project",
+        "REVUE_INSTALL_PATH": "~/proj",
+    }
+
+    # Act — no tty so the path comes straight from the env var.
+    result = _run_installer(env=env, cwd=installer_env["workspace"], detach_tty=True)
+
+    # Assert — aborts with an actionable message, never expands ~ to a root path.
+    assert result.returncode != 0, "must abort when HOME is unset"
+    assert "HOME is unset" in (result.stdout + result.stderr)
+
+
+def test_tilde_path_with_truly_unset_home_aborts(installer_env):
+    """AC1: a ``~/`` path with HOME *entirely absent* (not just empty) must abort
+    with the actionable "HOME is unset" message — never crash on ``set -u`` with a
+    raw "HOME: unbound variable" before ``expand_tilde``'s guard runs (the Docker
+    e2e caught this; the empty-string sibling test could not).
+    """
+    # Arrange — project scope + a ~/ path, with HOME OMITTED from the env entirely.
+    bin_dir: Path = installer_env["bin"]
+    _make_stub(bin_dir, "uv")
+    env = {
+        "PATH": str(installer_env["env"]["PATH"]),
+        # no HOME key at all → truly unset in the child process
+        "REVUE_INSTALL_SCOPE": "project",
+        "REVUE_INSTALL_PATH": "~/proj",
+    }
+
+    # Act — no tty so the path comes straight from the env var.
+    result = _run_installer(env=env, cwd=installer_env["workspace"], detach_tty=True)
+
+    # Assert — actionable abort, NOT a raw "unbound variable" crash.
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, "must abort when HOME is unset"
+    assert "HOME is unset" in combined, combined
+    assert "unbound variable" not in combined, combined
+
+
+def test_global_scope_without_home_or_config_dir_errors(installer_env):
+    """A GLOBAL install with neither HOME nor CLAUDE_CONFIG_DIR must error
+    actionably about the config dir — never crash on ``set -u`` and never silently
+    default to the root-relative ``/.claude``.
+    """
+    # Arrange — no scope/path env vars and no tty → AC7 falls back to global;
+    # HOME omitted and CLAUDE_CONFIG_DIR unset → CLAUDE_HOME is unresolvable.
+    bin_dir: Path = installer_env["bin"]
+    _make_stub(bin_dir, "uv")
+    env = {
+        "PATH": str(installer_env["env"]["PATH"]),
+        # no HOME, no CLAUDE_CONFIG_DIR, no REVUE_INSTALL_* → global fallback
+    }
+
+    # Act
+    result = _run_installer(
+        env=env, cwd=installer_env["workspace"], detach_tty=True
+    )
+
+    # Assert — actionable error naming the cause; no crash, no /.claude default.
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, combined
+    assert "CLAUDE_CONFIG_DIR" in combined or "global config directory" in combined, combined
+    assert "unbound variable" not in combined, combined
+    assert not Path("/.claude").exists(), "must not default to root-relative /.claude"
+
+
+def test_project_scope_without_path_or_tty_warns_and_uses_cwd(installer_env):
+    """AC3: project scope + no path + no tty falls back to cwd but WARNS (not silent)."""
+    # Arrange — project scope, no REVUE_INSTALL_PATH, no tty.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+    env = {
+        "PATH": str(installer_env["env"]["PATH"]),
+        "HOME": str(home),
+        "REVUE_INSTALL_SCOPE": "project",
+    }
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace, detach_tty=True)
+
+    # Assert — installs into cwd (project scope) AND warns about the implicit choice.
+    assert result.returncode == 0, result.stderr
+    combined = result.stdout + result.stderr
+    assert "no REVUE_INSTALL_PATH set" in combined and "current directory" in combined
+    assert (workspace / ".claude" / "commands" / "revue-local.md").exists()
+    assert not (home / ".claude" / "commands").exists(), "project scope must not write global"
+
+
+@pytest.mark.skipif(
+    shutil.which("getent") is not None,
+    reason="the dscl fallback is only exercised where getent is absent (macOS)",
+)
+def test_dscl_home_with_spaces_is_not_truncated(installer_env, tmp_path):
+    """AC2: a macOS ``dscl`` home directory containing spaces must not be truncated."""
+    # Arrange — a ~user path whose home (via a stub dscl) contains a space.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    spaced_home = tmp_path / "Users" / "john doe"
+    spaced_home.mkdir(parents=True)
+    dscl = bin_dir / "dscl"
+    dscl.write_text(f'#!/bin/sh\necho "NFSHomeDirectory: {spaced_home}"\n')
+    dscl.chmod(0o755)
+    _make_stub(bin_dir, "uv")
+    env = {
+        "PATH": str(installer_env["env"]["PATH"]),
+        "HOME": str(home),
+        "REVUE_INSTALL_SCOPE": "project",
+        "REVUE_INSTALL_PATH": "~john/sub",  # ~user → dscl resolution path
+    }
+
+    # Act — the resolved "<spaced_home>/sub" doesn't exist + no tty → AC9 error.
+    result = _run_installer(env=env, cwd=installer_env["workspace"], detach_tty=True)
+
+    # Assert — the error names the FULL spaced path (proves no awk truncation).
+    combined = result.stdout + result.stderr
+    assert str(spaced_home) in combined, f"spaced home was truncated; output={combined}"
