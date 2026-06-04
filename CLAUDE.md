@@ -10,15 +10,48 @@ See `docs/guides/testing.md` for commands, conventions, and AC contract testing 
 
 ### Pull requests
 
-Every PR **must** use `.bitbucket/pull_request_template.md` — fill in every section, no placeholders left blank. See `docs/team/PR_TEMPLATE_GUIDE.md` for guidance.
+Every PR **must** use `.bitbucket/pull_request_template.md` — fill in every section, no placeholders left blank. See `docs/team/PR_TEMPLATE_GUIDE.md` for guidance. **Exception — TRIVIAL tier:** a single-sentence description suffices; do not fill the full template.
 
 Commit and PR title format: `type(scope)[REVUE-XX]: description`
+
+The Step-10 pre-commit review gate in `bmad-dev-story` is **tier-conditional**: TRIVIAL changes skip it entirely; MEDIUM changes run an in-session adversarial review; HIGH changes require the full human gate. Auto-merge at any tier never bypasses the Nuitka / HIGH ceremony and never sets Jira Done before merge.
+
+### Code review tiers
+
+Every change is classified into one of three tiers before any review work starts. Run `.claude/scripts/classify_diff.sh` to get the tier (exit 0 = TRIVIAL, 1 = MEDIUM, 2 = HIGH).
+
+| Tier | Classifier | Review | Merge |
+|------|-----------|--------|-------|
+| **TRIVIAL** | Only files under `docs/` or `_bmad-output/` — no executable logic | None | Auto-merge on green CI |
+| **MEDIUM** | Behavioral code changes not on the HIGH path | 3 adversarial agent layers in-session; all findings clean = gate | Auto-merge on green CI after clean review |
+| **HIGH** | Any file matching a publish / security / infrastructure path | Full human Step-10 gate — no exceptions | Manual |
+
+**Fails upward.** Ambiguous / unmatched / mixed / new-path changes → HIGH. Update the classifier explicitly to reclassify a path downward.
+
+**Publish-path human gate (absolute — non-negotiable):** No change reaches a release tag, Nuitka build, or PyPI publish until a human has adjudicated every agent-rated High finding, regardless of tier. `main` is revertable; a published compiled wheel is not.
+
+HIGH paths (any match → HIGH, wins over everything else):
+
+- `packaging/` — Nuitka build scripts, wheel assembly
+- `bitbucket-pipelines.yml`, `.github/workflows/`, `.gitlab-ci.yml` — all CI/CD pipelines (same blast radius)
+- `fly.*.toml` — any Fly.io config file (glob, not enumerated)
+- `src/web/main.py` — FastAPI entry point; registers all middleware (auth, rate-limit)
+- `src/web/jwt_*.py`, `src/web/rate_limiter.py`, `src/web/routes/api_routes.py` — auth / rate-limit surface
+- `src/web/database.py` — DB schema + migrations
+- `revue_core/validate.py`, `revue_core/cache_paths.py`, `revue_core/security/` — licence validation
+- `db/repositories/`, `db/migrations/` — raw repository layer + SQL
+- `src/web/billing.py`, `src/web/stripe*.py` — Stripe wiring
+
+MEDIUM paths (in-session adversarial review; anything else fails upward to HIGH):
+
+- `src/` (minus HIGH-listed files above), `tests/`, `.claude/`, `scripts/`
 
 ### Scope management (intent-first)
 
 When starting any task, establish scope upfront before writing any code:
 - State the outcome and explicit boundaries ("this task does NOT include X").
 - If out-of-scope work is discovered mid-task, queue it silently — do not interrupt. Present the queue after the task completes.
+- Double check any identified out-of-scope work to determine if it's out-of-scope. Do this in the background asking the `bmad-agent-pm`.
 - Never ask mid-task whether to create a new ticket for out-of-scope items; always defer to the post-task queue review.
 
 ### Jira ticket checks
@@ -35,13 +68,13 @@ Owned by `/epic-progress`. `bitbucket-merge-pr` dispatches John (`/bmad-agent-pm
 |------|-----------|-----|
 | Work starts on a story | → **In Progress** | Manual via `jira_transition.sh` |
 | PR opened | → **Code Review** | Manual via `jira_transition.sh` |
-| PR merged to main | → **Done** | **Automatic** — Bitbucket automation; never do this manually |
+| PR merged to main | → **Done** | **Automatic** — Bitbucket automation (default); see exceptions below |
 
-**NEVER** call the Jira transition API to set Done. The Bitbucket→Jira automation handles it on merge. Calling it manually before merge is always wrong.
+Bitbucket automation moves merged tickets to Done by default, but the Free-plan cap (~100 runs/month) silently exhausts — if a ticket stays in Code Review after merge, transition it manually with `jira_transition.sh <KEY> done`. Tickets whose ACs require post-merge staging/prod validation carry the **`do-not-run-automation-after-merge`** label and stay in Code Review until validated, then move to Done manually. The agent may apply this label when the AC pattern clearly requires post-merge pipeline validation. **Never set Done before merge** — that rule is absolute.
 
 ## Coding standards
 
-- **TDD**: write a failing test before writing implementation. Run the full test suite after each task.
+- **TDD**: write a failing test before writing implementation. Run the full test suite after each task. (MEDIUM and HIGH changes only — TRIVIAL changes carry no code logic to test.)
 - **SOLID**: actively apply all five principles. Never defer violations as post-MVP — flag immediately.
 - Every new function/method must have corresponding unit tests before it is considered complete.
 - Prefer small, focused commits: one logical change per commit.

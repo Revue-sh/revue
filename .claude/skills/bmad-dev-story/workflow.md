@@ -416,45 +416,90 @@ Ask the main agent: "What skills are currently available in this session?" Store
     <action if="definition-of-done validation fails">HALT - Address DoD failures before completing</action>
   </step>
 
-  <step n="10" goal="Mandatory pre-commit code review gate">
-    <critical>This step MUST complete before any commit or push. Do NOT skip or defer.</critical>
-    <critical>Purpose: catch High-severity issues before CI, eliminating the fix→push cycle.</critical>
+  <step n="10" goal="Tier-conditional pre-commit review gate">
+    <critical>Purpose: catch High-severity issues before CI. Gate intensity scales with blast radius.</critical>
 
-    <output>🔍 **Pre-Commit Code Review Required**
-
-      Implementation is complete and tests pass. Before committing, a mandatory code review
-      must run against the uncommitted changes.
-
-      💡 **Tip:** For best results, run this review using a **different** LLM than the one
-      that implemented the story. Open a second Claude session and invoke `/bmad-code-review`.
-    </output>
-
-    <action>Ask {user_name} to invoke `/bmad-code-review` on uncommitted changes, using
-      {story_file} as the spec for full-review mode.
+    <!-- TIER CLASSIFICATION — run first, gates the rest of this step -->
+    <action>Run `.claude/scripts/classify_diff.sh` against the uncommitted changes to get the tier.
+      Exit 0 = TRIVIAL, 1 = MEDIUM, 2 = HIGH.
     </action>
 
-    <action>HALT — wait for {user_name} to provide the code review results.</action>
+    <!-- ── TRIVIAL: skip review entirely ───────────────────────────────────── -->
+    <check if="tier is TRIVIAL (exit 0)">
+      <action>Record in Dev Agent Record → Completion Notes:
+        "Tier: TRIVIAL. Step-10 review skipped. Proceeding to commit."
+      </action>
+      <output>✅ **TRIVIAL tier — no review required.** Proceeding to commit and push.</output>
+      <goto step="11" />
+    </check>
 
-    <check if="code review results provided by user">
-      <action>Identify any High-severity findings in the results</action>
+    <!-- ── MEDIUM: in-session adversarial review, no human gate ───────────── -->
+    <check if="tier is MEDIUM (exit 1)">
+      <output>🔍 **MEDIUM tier — In-session adversarial review**
+
+        Running 3 adversarial agent layers (Blind Hunter / Edge Case Hunter / Acceptance Auditor)
+        against the uncommitted changes. No human gate required if all findings are clean.
+      </output>
+      <action>Invoke `/bmad-code-review` on uncommitted changes in-session (no HALT for human).</action>
 
       <check if="one or more High-severity findings remain unresolved">
-        <output>🚫 **Code Review Gate: BLOCKED**
+        <output>🚫 **MEDIUM Review Gate: BLOCKED on High finding(s)**
 
-          The following High-severity findings must be resolved before committing:
           {{high_severity_findings}}
 
-          Fix each finding, re-run tests, then re-run `/bmad-code-review` on the
-          updated uncommitted changes and provide the new results here.
+          Fix, re-run tests, then re-run `/bmad-code-review`. Repeat until zero High findings.
         </output>
-        <action>HALT — return here after fixes; repeat until no High findings remain</action>
+        <action>HALT — return here after fixes</action>
       </check>
 
       <check if="no High-severity findings remain">
         <action>Record in Dev Agent Record → Completion Notes:
-          "Pre-commit code review passed. Date: {{date}}. High findings: 0."
+          "Tier: MEDIUM. In-session adversarial review passed. Date: {{date}}. High findings: 0."
         </action>
-        <output>✅ **Code Review Gate: PASSED** — Proceed to commit and push.</output>
+        <output>✅ **MEDIUM Review Gate: PASSED** — Proceeding to commit and push.</output>
+      </check>
+    </check>
+
+    <!-- ── HIGH: full human gate, no exceptions ────────────────────────────── -->
+    <check if="tier is HIGH (exit 2)">
+      <critical>This gate MUST have human sign-off. Do NOT skip or defer.</critical>
+      <output>🔍 **HIGH tier — Human Pre-Commit Review Required**
+
+        Implementation is complete and tests pass. Before committing, a mandatory code review
+        must run against the uncommitted changes.
+
+        ⚠️  The publish-path human gate is absolute: no change reaches a release tag, Nuitka
+        build, or PyPI publish until a human has adjudicated every agent-rated High finding.
+
+        💡 For best results, run this review using a **different** LLM than the one that
+        implemented the story. Open a second Claude session and invoke `/bmad-code-review`.
+      </output>
+
+      <action>Ask {user_name} to invoke `/bmad-code-review` on uncommitted changes, using
+        {story_file} as the spec for full-review mode.
+      </action>
+      <action>HALT — wait for {user_name} to provide the code review results.</action>
+
+      <check if="code review results provided by user">
+        <action>Identify any High-severity findings in the results</action>
+
+        <check if="one or more High-severity findings remain unresolved">
+          <output>🚫 **HIGH Review Gate: BLOCKED**
+
+            {{high_severity_findings}}
+
+            Fix each finding, re-run tests, then re-run `/bmad-code-review` on the
+            updated uncommitted changes and provide the new results here.
+          </output>
+          <action>HALT — return here after fixes; repeat until no High findings remain</action>
+        </check>
+
+        <check if="no High-severity findings remain">
+          <action>Record in Dev Agent Record → Completion Notes:
+            "Tier: HIGH. Human pre-commit review passed. Date: {{date}}. High findings: 0."
+          </action>
+          <output>✅ **HIGH Review Gate: PASSED** — Proceed to commit and push.</output>
+        </check>
       </check>
     </check>
   </step>
