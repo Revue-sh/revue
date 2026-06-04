@@ -125,13 +125,41 @@ If the script exits non-zero, print the error. **Do not treat a remote-sync fail
 
 ### Step 5 — Epic progress recap
 
-Dispatch `/bmad-agent-pm` (John) as a background sub-agent. Pass this exact prompt:
+Three sequential sub-steps:
 
-> Invoke the `/epic-progress <TICKET-KEY>` skill and return its output verbatim. Do not add commentary, do not re-format — just the recap text.
+**5a — Epic recap (foreground)**
 
-Print John's response verbatim after the merge confirmation lines. Format and rules live inside `/epic-progress`; do not hand-roll JQL here.
+Invoke the `/epic-progress` skill directly and print its output verbatim:
 
-This step is post-merge bookkeeping; if it fails, surface the error but do not retry the merge.
+```
+Skill(skill: "epic-progress", args: "<TICKET-KEY>")
+```
+
+Format and rules live inside `/epic-progress`; do not hand-roll JQL here.
+
+**5b — Update mvp-compass.md (background, wait for completion)**
+
+Dispatch a background Agent to update the compass. Wait for the completion notification before proceeding to 5c:
+
+```
+Agent(
+  description: "Update mvp-compass.md after <TICKET-KEY> merge",
+  run_in_background: true,
+  prompt: "Update `_bmad-output/planning-artifacts/mvp-compass.md` in the repo at /Volumes/LexarSSD/Projects/revue.io to reflect that <TICKET-KEY> has just been merged to main. Read the file first, mark the ticket as shipped, adjust any blockers or priorities that changed, and keep the document's existing structure intact."
+)
+```
+
+**5c — PM commentary on MVP delivery (foreground, after 5b completes)**
+
+Once the compass is updated, invoke `bmad-agent-pm` so the commentary reflects the current MVP state:
+
+```
+Skill(skill: "bmad-agent-pm", args: "The ticket <TICKET-KEY> has just been merged and `_bmad-output/planning-artifacts/mvp-compass.md` has been updated. As the Product Owner, read the updated compass and give me a brief commentary on MVP delivery: are we on track, what is now unblocked, and what is the next priority?")
+```
+
+Print the PM's response after the recap output.
+
+This step is post-merge bookkeeping; if any sub-step fails, surface the error but do not retry the merge.
 
 ---
 
@@ -148,7 +176,8 @@ Report to the user. When a worktree was attached to the source branch:
 ✅ GitHub main synced
 ✅ GitLab main synced
 
-<epic progress recap from /bmad-agent-pm>
+<epic progress recap (step 5a)>
+<PM commentary on MVP delivery (step 5c, after mvp-compass.md update)>
 ```
 
 When the source branch had no worktree:
@@ -161,7 +190,8 @@ When the source branch had no worktree:
 ✅ GitHub main synced
 ✅ GitLab main synced
 
-<epic progress recap from /bmad-agent-pm>
+<epic progress recap (step 5a)>
+<PM commentary on MVP delivery (step 5c, after mvp-compass.md update)>
 ```
 
 If any step fails, report the exact error before stopping.
