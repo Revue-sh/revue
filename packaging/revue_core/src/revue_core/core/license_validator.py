@@ -27,6 +27,14 @@ VALIDATE_URL = "https://revue.sh/api/license/validate"
 CACHE_PATH = Path("/tmp/.revue_license_cache.json")
 CACHE_TTL_SECONDS = 72 * 3600  # 72 hours
 
+# Transient-failure retry budget. Hardcoded — NOT env-overridable, consistent with
+# VALIDATE_URL being baked into the compiled binary. A CI-controllable attempt count
+# would be a license-bypass / denial-of-validation surface, and an unbounded budget
+# would let CI hang.
+MAX_VALIDATION_ATTEMPTS = 3  # total attempts before falling through to offline cache
+RETRY_BACKOFF_BASE_SECONDS = 0.5  # first inter-attempt sleep
+RETRY_BACKOFF_CAP_SECONDS = 4.0  # upper bound on exponential backoff
+
 TIER_ALL_AGENTS = [
     "orchestrator",
     "code-quality-expert",
@@ -61,6 +69,30 @@ class LicenseError(RuntimeError):
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
+@dataclass
+class _ValidationResult:
+    """Result of a single license API validation call (one attempt).
+
+    Encapsulates the outcome of calling the API endpoint once, without retry logic.
+    Supports both successful responses (status_code=200) and error states (network
+    errors, non-2xx, etc.).
+
+    Attributes:
+        status_code: HTTP status code from the response, or None if network error.
+        body: Parsed JSON response body, or None if network error or unparseable.
+        error: Error message (network, parsing, etc.), or None if successful.
+    """
+
+    status_code: int | None
+    body: dict | None
+    error: str | None
+
+    @property
+    def is_success(self) -> bool:
+        """True if the API call succeeded (status 200, valid response parsed)."""
+        return self.status_code == 200 and self.body is not None
+
 
 @dataclass
 class LicenseInfo:
@@ -140,7 +172,7 @@ def validate(
         )
 
     try:
-        response_data = _call_api(key, repo_id, ci_run_id, _http_client)
+        response_data = _call_api_with_retry(key, repo_id, ci_run_id, _http_client)
         _write_cache(key, response_data)
         return _build_license_info(key, response_data)
     except _APIUnreachable:
@@ -168,7 +200,16 @@ def validate(
 # ---------------------------------------------------------------------------
 
 class _APIUnreachable(Exception):
-    """Raised internally when the API cannot be reached (network error, timeout)."""
+    """Raised internally when the API cannot be reached (network error, timeout, bad status).
+
+    ``retryable`` distinguishes transient failures (network errors, 5xx) — which the
+    retry loop will re-attempt — from definitive non-2xx client errors (e.g. 404),
+    which are unreachable-equivalent but must NOT consume the retry budget.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def _call_api(
@@ -176,8 +217,14 @@ def _call_api(
     repo_id: str,
     ci_run_id: str,
     client: httpx.Client | None,
-) -> dict:
-    """POST to the license validation endpoint. Returns the parsed JSON response."""
+) -> _ValidationResult:
+    """POST to the license validation endpoint once. Returns a result object.
+
+    Performs the HTTP call and builds a :class:`_ValidationResult` without making
+    any retry or error-decision logic. The result encapsulates the raw call outcome
+    (network error, status code, parsed body). Retryability and raising decisions
+    are owned by :func:`_call_api_with_retry`.
+    """
     payload = {"key": key, "repo_id": repo_id, "ci_run_id": ci_run_id}
     Log.cli.debug("Calling license API: %s", VALIDATE_URL)
     try:
@@ -187,25 +234,115 @@ def _call_api(
             with httpx.Client(timeout=10.0) as c:
                 resp = c.post(VALIDATE_URL, json=payload)
     except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as exc:
-        raise _APIUnreachable(str(exc)) from exc
+        # Network error — return result with error set, no exception raised here
+        return _ValidationResult(status_code=None, body=None, error=str(exc))
 
-    if resp.status_code == 401 or resp.status_code == 403:
-        raise LicenseError(
-            f"License key is invalid or has been revoked (HTTP {resp.status_code}). "
-            f"Response: {resp.text[:200]}. "
-            "Please check your REVUE_LICENSE_KEY or visit https://revue.sh/account"
+    # Attempt to parse JSON; if it fails, return error result
+    try:
+        data: dict = resp.json()
+    except Exception as exc:
+        return _ValidationResult(
+            status_code=resp.status_code, body=None, error=f"JSON parse error: {exc}"
         )
-    if resp.status_code != 200:
-        raise _APIUnreachable(f"Unexpected status {resp.status_code}")
 
-    data: dict = resp.json()
-    if not data.get("valid"):
-        msg = data.get("message", "License key rejected by Revue API.")
-        raise LicenseError(
-            f"License validation failed: {msg} "
-            "Visit https://revue.sh/account to manage your license."
+    return _ValidationResult(status_code=resp.status_code, body=data, error=None)
+
+
+def _compute_backoff(attempt: int) -> float:
+    """Compute exponential backoff duration for a given attempt number.
+
+    Implements exponential backoff: base_seconds * 2^(attempt - 1), capped at
+    :data:`RETRY_BACKOFF_CAP_SECONDS`. Pure function — no side effects, no retries.
+
+    Args:
+        attempt: The attempt number (1-indexed).
+
+    Returns:
+        The backoff duration in seconds, bounded by the hardcoded cap.
+    """
+    uncapped = RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+    return min(uncapped, RETRY_BACKOFF_CAP_SECONDS)
+
+
+def _call_api_with_retry(
+    key: str,
+    repo_id: str,
+    ci_run_id: str,
+    client: httpx.Client | None,
+) -> dict:
+    """Call :func:`_call_api`, retrying transient failures with bounded backoff.
+
+    Inspects the :class:`_ValidationResult` from :func:`_call_api` and decides:
+      * On success (200, valid response body): return the body dict.
+      * On definitive failures (401/403, ``valid: false``): raise :class:`LicenseError`.
+      * On transient failures (network errors, 5xx): retry up to :data:`MAX_VALIDATION_ATTEMPTS`
+        total attempts with exponential backoff capped at :data:`RETRY_BACKOFF_CAP_SECONDS`.
+      * On non-retryable 4xx (except 401/403): treat as unreachable (no retry) and re-raise
+        as :class:`_APIUnreachable` for caller to handle offline cache.
+
+    Returns the validated response body dict on success.
+    Raises :class:`LicenseError` on definitive failures, or :class:`_APIUnreachable`
+    on unreachable outcomes (to trigger offline grace-period fallback).
+    """
+    last_unreachable: _APIUnreachable | None = None
+
+    for attempt in range(1, MAX_VALIDATION_ATTEMPTS + 1):
+        result = _call_api(key, repo_id, ci_run_id, client)
+
+        # Success case: 200 status with valid body
+        if result.is_success:
+            data = result.body
+            assert data is not None  # is_success guarantees non-None body
+            # Check if the API says the key is invalid
+            if not data.get("valid"):
+                msg = data.get("message", "License key rejected by Revue API.")
+                raise LicenseError(
+                    f"License validation failed: {msg} "
+                    "Visit https://revue.sh/account to manage your license."
+                )
+            return data
+
+        # Definitive rejection: 401 or 403 (invalid/revoked key)
+        if result.status_code in (401, 403):
+            resp_text = result.body or {}
+            raise LicenseError(
+                f"License key is invalid or has been revoked (HTTP {result.status_code}). "
+                f"Response: {str(resp_text)[:200]}. "
+                "Please check your REVUE_LICENSE_KEY or visit https://revue.sh/account"
+            )
+
+        # Transient failures: network errors (status_code=None) and 5xx
+        is_transient = (result.status_code is None) or (result.status_code >= 500)
+
+        if is_transient and attempt < MAX_VALIDATION_ATTEMPTS:
+            # Retry: compute backoff and sleep
+            backoff = _compute_backoff(attempt)
+            error_msg = (
+                result.error
+                if result.error
+                else f"Server error (HTTP {result.status_code})"
+            )
+            Log.cli.debug(
+                "License API transient failure (attempt %d/%d): %s — retrying in %.1fs",
+                attempt,
+                MAX_VALIDATION_ATTEMPTS,
+                error_msg,
+                backoff,
+            )
+            time.sleep(backoff)
+            continue
+
+        # Non-transient or exhausted retries: treat as unreachable
+        error_msg = (
+            result.error
+            if result.error
+            else f"Unexpected status {result.status_code}"
         )
-    return data
+        last_unreachable = _APIUnreachable(error_msg, retryable=False)
+        raise last_unreachable
+
+    # Unreachable in practice — the loop either returns or raises — but keeps mypy happy.
+    raise last_unreachable  # type: ignore[misc]
 
 
 def _build_license_info(key: str, data: dict) -> LicenseInfo:
