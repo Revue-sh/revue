@@ -73,18 +73,28 @@ def test_tag_pipeline_uses_parallel_build_block() -> None:
     """Codify the REVUE-323 layout: the 6 Nuitka build steps live inside a
     single `parallel:` block so cloud Linux runners build concurrently.
     Without this block, the pipeline reverts to ~30 min sequential builds.
+
+    The tag pipeline also has a SECOND parallel block — the REVUE-393 unit+web
+    test gate — so the build block is located by its contents (steps named
+    "Build …"), not by being the only parallel block.
     """
     doc = yaml.safe_load(PIPELINES_FILE.read_text(encoding="utf-8"))
     entries = doc["pipelines"]["tags"]["v*"]
     parallel_blocks = [e["parallel"] for e in entries if "parallel" in e]
-    assert len(parallel_blocks) == 1, (
-        f"expected exactly one `parallel:` block in the tag pipeline; "
-        f"found {len(parallel_blocks)}"
+
+    def _inner_names(block: Any) -> list[str]:
+        inner = block if isinstance(block, list) else block.get("steps", [])
+        return [s["step"].get("name", "") for s in inner if "step" in s]
+
+    build_blocks = [
+        b for b in parallel_blocks
+        if any(n.lower().startswith("build ") for n in _inner_names(b))
+    ]
+    assert len(build_blocks) == 1, (
+        f"expected exactly one parallel BUILD block in the tag pipeline; "
+        f"found {len(build_blocks)}"
     )
-    block = parallel_blocks[0]
-    inner = block if isinstance(block, list) else block.get("steps", [])
-    inner_names = [s["step"].get("name", "") for s in inner if "step" in s]
-    build_names = [n for n in inner_names if n.lower().startswith("build ")]
+    build_names = [n for n in _inner_names(build_blocks[0]) if n.lower().startswith("build ")]
     assert len(build_names) == 6, (
         f"parallel block must hold the 6 Nuitka build steps (3 packages × 2 "
         f"platforms); got {len(build_names)}: {build_names}"

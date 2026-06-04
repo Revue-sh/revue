@@ -13,6 +13,14 @@ definitions:
           - packaging/revue-ci/pyproject.toml
           - packaging/revue/pyproject.toml
       path: .venv
+    # REVUE-393: the web suite needs the heavy FastAPI/uvicorn stack, which the
+    # ci-venv deliberately omits. Keep it in a separate cache + venv (.venv-web)
+    # so the lighter packaging/root steps are never bloated or slowed (AC4).
+    web-venv:
+      key:
+        files:
+          - src/web/requirements.txt
+      path: .venv-web
 
   steps:
     # -----------------------------------------------------------------------
@@ -209,11 +217,54 @@ definitions:
           - python3 -m pytest packaging/revue_core/tests/ -q --rootdir=packaging/revue_core
           - python3 -m pytest packaging/revue-ci/tests/ -q --rootdir=packaging/revue-ci
           - python3 -m pytest packaging/revue/tests/ -q --rootdir=packaging/revue
-          - python3 -m pytest tests/ --ignore=tests/integration -q
+          # REVUE-393: this step runs against requirements-ci.txt (no fastapi).
+          # tests/test_activation_rate_limit.py imports fastapi at module top —
+          # since the PR #206 importorskip stopgap was removed, it would error
+          # at COLLECTION here. It is gated for real in the &run-web-tests step
+          # instead (where fastapi is installed), so exclude it from this light
+          # root run.
+          - python3 -m pytest tests/ --ignore=tests/integration --ignore=tests/test_activation_rate_limit.py -q
           # Fresh-venv smoke test (REVUE-310) — gated behind @pytest.mark.slow
           # so it doesn't run during local `pytest`, but CI runs it explicitly
           # so package-graph regressions surface before tag time.
           - python3 -m pytest tests/integration/ -m slow -q
+
+    # -----------------------------------------------------------------------
+    # REVUE-393: gate the FastAPI web suite (src/web/tests) on every pipeline
+    # that runs the test suite — PRs, develop, main (pre-deploy), and tag
+    # builds (pre-PyPI-publish) — so a web regression can never ship ungated.
+    # The root &run-tests step runs against requirements-ci.txt, which omits the
+    # web-app deps (fastapi/uvicorn/starlette), so it can NEVER exercise the
+    # customer-facing web surface (licence activation/validation, billing,
+    # rate-limiter). This step installs src/web/requirements.txt into an
+    # ISOLATED .venv-web (web-venv cache) so the lighter steps stay lean (AC4),
+    # then runs the non-e2e web suite as a HARD gate — a plain step fails the
+    # pipeline on any web-test failure (AC2).
+    #
+    # --ignore=src/web/tests/e2e is LOAD-BEARING: src/web/tests/conftest.py's
+    # pytest_collection_modifyitems only REORDERS e2e to the end, it does not
+    # skip it. The e2e subset boots a session-scoped uvicorn server and is
+    # excluded pending the REVUE-332 asyncio-loop-leak fix; include it here only
+    # after 332 lands.
+    #
+    # tests/test_activation_rate_limit.py lives in the root tests/ tree but
+    # exercises the FastAPI app; it is run HERE (where fastapi is installed) so
+    # its 16 tests execute for real (AC3) instead of importorskip-ing in the
+    # fastapi-less root step. The slow concurrency test
+    # (tests/integration/test_activation_concurrency.py) boots a real server and
+    # stays local/slow-gated to avoid CI flakiness — it is intentionally NOT run
+    # here (out of scope).
+    - step: &run-web-tests
+        name: "Run Web Tests"
+        image: python:3.12-slim
+        caches:
+          - web-venv
+        script:
+          - test -x .venv-web/bin/python || python3 -m venv .venv-web
+          - export PATH="$PWD/.venv-web/bin:$PATH"
+          - python3 -c "import fastapi, uvicorn" 2>/dev/null || pip install --quiet -r src/web/requirements.txt
+          - python3 -m pytest src/web/tests/ --ignore=src/web/tests/e2e -q
+          - python3 -m pytest tests/test_activation_rate_limit.py -q
 
     # -----------------------------------------------------------------------
     # AI self-review on every PR — runs the revue-ci CLI against the PR diff.
@@ -398,7 +449,11 @@ definitions:
 pipelines:
   branches:
     main:
-      - step: *run-tests
+      # REVUE-393: unit + web suites run in parallel (independent — separate
+      # venvs/deps/code), gating the build → deploy chain.
+      - parallel:
+          - step: *run-tests
+          - step: *run-web-tests
       - step: *build-web-image-fly
       - step: *deploy-web-staging
       - step: *smoke-web-staging
@@ -471,11 +526,16 @@ pipelines:
               echo "Released v${NEXT_VERSION}"
 
     develop:
-      - step: *run-tests
+      - parallel:
+          - step: *run-tests
+          - step: *run-web-tests
 
   tags:
     'v*':
-      - step: *run-tests
+      # REVUE-393: unit + web suites in parallel, gating the wheel build + PyPI publish.
+      - parallel:
+          - step: *run-tests
+          - step: *run-web-tests
       # --- Build all wheels in parallel ---
       # Each Nuitka build is independent at compile time (each step runs its own
       # `pip install -e packaging/revue_core/` from source). macOS×3 will queue
@@ -499,7 +559,12 @@ pipelines:
 
   pull-requests:
     "**":
-      - step: *run-tests
+      # REVUE-393: unit + web suites in parallel (independent). The AI review runs
+      # ONLY if both pass — fail-fast on the cheap test gates before spending AI
+      # tokens reviewing a PR that's already red.
+      - parallel:
+          - step: *run-tests
+          - step: *run-web-tests
       - step: *revue-review
 
   custom:

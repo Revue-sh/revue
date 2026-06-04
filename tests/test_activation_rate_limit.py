@@ -19,13 +19,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# These exercise the FastAPI web app (src/web). The root ``tests/`` CI suite
-# runs against requirements-ci.txt, which intentionally omits the web-app deps
-# (fastapi/uvicorn) — so skip the whole module there rather than erroring at
-# collection. The suite still runs in full locally (the repo .venv has fastapi)
-# and via the run-tests web suite.
-pytest.importorskip("fastapi", reason="web-app deps (fastapi) not installed in this env")
-from fastapi.testclient import TestClient  # noqa: E402
+# These exercise the FastAPI web app (src/web). REVUE-393 moved web-suite CI
+# gating into the dedicated &run-web-tests pipeline step, which installs
+# src/web/requirements.txt (fastapi/uvicorn) into an isolated venv and runs
+# THIS file directly — so the importorskip stopgap (PR #206) is gone and the
+# 16 tests execute for real. The light root tests/ CI step, which runs against
+# the fastapi-less requirements-ci.txt, --ignores this file at the suite level
+# (see bitbucket-pipelines.yml &run-tests) so it never errors at collection.
+from fastapi.testclient import TestClient
 
 # Add src/web to path so we can import web modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "src" / "web"))

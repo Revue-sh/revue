@@ -41,13 +41,17 @@ def _test_rsa_keypair() -> tuple[bytes, bytes]:
 
 @pytest.fixture
 def _patch_jwt_keys(monkeypatch, _test_rsa_keypair):
-    """Patch both halves of the production keypair with the test pair."""
+    """Point the signing side at the test keypair and hand the public half back.
+
+    The backend signs with ``JWT_SIGNING_KEY`` (read from env at sign time), and
+    each test decodes the issued token against the returned ``pub_pem`` directly
+    — so only the signing half needs patching here. The web app inlines its own
+    public-key constant (REVUE-345: the web container ships without revue_core),
+    so there is nothing in revue_core to patch on the verification side.
+    """
     priv_pem, pub_pem = _test_rsa_keypair
     # Backend reads JWT_SIGNING_KEY from env at sign time (base64-encoded PEM)
     monkeypatch.setenv("JWT_SIGNING_KEY", base64.b64encode(priv_pem).decode())
-    # CLI-side constant is what verification uses — patch the module attribute
-    import revue_core.security.jwt_keys as jwt_keys_module
-    monkeypatch.setattr(jwt_keys_module, "JWT_PUBLIC_KEY_PEM", pub_pem.decode())
     return priv_pem, pub_pem
 
 

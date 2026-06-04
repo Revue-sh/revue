@@ -10,6 +10,14 @@ Run the Revue pytest suite. The tree spans several disjoint test roots
 `src/web/tests`, and root `tests/`), each run as a separate pytest invocation
 against the repo virtualenv at `.venv`.
 
+> **CI note (REVUE-393):** the `src/web/tests` suite (non-e2e) is gated in CI by
+> the dedicated `&run-web-tests` step in `bitbucket-pipelines.yml`, which installs
+> `src/web/requirements.txt` into an isolated `.venv-web`. That step also runs
+> `tests/test_activation_rate_limit.py` (which imports fastapi), so the light
+> `&run-tests` step `--ignore`s that file. The `src/web/tests/e2e` subset and the
+> slow `tests/integration/test_activation_concurrency.py` stay local-only — do not
+> remove the web gate without re-homing that coverage.
+
 ## Scripts
 
 All scripts live at `.claude/skills/run-tests/scripts/` relative to the repo root.

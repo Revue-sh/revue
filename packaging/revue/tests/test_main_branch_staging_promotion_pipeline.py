@@ -16,9 +16,26 @@ def _load_pipeline() -> dict[str, Any]:
     return yaml.safe_load(PIPELINES_FILE.read_text(encoding="utf-8"))
 
 
+def _flatten_steps(entries: list[Any]) -> list[dict[str, Any]]:
+    """Flatten a pipeline entry list, unwrapping ``parallel`` blocks (both the
+    list form and the ``{steps: [...]}`` form) into their constituent steps,
+    preserving order."""
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if "step" in entry:
+            out.append(entry["step"])
+        elif "parallel" in entry:
+            par = entry["parallel"]
+            items = par.get("steps", []) if isinstance(par, dict) else par
+            out.extend(s["step"] for s in items if isinstance(s, dict) and "step" in s)
+    return out
+
+
 def _main_steps() -> list[dict[str, Any]]:
     pipeline = _load_pipeline()
-    return [entry["step"] for entry in pipeline["pipelines"]["branches"]["main"]]
+    return _flatten_steps(pipeline["pipelines"]["branches"]["main"])
 
 
 def _step_named(name: str) -> dict[str, Any]:
@@ -44,6 +61,7 @@ def test_main_branch_pipeline_promotes_single_image_from_staging_to_prod() -> No
     # Arrange
     expected_order = [
         "Run Tests",
+        "Run Web Tests",  # REVUE-393: web suite gates the build/deploy chain
         "Build Web Image → Fly Registry",
         "Deploy Web → Staging",
         "Smoke Test → Staging",
