@@ -33,6 +33,13 @@ from pathlib import Path
 import httpx
 import pytest
 
+# Boots the FastAPI web app under a real uvicorn server. The CI slow run
+# (`pytest tests/integration -m slow`) uses requirements-ci.txt, which omits
+# fastapi/uvicorn — skip the whole module there rather than failing when the
+# subprocess can't start. Runs in full locally (the repo .venv has both).
+pytest.importorskip("fastapi", reason="web-app deps (fastapi) not installed in this env")
+pytest.importorskip("uvicorn", reason="web-app deps (uvicorn) not installed in this env")
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = REPO_ROOT / "src" / "web"
 

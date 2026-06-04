@@ -18,13 +18,20 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
+
+# These exercise the FastAPI web app (src/web). The root ``tests/`` CI suite
+# runs against requirements-ci.txt, which intentionally omits the web-app deps
+# (fastapi/uvicorn) — so skip the whole module there rather than erroring at
+# collection. The suite still runs in full locally (the repo .venv has fastapi)
+# and via the run-tests web suite.
+pytest.importorskip("fastapi", reason="web-app deps (fastapi) not installed in this env")
+from fastapi.testclient import TestClient  # noqa: E402
 
 # Add src/web to path so we can import web modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "src" / "web"))
 
-from main import create_app
-from database import get_db, init_db
+from main import create_app  # noqa: E402
+from database import get_db, init_db  # noqa: E402
 
 
 @pytest.fixture
