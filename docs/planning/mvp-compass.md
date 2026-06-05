@@ -69,8 +69,7 @@ Naming dep: **REVUE-386** (`revue` vs `revue-local`) feeds 361/384/407/408 comma
 | REVUE-379 | Manifest endpoint cache lock — coalesce concurrent cold-cache PyPI fetches | Idempotent / low-severity at current traffic |
 | REVUE-380 | Manifest must skip yanked PyPI releases for `current_version` | Low likelihood under single-maintainer release flow |
 | REVUE-385 | support/legal mailbox backup + retention automation | Operational hygiene; non-gating |
-| REVUE-381 | Register Token Labs Ltd (Companies House) + remove `[PENDING REGISTRATION]` markers | ⚠️ **Deferred — pre-revenue sole-trader launch.** 1st Formations KYC rejection halted incorporation; markers stay accurate pre-revenue. Becomes critical when revenue is imminent or KYC resolves. |
-| REVUE-389 | Go live with Stripe — live key, live prices, customer portal | ⚠️ **Deferred — blocked by REVUE-381.** REVUE-315 (config) is done + staging-verified in test mode. Live payouts need a registered entity. Revisit when 381 unblocks and revenue is imminent. |
+| REVUE-389 | Go live with Stripe — live key, live prices, customer portal | ⚠️ **Deferred — now UNBLOCKED (REVUE-381 entity registration is Done), pending the go-live decision.** REVUE-315 (config) is done + staging-verified in test mode. Not needed for the pre-revenue /revue-local free launch; pick up when paid revenue is imminent. |
 
 ### 🔧 Tooling follow-up (open)
 
@@ -90,7 +89,6 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 |---|---|
 | REVUE-365 + REVUE-366 + REVUE-408 | `src/web/templates/landing.html` (pricing copy + hero disclaimer + two-mode messaging) |
 | REVUE-361 + REVUE-407 | `src/web/templates/onboarding.html` (CLI-first refactor + CI-YAML move to `/docs/ci-setup`) |
-| REVUE-328 + REVUE-330 + REVUE-336 | licence/cache path modules (`cache_paths.py`, `validate.py`) |
 
 **Concurrency lanes — activation-UX cluster:**
 - **Lane 0 (start together):** REVUE-332 (E2E infra), REVUE-384 (`/activate` + shared Command-Box), REVUE-407 (CI setup page) — no inter-dependency. 332 just needs to land before the others' E2E gates in CI.
