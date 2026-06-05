@@ -45,9 +45,9 @@ The post-purchase **"now what?"** gap: today `/billing/success` shows no key or 
 
 Naming dep: **REVUE-386** (`revue` vs `revue-local`) feeds 361/384/407/408 command strings — resolve in lockstep.
 
-### 🟡 Pre-launch polish — safe to slip
+### 🟡 Important pre-launch polish — ship before public launch, not a hard technical gate
 
-| Jira | Story | Why it can wait |
+| Jira | Story | Why it's not a hard blocker |
 |------|-------|-----------------|
 | REVUE-328 | Honour XDG_CONFIG_HOME for licence file location | Most users have default config home; minority first-week feedback |
 | REVUE-341 | Per-surface default agent_timeout_seconds (/revue-local=1200s, CI=600s, CLI=600s) | UX consistency; current defaults work. Can now run solo (collision partner 339 is done). |
