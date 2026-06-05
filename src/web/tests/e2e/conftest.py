@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import os
+import signal
+import socket
+import subprocess
 import sys
 import tempfile
-import threading
 import time
 
+import httpx
 import pytest
-import uvicorn
 
 # Ensure src/web is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -32,49 +34,122 @@ def _e2e_db():
     yield db_path
 
 
+def _bound_listener() -> "tuple[socket.socket, int]":
+    """Bind a listening socket the child uvicorn inherits via ``--fd``.
+
+    Returns the open, bound, listening socket and its port. Passing the
+    already-bound socket to the child (``--fd`` + ``pass_fds``) removes the
+    unbound window a reserve-then-release approach leaves — no other process
+    can steal the port between release and uvicorn's bind (REVUE-332 review).
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(128)
+    os.set_inheritable(sock.fileno(), True)
+    return sock, sock.getsockname()[1]
+
+
+def _terminate(proc: subprocess.Popen) -> None:
+    """Tear down the uvicorn subprocess and its whole process group.
+
+    The child is its own session leader (``start_new_session=True``), so
+    killing the process *group* guarantees uvicorn's children die too — no
+    orphaned server survives the fixture (REVUE-332 TC6). Escalates
+    SIGTERM -> SIGKILL with a bounded wait at each step.
+    """
+    if proc.poll() is not None:
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except (ProcessLookupError, PermissionError):
+            # Group already gone, or no perms — signal the process directly,
+            # ignoring it if it has already been reaped.
+            try:
+                proc.kill()
+            except (ProcessLookupError, PermissionError):
+                return
+        try:
+            proc.wait(timeout=5)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
 @pytest.fixture(scope="session")
 def base_url(_e2e_db):
-    """Start the FastAPI app on a random port in a background thread."""
-    # Force fresh module state with the test DB
-    import database
-    original_get_db_path = database.get_db_path
-    database.get_db_path = lambda: _e2e_db
+    """Start the FastAPI app in a SEPARATE PROCESS for the whole session.
 
-    from main import app
+    REVUE-332: the server runs via ``subprocess.Popen`` (not an in-process
+    thread), so uvicorn's asyncio event loop lives and dies inside that
+    process. Nothing leaks into the test process. (A separate pytest-playwright
+    vs pytest-asyncio conflict still requires the e2e-last collection hook in
+    ``src/web/tests/conftest.py`` — see REVUE-411.)
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
-    server = uvicorn.Server(config)
+    The child is a fresh interpreter that sees none of the test process's
+    monkeypatches — only the environment. ``DATABASE_PATH`` (honoured by
+    ``database.get_db_path``) and ``SECRET_KEY`` are passed via ``env`` so the
+    server boots against the same temporary DB the tests seed.
+    """
+    web_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    sock, port = _bound_listener()
+    url = f"http://127.0.0.1:{port}"
 
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
+    env = dict(os.environ)
+    env["DATABASE_PATH"] = _e2e_db
+    env.setdefault("SECRET_KEY", "test-secret")
 
-    # Wait for server to be ready
-    for _ in range(50):
-        if server.started:
-            break
-        time.sleep(0.1)
-    else:
-        raise RuntimeError("Uvicorn server did not start in time")
+    try:
+        proc = subprocess.Popen(
+            [
+                sys.executable, "-m", "uvicorn", "main:app",
+                "--fd", str(sock.fileno()),
+                "--log-level", "warning",
+            ],
+            cwd=web_dir,
+            env=env,
+            start_new_session=True,
+            pass_fds=(sock.fileno(),),
+        )
+    finally:
+        # The child holds the bound socket now; drop the parent's copy.
+        sock.close()
 
-    # Extract the actual port
-    sockets = server.servers[0].sockets
-    port = sockets[0].getsockname()[1]
+    # Any failure between launch and yield must reap the process, or an
+    # unexpected error would leak the subprocess and hold the port.
+    try:
+        # Readiness probe: do not yield until /health returns 200, bounded by a
+        # timeout. last_err records the most recent reason (transport error or
+        # non-200 status) so the timeout message is actionable.
+        deadline = time.monotonic() + 15.0
+        last_err: object = None
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"uvicorn exited early (code {proc.returncode}) before "
+                    f"readiness — app import or startup failure (check its logs)?"
+                )
+            try:
+                resp = httpx.get(f"{url}/health", timeout=1.0)
+                if resp.status_code == 200:
+                    break
+                last_err = f"/health returned HTTP {resp.status_code}"
+            except httpx.HTTPError as exc:  # still booting / connection refused
+                last_err = exc
+            time.sleep(0.1)
+        else:
+            raise RuntimeError(
+                f"uvicorn did not become ready within 15s (last: {last_err})"
+            )
+    except BaseException:
+        _terminate(proc)
+        raise
 
-    yield f"http://127.0.0.1:{port}"
-
-    # Force the uvicorn server's background thread to terminate. ``should_exit``
-    # alone is a polite request that returns control to the main loop on the
-    # next tick; the thread's asyncio loop can still be alive afterwards,
-    # which leaves pytest-asyncio unable to spin up new Runners in later
-    # tests ("Cannot run the event loop while another loop is running").
-    # ``force_exit`` aborts pending requests immediately so ``thread.join``
-    # actually completes.
-    server.should_exit = True
-    server.force_exit = True
-    thread.join(timeout=5)
-
-    # Restore
-    database.get_db_path = original_get_db_path
+    try:
+        yield url
+    finally:
+        _terminate(proc)
 
 
 @pytest.fixture(scope="function")

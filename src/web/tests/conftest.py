@@ -44,15 +44,16 @@ async def client(_tmp_db) -> AsyncGenerator[AsyncClient, None]:
 
 
 def pytest_collection_modifyitems(config, items):
-    """Move e2e tests to the END of the collection.
+    """Run e2e (Playwright) tests LAST so async (pytest-asyncio) tests run first.
 
-    The e2e suite spins up a uvicorn server in a session-scoped fixture.
-    Uvicorn keeps a background thread with an active asyncio event loop
-    alive for the rest of the session — any pytest-asyncio test running
-    *after* an e2e test then fails with "Cannot run the event loop while
-    another loop is running". The fixture teardown only runs at session
-    end, so the simplest fix is to ensure no async tests run after the
-    e2e suite. Running e2e last means the leaked loop doesn't matter.
+    REVUE-332 moved the e2e server out-of-process (subprocess uvicorn), removing
+    the *uvicorn* asyncio-loop leak. A SECOND, independent conflict remains:
+    pytest-playwright's SYNC API leaves a running event loop, so any
+    pytest-asyncio test running AFTER a Playwright test fails with
+    "RuntimeError: Runner.run() cannot be called from a running event loop".
+    Until the e2e tests are ported to Playwright's async API (REVUE-411), this
+    reorder keeps local full-suite runs green. CI is unaffected — it runs the
+    unit and e2e subsets as separate pytest invocations.
     """
     e2e_items = [i for i in items if "/e2e/" in str(i.fspath) or "\\e2e\\" in str(i.fspath)]
     non_e2e_items = [i for i in items if i not in e2e_items]
