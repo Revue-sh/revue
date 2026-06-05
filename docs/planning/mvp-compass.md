@@ -1,6 +1,6 @@
 # MVP Compass — /revue-local public launch
 
-**Last updated:** 2026-06-04 (REVUE-406 merged). Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
+**Last updated:** 2026-06-05 (activation-UX cluster scoped — REVUE-361 repurposed; 407/408/409 created; 383 rejected). Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
 **Source of truth for "next pick."** Jira's priority field ≠ launch-path order; *this doc* is the launch-path order.
 
 ---
