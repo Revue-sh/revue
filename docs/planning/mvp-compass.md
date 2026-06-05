@@ -13,15 +13,15 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**~49 done · 7 hard launch blockers (activation-UX cluster, below) · run `/epic-progress REVUE-269` for the live tally.**
+**~50 done · 6 hard launch blockers (activation-UX cluster, below) · run `/epic-progress REVUE-269` for the live tally.**
 The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The remaining gate is the **activation-UX cluster** (§ below): the post-purchase "now what?" path + supporting pages + E2E.
 
 **Recently shipped (last 5):**
+- **REVUE-332** — Out-of-process uvicorn E2E fixture
 - **REVUE-406** — align Step-5b prompt with the lean compass model
 - **REVUE-397** — licence-validator retries transient API-unreachable before failing (bounded retry + backoff; SRP refactor)
 - **REVUE-339** — cooperative deadline + finalize budget reservation for agent_timeout (no lost findings on hard-kill)
 - **REVUE-362** — production observability on `/api/v2/licence/activate` (Prometheus `/metrics`, Fly alerts, Grafana dashboard) · ⚠️ staging-alert validation pending (`do-not-run-automation-after-merge`)
-- **REVUE-331** — E2E activate round-trip (CLI happy path + browser paste-key fallback)
 
 ---
 
@@ -35,7 +35,6 @@ The post-purchase **"now what?"** gap: today `/billing/success` shows no key or 
 
 | Jira | Story | Role in the chain |
 |------|-------|-------------------|
-| REVUE-332 | Out-of-process uvicorn E2E fixture | **Prerequisite** — web-UI E2E is CI-excluded until this lands |
 | REVUE-384 | Demote `/activate`; build the shared Activation Command-Box | Owns the component 361/382 consume — build first |
 | REVUE-361 | Post-purchase activation handoff (`/billing/success` + `/onboarding`) | Repurposed from the rejected email ticket; consumes 384, links 407 |
 | REVUE-382 | Account → Plan licence-status page | Consumes 384; data deps REVUE-389 + usage source |
@@ -91,7 +90,7 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 | REVUE-361 + REVUE-407 | `src/web/templates/onboarding.html` (CLI-first refactor + CI-YAML move to `/docs/ci-setup`) |
 
 **Concurrency lanes — activation-UX cluster:**
-- **Lane 0 (start together):** REVUE-332 (E2E infra), REVUE-384 (`/activate` + shared Command-Box), REVUE-407 (CI setup page) — no inter-dependency. 332 just needs to land before the others' E2E gates in CI.
+- **Lane 0 (start together):** REVUE-332 (E2E infra — landed), REVUE-384 (`/activate` + shared Command-Box), REVUE-407 (CI setup page) — no inter-dependency. 332 is landed.
 - **Lane 1 (after 384 lands):** REVUE-361 and REVUE-382 run in parallel — both consume 384's Command-Box but touch different files (`onboarding/billing_success` vs `dashboard/Account→Plan`), so no collision.
 - **Lane 2 (after 407's route exists):** REVUE-408 wires site-wide links to the CI page. Must serialize against REVUE-365 + REVUE-366 on `landing.html` — see collision table above.
 - **Lane 3 (last):** REVUE-409 reuses 361/382/384 tests via `E2E_BASE_URL`; requires 332 landed.
