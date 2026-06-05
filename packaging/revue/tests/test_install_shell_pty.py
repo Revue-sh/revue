@@ -128,7 +128,7 @@ def test_letter_g_selects_global(sandbox):
     env, home, work = sandbox
     output, code = _drive("G\n", env, cwd=work)
     assert code == 0, output
-    assert (home / ".claude" / "commands" / "revue-local.md").exists()
+    assert (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
 
 
 # --- project scope + path prompt (AC2/3/4/5) ---
@@ -200,7 +200,7 @@ def test_existing_global_modify_then_global(sandbox):
     _seed_global_install(home)
     output, code = _drive("M\nG\n", env, cwd=work)
     assert code == 0, output
-    assert (home / ".claude" / "commands" / "revue-local.md").exists()
+    assert (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
 
 
 def test_existing_project_install_detected_in_place(sandbox, tmp_path):

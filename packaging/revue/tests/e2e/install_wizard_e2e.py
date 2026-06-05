@@ -154,8 +154,8 @@ def main():
     h = fresh_home("s1"); os.makedirs("/w1", exist_ok=True)
     out, code = run("\n", env_for(h), "/w1")
     check("1 Enter→Global: exit 0", code == 0, f"exit={code}")
-    check("1 Enter→Global: ~/.claude has commands+skills",
-          has(f"{h}/.claude/commands/revue-local.md") and has(f"{h}/.claude/skills/revue/SKILL.md"))
+    check("1 Enter→Global: ~/.claude has skill (and no command-file shim)",
+          has(f"{h}/.claude/skills/revue/SKILL.md") and not has(f"{h}/.claude/commands/revue.md"))
     check("1 Enter→Global: .revue.yml in cwd", has("/w1/.revue.yml"))
 
     # 2. "G" → Global

@@ -206,7 +206,7 @@ def test_install_falls_back_to_pipx_when_uv_missing(installer_env):
     assert "--force" in pipx_log
 
 
-def test_install_writes_claude_code_slash_command(installer_env):
+def test_install_installs_skill_and_writes_no_command_file(installer_env):
     # Arrange — Claude Code present, uv available, revue stubbed
     bin_dir: Path = installer_env["bin"]
     home: Path = installer_env["home"]
@@ -216,14 +216,17 @@ def test_install_writes_claude_code_slash_command(installer_env):
     # Act
     result = _run_installer(env=installer_env["env"], cwd=installer_env["workspace"])
 
-    # Assert — slash command descriptor written to ~/.claude/commands/revue-local.md
+    # Assert — the bundled skill is the sole source of /revue: skill installed,
+    # NO command-file shim written (it would collide with the skill on /revue).
     assert result.returncode == 0, result.stderr
-    command_file = home / ".claude" / "commands" / "revue-local.md"
-    assert command_file.exists(), f"missing slash command file: {command_file}"
-    body = command_file.read_text()
-    assert "/revue-local" in body, "slash command body must reference /revue-local"
-    assert "revue install-skill" not in body, (
-        "slash command body is the user-facing prompt, not setup instructions"
+    assert (home / ".claude" / "skills" / "revue" / "SKILL.md").exists(), (
+        "the bundled skill must be installed (it provides /revue)"
+    )
+    assert not (home / ".claude" / "commands" / "revue.md").exists(), (
+        "installer must NOT write a command-file shim — the skill provides /revue"
+    )
+    assert not (home / ".claude" / "commands" / "revue-local.md").exists(), (
+        "installer must NOT write a /revue-local command-file shim"
     )
 
 
@@ -244,10 +247,11 @@ def test_install_aborts_when_claude_code_not_detected(tmp_path):
     # Act
     result = _run_installer(env=env, cwd=tmp_path)
 
-    # Assert — installer exits non-zero with an actionable message
+    # Assert — installer exits non-zero with an actionable message and installs
+    # nothing (no skill written when Claude Code is absent).
     assert result.returncode != 0
     assert "Claude Code" in (result.stdout + result.stderr)
-    assert not (home / ".claude" / "commands" / "revue-local.md").exists()
+    assert not (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
 
 
 def test_install_is_idempotent_when_run_twice(installer_env):
@@ -267,8 +271,69 @@ def test_install_is_idempotent_when_run_twice(installer_env):
     uv_log = (bin_dir / "uv.log").read_text().strip().splitlines()
     assert len(uv_log) == 2
     assert all("tool install" in line and "--force" in line for line in uv_log)
-    command_file = home / ".claude" / "commands" / "revue-local.md"
-    assert command_file.exists(), "slash command must still be present after re-run"
+    skill_file = home / ".claude" / "skills" / "revue" / "SKILL.md"
+    assert skill_file.exists(), "skill must still be present after re-run"
+    assert not (home / ".claude" / "commands" / "revue.md").exists(), (
+        "no command-file shim is ever written, even on re-run"
+    )
+
+
+def test_install_removes_stale_command_shims_global_scope(installer_env):
+    """Upgrade cleanup: a prior installer's stale command-file shims (revue.md
+    from the duplicate-shim era, revue-local.md from the original era) are
+    removed so the upgraded install doesn't keep a dangling /revue-local or a
+    duplicate /revue colliding with the skill."""
+    # Arrange — global scope with both stale shims pre-seeded under ~/.claude.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    commands_dir = home / ".claude" / "commands"
+    commands_dir.mkdir(parents=True)
+    stale_revue = commands_dir / "revue.md"
+    stale_local = commands_dir / "revue-local.md"
+    stale_revue.write_text("# stale duplicate shim\n")
+    stale_local.write_text("# stale legacy shim\n")
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=installer_env["env"], cwd=installer_env["workspace"])
+
+    # Assert — both stale shims removed; skill installed as the sole /revue source.
+    assert result.returncode == 0, result.stderr
+    assert not stale_revue.exists(), "stale revue.md shim must be removed on upgrade"
+    assert not stale_local.exists(), "stale revue-local.md shim must be removed on upgrade"
+    assert (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
+
+
+def test_install_removes_stale_command_shims_project_scope(installer_env):
+    """Upgrade cleanup works in project scope too — stale shims under
+    <project>/.claude/commands are removed."""
+    # Arrange — project scope with both stale shims pre-seeded under the project.
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    workspace: Path = installer_env["workspace"]
+    project = workspace / "myrepo"
+    project.mkdir()
+    commands_dir = project / ".claude" / "commands"
+    commands_dir.mkdir(parents=True)
+    stale_revue = commands_dir / "revue.md"
+    stale_local = commands_dir / "revue-local.md"
+    stale_revue.write_text("# stale duplicate shim\n")
+    stale_local.write_text("# stale legacy shim\n")
+    env = dict(installer_env["env"])
+    env["REVUE_INSTALL_SCOPE"] = "project"
+    env["REVUE_INSTALL_PATH"] = str(project)
+    _make_stub(bin_dir, "uv")
+    _make_revue_stub(bin_dir, claude_skills_dir=home / ".claude" / "skills")
+
+    # Act
+    result = _run_installer(env=env, cwd=workspace)
+
+    # Assert — both stale shims removed under the project; skill installed there.
+    assert result.returncode == 0, result.stderr
+    assert not stale_revue.exists(), "stale project revue.md shim must be removed"
+    assert not stale_local.exists(), "stale project revue-local.md shim must be removed"
+    assert (project / ".claude" / "skills" / "revue" / "SKILL.md").exists()
 
 
 def test_install_reuses_existing_revue_yml_in_workspace(installer_env):
@@ -380,9 +445,8 @@ def test_wizard_dash_y_flag_forces_global_default(installer_env):
         env=env, cwd=installer_env["workspace"], args=["--yes"]
     )
 
-    # Assert — global paths written under ~/.claude, never the workspace.
+    # Assert — global skill written under ~/.claude, never the workspace.
     assert result.returncode == 0, result.stderr
-    assert (home / ".claude" / "commands" / "revue-local.md").exists()
     assert (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
     workspace: Path = installer_env["workspace"]
     assert not (workspace / ".claude").exists(), "global install must not write project .claude/"
@@ -402,9 +466,8 @@ def test_wizard_env_vars_skip_prompt_global(installer_env):
     # Act
     result = _run_installer(env=env, cwd=installer_env["workspace"])
 
-    # Assert — command + skill land under ~/.claude.
+    # Assert — skill lands under ~/.claude.
     assert result.returncode == 0, result.stderr
-    assert (home / ".claude" / "commands" / "revue-local.md").exists()
     assert (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
 
 
@@ -425,13 +488,14 @@ def test_wizard_env_vars_skip_prompt_project(installer_env):
     # Act
     result = _run_installer(env=env, cwd=workspace)
 
-    # Assert — AC3 command, AC4 skill, AC5 .revue.yml all under <project>.
+    # Assert — AC4 skill, AC5 .revue.yml all under <project>.
     assert result.returncode == 0, result.stderr
-    assert (project / ".claude" / "commands" / "revue-local.md").exists(), "AC3"
     assert (project / ".claude" / "skills" / "revue" / "SKILL.md").exists(), "AC4"
     assert (project / ".revue.yml").exists(), "AC5"
-    # Global locations must NOT be written for a project install.
-    assert not (home / ".claude" / "commands" / "revue-local.md").exists()
+    # No command-file shim is written in any scope.
+    assert not (project / ".claude" / "commands" / "revue.md").exists()
+    # Global skill location must NOT be written for a project install.
+    assert not (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
     # AC5: .revue.yml goes in the project, never in cwd.
     assert not (workspace / ".revue.yml").exists()
 
@@ -478,7 +542,7 @@ def test_wizard_env_path_supports_tilde_expansion(installer_env):
 
     # Assert — files land under the expanded $HOME/tildeproj path.
     assert result.returncode == 0, result.stderr
-    assert (project / ".claude" / "commands" / "revue-local.md").exists()
+    assert (project / ".claude" / "skills" / "revue" / "SKILL.md").exists()
     assert (project / ".revue.yml").exists()
 
 
@@ -505,7 +569,7 @@ def test_wizard_falls_back_to_global_when_no_tty(installer_env):
 
     # Assert — exit 0, global install performed, fallback message surfaced.
     assert result.returncode == 0, result.stderr
-    assert (home / ".claude" / "commands" / "revue-local.md").exists()
+    assert (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
     combined = (result.stdout + result.stderr).lower()
     assert "global" in combined and "tty" in combined
 
@@ -621,7 +685,7 @@ def test_install_path_ignored_warning_when_scope_global(installer_env):
 
     # Assert — install is global AND the warning is surfaced (not a hard error).
     assert result.returncode == 0, result.stderr
-    assert (home / ".claude" / "commands" / "revue-local.md").exists()
+    assert (home / ".claude" / "skills" / "revue" / "SKILL.md").exists()
     combined = result.stdout + result.stderr
     assert "REVUE_INSTALL_PATH ignored" in combined
     # The unused project path must NOT have received an install.
@@ -653,8 +717,8 @@ def test_project_scope_succeeds_without_claude_home_dir(tmp_path):
 
     # Assert — succeeds and writes under the project, despite ~/.claude absence.
     assert result.returncode == 0, result.stderr
-    assert (project / ".claude" / "commands" / "revue-local.md").exists()
     assert (project / ".claude" / "skills" / "revue" / "SKILL.md").exists()
+    assert not (project / ".claude" / "commands" / "revue.md").exists()
     assert (project / ".revue.yml").exists()
     assert not (home / ".claude").exists(), "project install must not create ~/.claude"
 
@@ -724,7 +788,7 @@ def test_install_tilde_slash_path_expands_to_home(installer_env):
 
     # Assert — files land under $HOME/sub.
     assert result.returncode == 0, result.stderr
-    assert (project / ".claude" / "commands" / "revue-local.md").exists()
+    assert (project / ".claude" / "skills" / "revue" / "SKILL.md").exists()
     assert (project / ".revue.yml").exists()
 
 
@@ -842,11 +906,10 @@ def test_install_honours_claude_config_dir_for_global_scope(installer_env, tmp_p
     # Act
     result = _run_installer(env=env, cwd=workspace)
 
-    # Assert — commands + skills land under CLAUDE_CONFIG_DIR, not ~/.claude.
+    # Assert — skill lands under CLAUDE_CONFIG_DIR, not ~/.claude.
     assert result.returncode == 0, result.stderr
-    assert (cfg / "commands" / "revue-local.md").exists()
     assert (cfg / "skills" / "revue" / "SKILL.md").exists()
-    assert not (home / ".claude" / "commands" / "revue-local.md").exists(), (
+    assert not (home / ".claude" / "skills" / "revue" / "SKILL.md").exists(), (
         "must not write to ~/.claude when CLAUDE_CONFIG_DIR is set"
     )
 
@@ -992,8 +1055,8 @@ def test_project_scope_without_path_or_tty_warns_and_uses_cwd(installer_env):
     assert result.returncode == 0, result.stderr
     combined = result.stdout + result.stderr
     assert "no REVUE_INSTALL_PATH set" in combined and "current directory" in combined
-    assert (workspace / ".claude" / "commands" / "revue-local.md").exists()
-    assert not (home / ".claude" / "commands").exists(), "project scope must not write global"
+    assert (workspace / ".claude" / "skills" / "revue" / "SKILL.md").exists()
+    assert not (home / ".claude" / "skills").exists(), "project scope must not write global"
 
 
 @pytest.mark.skipif(

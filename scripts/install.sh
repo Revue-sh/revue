@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-command installer for /revue-local Claude Code skill.
+# One-command installer for /revue Claude Code skill.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/cbscd/revue/main/scripts/install.sh | bash
@@ -11,13 +11,14 @@
 # Design (REVUE-276 / E-P2A-S2, extended by REVUE-354):
 # 1. Prefers `uv tool install --force revue` (modern pip replacement)
 # 2. Falls back to `pipx install --force revue` if uv absent
-# 3. Auto-detects Claude Code (~/.claude) and writes slash command shim
+# 3. Auto-detects Claude Code (~/.claude) and installs the bundled skill (which
+#    is the sole source of /revue); removes any stale command-file shim
 # 4. Auto-detects .revue.yml in workspace and reuses it
 # 5. Aborts if Claude Code not found
 #
 # REVUE-354 install wizard — choose install *scope*:
-#   * global  (default): writes ~/.claude/commands + ~/.claude/skills, .revue.yml in $(pwd)
-#   * project: writes <project>/.claude/commands + <project>/.claude/skills + <project>/.revue.yml
+#   * global  (default): installs into ~/.claude/skills, .revue.yml in $(pwd)
+#   * project: installs into <project>/.claude/skills + <project>/.revue.yml
 #
 # Because the script is consumed via `curl ... | bash`, stdin IS the script
 # content — interactive prompts therefore read from /dev/tty (the canonical
@@ -174,36 +175,27 @@ install_skill() {
   revue install-skill --target-dir "$skills_dir" --overwrite
 }
 
-# Write the Claude Code slash command shim
-write_slash_command() {
+# Remove any stale command-file shim left by a prior installer.
+#
+# The shipped skill (~/.claude/skills/revue) already registers `/revue`; an
+# additional ~/.claude/commands/revue.md shim is a redundant duplicate that
+# collides with the skill on `/revue`. Earlier installer versions wrote that
+# shim (and an even-earlier one wrote revue-local.md). This installer writes no
+# command file; it only cleans up the stale shims so upgraded installs don't keep
+# a dangling /revue-local or a duplicate /revue. Best-effort: never abort the
+# install if a stale file cannot be removed.
+remove_stale_slash_command() {
   local commands_dir="$1"
-  local command_file="${commands_dir}/revue-local.md"
-
-  mkdir -p "$commands_dir"
-
-  cat > "$command_file" <<'SLASH_CMD'
----
-name: revue-local
-description: Multi-agent code review — run locally in Claude Code before committing
----
-
-# /revue-local
-
-Run a multi-agent code review on your current staged diff using Revue, an AI code review tool that runs locally inside Claude Code. No platform APIs, no Anthropic spend — the tool uses your AI model of choice (defaulting to DeepSeek v4-pro).
-
-## Basic usage
-
-Invoke `/revue-local` on your staged changes:
-
-1. Stage your changes: `git add <files>`
-2. In Claude Code, run `/revue-local`
-3. Review the findings by severity
-4. Fix any Critical or High findings before committing
-
-See https://revue.sh/docs for full documentation.
-SLASH_CMD
-
-  info "Slash command written to ${command_file}"
+  local stale
+  for stale in "${commands_dir}/revue.md" "${commands_dir}/revue-local.md"; do
+    if [[ -f "$stale" ]]; then
+      if rm -f "$stale" 2>/dev/null; then
+        info "Removed stale slash command shim: ${stale}"
+      else
+        info "Could not remove stale slash command shim (continuing): ${stale}"
+      fi
+    fi
+  done
 }
 
 # Detect existing .revue.yml in workspace, or write a default if missing
@@ -364,7 +356,7 @@ resolve_scope() {
     # branch where the tty is open) means a Quick update no longer discards a
     # project path — because we never prompt for scope/path when the user
     # accepts the quick update.
-    if [[ -d "${CLAUDE_HOME}/skills/revue" || -f "${CLAUDE_HOME}/commands/revue-local.md" ]]; then
+    if [[ -d "${CLAUDE_HOME}/skills/revue" ]]; then
       local update_answer=""
       printf "Existing global install detected. [Q]uick update (default) or [M]odify scope? [Q] " >&3
       IFS= read -r update_answer <&3 || update_answer=""
@@ -501,7 +493,7 @@ resolve_project_dir() {
   # will be refreshed in place (install_skill already uses --overwrite, so this
   # IS the quick update). There is no sensible "modify scope" target for an
   # already-chosen project path, so we keep it minimal and proceed.
-  if [[ -n "$TTY_OPEN" && ( -d "${PROJECT_DIR}/.claude/skills/revue" || -f "${PROJECT_DIR}/.claude/commands/revue-local.md" ) ]]; then
+  if [[ -n "$TTY_OPEN" && -d "${PROJECT_DIR}/.claude/skills/revue" ]]; then
     printf "Existing project install detected at %s — quick-updating in place.\n" "$PROJECT_DIR" >&3
   fi
 }
@@ -562,12 +554,14 @@ main() {
   #   (1) verify a package manager exists FIRST — on a box with neither uv nor
   #       pipx we must NOT create any .claude dirs (finding A.1). command_exists
   #       has no side effects, so capture the choice and invoke it later.
-  #   (2) verify writability of ALL THREE target dirs — commands, skills, AND
+  #   (2) verify writability of the target dirs we actually write — skills AND
   #       revue_yml_dir (finding A.2). revue_yml_dir is checked first and is
   #       pre-existing (for global it's $(pwd)); ensure_writable_dir probes it
   #       with a temp file, since `mkdir -p` on an existing-but-unwritable dir
-  #       would falsely "succeed".
-  # Only after ALL pass do uv/pipx + skill + command shim + .revue.yml run.
+  #       would falsely "succeed". The commands dir is NOT pre-checked: the
+  #       installer writes no command file (the skill is the sole source of
+  #       /revue), and stale-shim cleanup is best-effort.
+  # Only after ALL pass do uv/pipx + skill + .revue.yml run.
   local pkg_mgr=""
   if command_exists uv; then
     pkg_mgr="uv"
@@ -580,9 +574,6 @@ main() {
   if ! ensure_writable_dir "$revue_yml_dir"; then
     error "Target directory is not writable: ${revue_yml_dir} (needed for ${REVUE_YML})."
   fi
-  if ! ensure_writable_dir "$commands_dir"; then
-    error "Target directory is not writable: ${commands_dir} (needed for the slash command)."
-  fi
   if ! ensure_writable_dir "$skills_dir"; then
     error "Target directory is not writable: ${skills_dir} (needed for the bundled skill)."
   fi
@@ -594,11 +585,13 @@ main() {
     install_via_pipx
   fi
 
-  # Step 5: Install the bundled skill into the scope-appropriate dir.
+  # Step 5: Install the bundled skill into the scope-appropriate dir. The skill
+  # is the sole source of /revue — no separate command-file shim is written.
   install_skill "$skills_dir"
 
-  # Step 6: Write slash command shim into the scope-appropriate dir.
-  write_slash_command "$commands_dir"
+  # Step 6: Remove any stale command-file shim from a prior installer so an
+  # upgraded install doesn't keep a dangling /revue-local or a duplicate /revue.
+  remove_stale_slash_command "$commands_dir"
 
   # Step 7: Detect and handle .revue.yml in the scope-appropriate dir.
   handle_revue_yml "$revue_yml_dir"
@@ -609,7 +602,7 @@ main() {
   # Step 8: Verify installation.
   info "Installation complete"
   revue --version
-  info "Ready to use: invoke /revue-local in Claude Code"
+  info "Ready to use: invoke /revue in Claude Code"
 }
 
 main "$@"

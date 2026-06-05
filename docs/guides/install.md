@@ -1,4 +1,4 @@
-# Installing `/revue-local`
+# Installing `/revue`
 
 ## Supported platforms
 
@@ -27,7 +27,7 @@ for the authoritative supported-platform list.
 
 ## One-command install (recommended)
 
-Revue offers a single curl-pipe-bash installer that sets up `/revue-local` in Claude Code and configures your workspace in under 5 minutes:
+Revue offers a single curl-pipe-bash installer that sets up `/revue` in Claude Code and configures your workspace in under 5 minutes:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cbscd/revue/main/scripts/install.sh | bash
@@ -41,8 +41,8 @@ Pre-MVP: fetches from GitHub. Post-MVP: distributes from `https://revue.sh/insta
 
 1. ✅ Detects Claude Code at `~/.claude`
 2. ✅ Installs `revue` via `uv tool install --force` (or falls back to `pipx`)
-3. ✅ Copies the bundled skill to `~/.claude/skills/revue`
-4. ✅ Writes slash command shim at `~/.claude/commands/revue-local.md`
+3. ✅ Copies the bundled skill to `~/.claude/skills/revue` — this is what provides `/revue`
+4. ✅ Removes any stale `/revue` or `/revue-local` command-file shim left by an older installer (the skill is now the single source of `/revue`)
 5. ✅ Auto-detects `.revue.yml` in your workspace — reuses if present, writes a default if missing
 6. ✅ Verifies installation with `revue --version`
 
@@ -87,33 +87,9 @@ pipx install revue
 revue install-skill
 ```
 
-This copies the skill into `~/.claude/skills/revue`.
+This copies the skill into `~/.claude/skills/revue`. The skill **is** `/revue` — there is no separate command file to create. After Claude Code reloads, `/revue` is available.
 
-### Step 3: Write the slash command
-
-Create `~/.claude/commands/revue-local.md`:
-
-```markdown
----
-name: revue-local
-description: Multi-agent code review — run locally in Claude Code before committing
----
-
-# /revue-local
-
-Run a multi-agent code review on your current staged diff using Revue. No platform APIs, no Anthropic spend — runs locally inside Claude Code.
-
-## Basic usage
-
-1. Stage your changes: `git add <files>`
-2. In Claude Code, run `/revue-local`
-3. Review findings by severity
-4. Fix Critical/High findings before committing
-
-See https://revue.sh/docs for full documentation.
-```
-
-### Step 4: Configure your workspace (optional)
+### Step 3: Configure your workspace (optional)
 
 The one-command installer writes a default `.revue.yml` if one is missing. If you're installing manually and want the same default, create `.revue.yml` in your project root:
 
@@ -143,7 +119,7 @@ Then test it:
 
 1. Edit a file in your project
 2. Stage the change: `git add <file>`
-3. In Claude Code, run `/revue-local`
+3. In Claude Code, run `/revue`
 
 You should see findings appear inline.
 
@@ -160,24 +136,24 @@ You should see findings appear inline.
 ~/.local/bin/revue --version  # or ~/.venv/bin/revue depending on your setup
 ```
 
-**Slash command doesn't trigger** — Restart Claude Code. New slash commands require a reload.
+**`/revue` doesn't trigger** — Restart Claude Code. A newly installed skill requires a reload before `/revue` is available.
 
-**"24h cache expired, needs revalidation"** — Run `revue-local activate <your-key>` to refresh the licence locally.
+**"24h cache expired, needs revalidation"** — Run `revue activate <your-key>` to refresh the licence locally.
 
 ## Post-install: wiring to your CLAUDE.md
 
-Optionally, add instructions to your project's `CLAUDE.md` so your AI agent knows to run `/revue-local` before committing:
+Optionally, add instructions to your project's `CLAUDE.md` so your AI agent knows to run `/revue` before committing:
 
 ```markdown
 ## Pre-commit review (Revue)
 
-Before staging a commit, invoke `/revue-local` on the diff against the
+Before staging a commit, invoke `/revue` on the diff against the
 current base branch. The skill returns multi-agent findings with severity.
 
 Rules:
 - Resolve any Critical or High finding before committing, or request
   explicit user override.
-- Re-run `/revue-local` after each fix to confirm the finding cleared.
+- Re-run `/revue` after each fix to confirm the finding cleared.
 - Medium and Low findings are advisory; surface them in the commit message
   if you decide not to fix them.
 
