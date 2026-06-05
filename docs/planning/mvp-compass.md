@@ -29,7 +29,7 @@ The narrative critical path (REVUE-275 → 280 → 281) and the launch spine —
 
 ### 🔴 Hard launch blockers — Activation UX cluster (epic REVUE-269, label `mvp`)
 
-The post-purchase **"now what?"** gap: today `/billing/success` shows no key or command, and `/onboarding` is CI-first — a just-paid user has no on-screen path to `revue activate`. The licence-key **email was rejected** (REVUE-383); activation is fully CLI + authenticated-web. This cluster closes the gap. Design spec: `_bmad-output/planning-artifacts/ux-activation-flow-spec.md`.
+The post-purchase **"now what?"** gap: today `/billing/success` shows no key or command, and `/onboarding` is CI-first — a just-paid user has no on-screen path to `revue activate`. The licence-key **email was rejected** (REVUE-383); activation is fully CLI + authenticated-web. This cluster closes the gap. Design spec: `docs/planning/ux-activation-flow-spec.md`.
 
 **Build order: `332 → 384 → 361 + 382 → 407 → 408 → 409`.**
 
@@ -92,7 +92,13 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 | REVUE-361 + REVUE-407 | `src/web/templates/onboarding.html` (CLI-first refactor + CI-YAML move to `/docs/ci-setup`) |
 | REVUE-328 + REVUE-330 + REVUE-336 | licence/cache path modules (`cache_paths.py`, `validate.py`) |
 
-**Sequencing now:** the activation-UX cluster has a hard chain — `332 → 384 → 361 + 382 → 407 → 408 → 409`. REVUE-384 must land before 361/382 (they consume its Command-Box). Live same-file risks: `landing.html` (REVUE-408 + 365 + 366) and `onboarding.html` (REVUE-361 + 407). New `src/web` tickets must coordinate `src/web/main.py` (it registers all middleware + the manifest router).
+**Concurrency lanes — activation-UX cluster:**
+- **Lane 0 (start together):** REVUE-332 (E2E infra), REVUE-384 (`/activate` + shared Command-Box), REVUE-407 (CI setup page) — no inter-dependency. 332 just needs to land before the others' E2E gates in CI.
+- **Lane 1 (after 384 lands):** REVUE-361 and REVUE-382 run in parallel — both consume 384's Command-Box but touch different files (`onboarding/billing_success` vs `dashboard/Account→Plan`), so no collision.
+- **Lane 2 (after 407's route exists):** REVUE-408 wires site-wide links to the CI page. Must serialize against REVUE-365 + REVUE-366 on `landing.html` — see collision table above.
+- **Lane 3 (last):** REVUE-409 reuses 361/382/384 tests via `E2E_BASE_URL`; requires 332 landed.
+
+**Hard serial points:** (a) 384 before 361 + 382 (shared component); (b) 409 last (reuses the others' tests). Everything else parallelizes. Note: 361 links to 407 via a `url_for` placeholder — 361 need not wait for 407 to finish.
 
 ---
 
