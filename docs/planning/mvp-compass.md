@@ -13,8 +13,8 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**49 / 69 done (71%) · 0 hard launch blockers · 1 strongly-should remaining.**
-The narrative critical path (REVUE-275 → 280 → 281) and the whole launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped.
+**~49 done · 7 hard launch blockers (activation-UX cluster, below) · run `/epic-progress REVUE-269` for the live tally.**
+The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The remaining gate is the **activation-UX cluster** (§ below): the post-purchase "now what?" path + supporting pages + E2E.
 
 **Recently shipped (last 5):**
 - **REVUE-406** — align Step-5b prompt with the lean compass model
@@ -27,11 +27,23 @@ The narrative critical path (REVUE-275 → 280 → 281) and the whole launch spi
 
 ## What's ahead
 
-### 🟠 Strongly-should — high-risk to skip (close before launch)
+### 🔴 Hard launch blockers — Activation UX cluster (epic REVUE-269, label `mvp`)
 
-| Jira | Story | Risk if skipped |
-|------|-------|-----------------|
-| REVUE-361 | Validate transactional email deliverability for activate flow | JWT-via-email landing in spam = zero activations = silent launch failure. **Unblocked** — REVUE-358 shipped the DNS auth (SPF/DKIM/DMARC pass, mail-tester 8/10). Build is mostly done; this is *validation* — confirm real inbox placement across Gmail/Outlook/custom domains. |
+The post-purchase **"now what?"** gap: today `/billing/success` shows no key or command, and `/onboarding` is CI-first — a just-paid user has no on-screen path to `revue activate`. The licence-key **email was rejected** (REVUE-383); activation is fully CLI + authenticated-web. This cluster closes the gap. Design spec: `_bmad-output/planning-artifacts/ux-activation-flow-spec.md`.
+
+**Build order: `332 → 384 → 361 + 382 → 407 → 408 → 409`.**
+
+| Jira | Story | Role in the chain |
+|------|-------|-------------------|
+| REVUE-332 | Out-of-process uvicorn E2E fixture | **Prerequisite** — web-UI E2E is CI-excluded until this lands |
+| REVUE-384 | Demote `/activate`; build the shared Activation Command-Box | Owns the component 361/382 consume — build first |
+| REVUE-361 | Post-purchase activation handoff (`/billing/success` + `/onboarding`) | Repurposed from the rejected email ticket; consumes 384, links 407 |
+| REVUE-382 | Account → Plan licence-status page | Consumes 384; data deps REVUE-389 + usage source |
+| REVUE-407 | Dedicated `/docs/ci-setup` page | Consolidates onboarding + `quickstart-*`; link target for 361/408 |
+| REVUE-408 | Site-wide two-mode (CLI/CI) messaging | `landing.html` is CI-only today; shared partial |
+| REVUE-409 | Post-merge Playwright E2E vs staging | Reuses 361/382/384 tests via `E2E_BASE_URL`; per-state staging accounts |
+
+Naming dep: **REVUE-386** (`revue` vs `revue-local`) feeds 361/384/407/408 command strings — resolve in lockstep.
 
 ### 🟡 Pre-launch polish — safe to slip
 
@@ -76,10 +88,11 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 
 | Pair / group | Shared file(s) |
 |---|---|
-| REVUE-365 + REVUE-366 | `src/web/templates/landing.html` (pricing copy + hero disclaimer) |
+| REVUE-365 + REVUE-366 + REVUE-408 | `src/web/templates/landing.html` (pricing copy + hero disclaimer + two-mode messaging) |
+| REVUE-361 + REVUE-407 | `src/web/templates/onboarding.html` (CLI-first refactor + CI-YAML move to `/docs/ci-setup`) |
 | REVUE-328 + REVUE-330 + REVUE-336 | licence/cache path modules (`cache_paths.py`, `validate.py`) |
 
-**Cleanest parallel work right now:** REVUE-361 (the sole strongly-should) is independent of every open ticket — safe alongside any polish/deferred item. The only same-file cautions are the two groups above. New `src/web` tickets must coordinate `src/web/main.py` (it registers all middleware + the manifest router).
+**Sequencing now:** the activation-UX cluster has a hard chain — `332 → 384 → 361 + 382 → 407 → 408 → 409`. REVUE-384 must land before 361/382 (they consume its Command-Box). Live same-file risks: `landing.html` (REVUE-408 + 365 + 366) and `onboarding.html` (REVUE-361 + 407). New `src/web` tickets must coordinate `src/web/main.py` (it registers all middleware + the manifest router).
 
 ---
 
