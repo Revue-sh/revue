@@ -91,7 +91,17 @@ def base_url(_e2e_db):
     monkeypatches — only the environment. ``DATABASE_PATH`` (honoured by
     ``database.get_db_path``) and ``SECRET_KEY`` are passed via ``env`` so the
     server boots against the same temporary DB the tests seed.
+
+    REVUE-407 staging parity (TC-11): when ``E2E_BASE_URL`` is set, the tests run
+    against that already-running deployment (e.g. staging) instead of spawning a
+    local subprocess. This keeps the same E2E suite usable for post-merge staging
+    validation without duplicating fixtures.
     """
+    staging_url = os.environ.get("E2E_BASE_URL")
+    if staging_url:
+        yield staging_url.rstrip("/")
+        return
+
     web_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     sock, port = _bound_listener()
     url = f"http://127.0.0.1:{port}"

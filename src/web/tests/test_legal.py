@@ -148,7 +148,7 @@ async def test_legal_pages_render_markdown_as_html(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_footer_links_present_on_main_pages(client: AsyncClient):
     # Public pages that must carry the legal footer links.
-    for path in ("/", "/activate", "/docs/quickstart-github", "/login", "/signup"):
+    for path in ("/", "/activate", "/docs/ci-setup", "/login", "/signup"):
         resp = await client.get(path, follow_redirects=True)
         assert b"/terms" in resp.content, f"missing /terms link on {path}"
         assert b"/privacy" in resp.content, f"missing /privacy link on {path}"

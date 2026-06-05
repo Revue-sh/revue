@@ -11,9 +11,10 @@ from httpx import AsyncClient
 
 @pytest.mark.asyncio
 async def test_docs_root_redirects(client: AsyncClient):
+    # REVUE-407: the docs index now lands on the consolidated CI-setup page.
     resp = await client.get("/docs", follow_redirects=False)
     assert resp.status_code == 302
-    assert resp.headers["location"] == "/docs/quickstart-github"
+    assert resp.headers["location"] == "/docs/ci-setup"
 
 
 @pytest.mark.asyncio
@@ -24,10 +25,9 @@ async def test_docs_unknown_slug_404(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_docs_all_nav_pages_reachable(client: AsyncClient):
+    # REVUE-407: the three quickstart slugs were consolidated into ci-setup.
     slugs = [
-        "quickstart-github",
-        "quickstart-gitlab",
-        "quickstart-bitbucket",
+        "ci-setup",
         "revue-yml-reference",
         "agents",
         "faq",
@@ -38,32 +38,43 @@ async def test_docs_all_nav_pages_reachable(client: AsyncClient):
 
 
 # =====================================================================
-# Page content
+# Legacy quickstart redirects (REVUE-407 AC5 — single source of truth)
 # =====================================================================
 
 @pytest.mark.asyncio
-async def test_docs_github_quickstart_content(client: AsyncClient):
-    resp = await client.get("/docs/quickstart-github")
+@pytest.mark.parametrize("slug", [
+    "quickstart-github",
+    "quickstart-gitlab",
+    "quickstart-bitbucket",
+])
+async def test_legacy_quickstart_redirects_to_ci_setup(client: AsyncClient, slug: str):
+    resp = await client.get(f"/docs/{slug}", follow_redirects=False)
+    assert resp.status_code == 301
+    assert resp.headers["location"] == "/docs/ci-setup"
+
+
+# =====================================================================
+# Page content — consolidated CI-setup page
+# =====================================================================
+
+@pytest.mark.asyncio
+async def test_ci_setup_covers_all_three_platforms(client: AsyncClient):
+    resp = await client.get("/docs/ci-setup")
     assert resp.status_code == 200
+    assert b"Bitbucket Pipelines" in resp.content
     assert b"GitHub Actions" in resp.content
+    assert b"GitLab CI" in resp.content
     assert b"REVUE_LICENSE_KEY" in resp.content
-    assert b"revue.yml" in resp.content
+    # Unified provider-key name (AC6).
+    assert b"AI_API_KEY" in resp.content
 
 
 @pytest.mark.asyncio
-async def test_docs_gitlab_quickstart_content(client: AsyncClient):
-    resp = await client.get("/docs/quickstart-gitlab")
+async def test_ci_setup_two_mode_framing(client: AsyncClient):
+    resp = await client.get("/docs/ci-setup")
     assert resp.status_code == 200
-    assert b"GitLab" in resp.content
-    assert b"REVUE_LICENSE_KEY" in resp.content
-
-
-@pytest.mark.asyncio
-async def test_docs_bitbucket_quickstart_content(client: AsyncClient):
-    resp = await client.get("/docs/quickstart-bitbucket")
-    assert resp.status_code == 200
-    assert b"Bitbucket" in resp.content
-    assert b"bitbucket-pipelines.yml" in resp.content
+    assert b"CI mode" in resp.content
+    assert b"revue activate" in resp.content
 
 
 @pytest.mark.asyncio
@@ -103,7 +114,7 @@ async def test_docs_faq_content(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_docs_has_sidebar_nav(client: AsyncClient):
-    resp = await client.get("/docs/quickstart-github")
+    resp = await client.get("/docs/ci-setup")
     assert b"Getting Started" in resp.content
     assert b"Reference" in resp.content
     assert b"Agent Catalogue" in resp.content
@@ -112,7 +123,7 @@ async def test_docs_has_sidebar_nav(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_docs_has_revue_branding(client: AsyncClient):
-    resp = await client.get("/docs/quickstart-github")
+    resp = await client.get("/docs/ci-setup")
     assert b"Revue" in resp.content
     assert b"Documentation" in resp.content
 
@@ -126,10 +137,11 @@ async def test_docs_active_page_highlighted(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_docs_has_prev_next_nav(client: AsyncClient):
-    # Middle page should have both prev and next
-    resp = await client.get("/docs/quickstart-gitlab")
-    assert b"GitHub Actions" in resp.content  # prev
-    assert b"Bitbucket" in resp.content       # next
+    # Markdown docs still carry prev/next links. revue-yml-reference sits between
+    # ci-setup (prev) and agents (next) in the NAV order.
+    resp = await client.get("/docs/revue-yml-reference")
+    assert b"CI Setup" in resp.content        # prev
+    assert b"Agent Catalogue" in resp.content  # next
 
 
 @pytest.mark.asyncio
@@ -150,6 +162,6 @@ async def test_docs_page_title_set(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_docs_get_started_link(client: AsyncClient):
-    resp = await client.get("/docs/quickstart-github")
+    resp = await client.get("/docs/ci-setup")
     assert b"Get started free" in resp.content
     assert b"/signup" in resp.content

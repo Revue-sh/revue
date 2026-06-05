@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}CI Setup — Revue Docs{% endblock %}
+{% block body %}
+<div class="min-h-full">
+    <!-- Top nav (mirrors docs.html) -->
+    <nav class="border-b border-gray-800 sticky top-0 bg-gray-950 z-10">
+        <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-6">
+                <a href="/" class="text-xl font-bold text-brand-400">Revue</a>
+                <span class="text-gray-700">|</span>
+                <span class="text-gray-400 text-sm font-medium">Documentation</span>
+            </div>
+            <div class="flex items-center gap-4">
+                <a href="/dashboard" class="text-gray-400 hover:text-white text-sm">Dashboard</a>
+                <a href="/signup" class="bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg">
+                    Get started free
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-6 py-8 flex gap-10">
+        <!-- Sidebar (mirrors docs.html) -->
+        <aside class="w-56 flex-shrink-0 sticky top-20 self-start">
+            {% for section in nav %}
+            <div class="mb-6">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2">{{ section.section }}</p>
+                <ul class="space-y-1">
+                    {% for page in section.pages %}
+                    <li>
+                        <a href="/docs/{{ page.slug }}"
+                           class="block px-3 py-1.5 rounded-lg text-sm {% if page.slug == current_slug %}bg-brand-600/20 text-brand-400 font-medium{% else %}text-gray-400 hover:text-white hover:bg-gray-800{% endif %}">
+                            {{ page.title }}
+                        </a>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endfor %}
+        </aside>
+
+        <!-- Content -->
+        <main class="flex-1 min-w-0">
+            <h1 class="text-2xl font-bold text-white mb-4">CI Setup</h1>
+
+            <!-- Two-mode framing (AC2) -->
+            <div class="bg-brand-600/10 border border-brand-600/30 rounded-xl p-5 mb-8">
+                <p class="text-gray-200 leading-relaxed">
+                    This page covers <strong class="text-white">CI mode</strong> — automated reviews on PRs/MRs.
+                    For local/pre-commit reviews use the CLI:
+                    <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">revue activate &lt;key&gt;</code>.
+                </p>
+                <p class="text-gray-400 text-sm mt-2">
+                    New to the CLI? See the
+                    <a href="/activate" class="text-brand-400 hover:underline">CLI activation guide</a>
+                    to get started in your terminal.
+                </p>
+            </div>
+
+            <!-- Unified secret-name note (AC6) -->
+            <p class="text-gray-300 leading-relaxed mb-6">
+                CI mode needs four pieces: your Revue licence key, an AI-provider API key, a pipeline
+                YAML step, and provider/model config. Across all three platforms Revue uses
+                <strong class="text-white">one</strong> provider-key variable name —
+                <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_API_KEY</code> —
+                so the setup is identical regardless of which AI provider you pick.
+            </p>
+
+            <!-- Platform tabs (AC3) -->
+            <div class="flex flex-wrap gap-1 mb-8" id="platform-tabs">
+                <button onclick="switchPlatform('bitbucket')" id="tab-bitbucket"
+                        class="px-4 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white">
+                    Bitbucket Pipelines
+                </button>
+                <button onclick="switchPlatform('github')" id="tab-github"
+                        class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-800 text-gray-400 hover:text-white">
+                    GitHub Actions
+                </button>
+                <button onclick="switchPlatform('gitlab')" id="tab-gitlab"
+                        class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-800 text-gray-400 hover:text-white">
+                    GitLab CI
+                </button>
+            </div>
+
+            <!-- ============================ BITBUCKET ============================ -->
+            <section id="panel-bitbucket" class="platform-panel space-y-6">
+                {{ step_block(
+                    1,
+                    "Add your licence key as a repository variable",
+                    'Go to <strong>Repository settings &rarr; Repository variables</strong> and add
+                     <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">REVUE_LICENSE_KEY</code>
+                     (mark it <em>Secured</em>).'
+                ) }}
+                {{ step_block(
+                    2,
+                    "Add your AI-provider API key",
+                    'In the same <strong>Repository variables</strong> screen add
+                     <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_API_KEY</code>
+                     (Secured). This one variable name works for every provider.'
+                ) }}
+                {{ yaml_step(3, "Add bitbucket-pipelines.yml", "bitbucket", BITBUCKET_YAML) }}
+                {{ provider_step(4, "bitbucket", "anthropic", "claude-sonnet-4-5") }}
+            </section>
+
+            <!-- ============================= GITHUB ============================= -->
+            <section id="panel-github" class="platform-panel space-y-6 hidden">
+                {{ step_block(
+                    1,
+                    "Add your licence key as a secret",
+                    'Go to <strong>Settings &rarr; Secrets and variables &rarr; Actions &rarr; New repository secret</strong>
+                     and add <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">REVUE_LICENSE_KEY</code>.'
+                ) }}
+                {{ step_block(
+                    2,
+                    "Add your AI-provider API key",
+                    'Add another secret named
+                     <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_API_KEY</code>
+                     in the same screen. One name, any provider.'
+                ) }}
+                {{ yaml_step(3, "Add .github/workflows/revue.yml", "github", GITHUB_YAML) }}
+                {{ provider_step(4, "github", "anthropic", "claude-sonnet-4-5") }}
+            </section>
+
+            <!-- ============================= GITLAB ============================= -->
+            <section id="panel-gitlab" class="platform-panel space-y-6 hidden">
+                {{ step_block(
+                    1,
+                    "Add your licence key as a CI/CD variable",
+                    'Go to <strong>Settings &rarr; CI/CD &rarr; Variables &rarr; Add variable</strong> and add
+                     <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">REVUE_LICENSE_KEY</code>
+                     (Masked).'
+                ) }}
+                {{ step_block(
+                    2,
+                    "Add your AI-provider API key",
+                    'Add another variable named
+                     <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_API_KEY</code>
+                     (Masked). The same name works whichever provider you use.'
+                ) }}
+                {{ yaml_step(3, "Add .gitlab-ci.yml", "gitlab", GITLAB_YAML) }}
+                {{ provider_step(4, "gitlab", "openai", "gpt-4o-mini") }}
+            </section>
+
+            <div class="mt-10 pt-6 border-t border-gray-800 text-sm text-gray-400">
+                Prefer local reviews? Run <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">revue activate &lt;key&gt;</code>
+                and review before you even open a PR — see the
+                <a href="/activate" class="text-brand-400 hover:underline">CLI activation guide</a>.
+            </div>
+        </main>
+    </div>
+</div>
+
+<script>
+function switchPlatform(platform) {
+    ['bitbucket', 'github', 'gitlab'].forEach(function (p) {
+        var tab = document.getElementById('tab-' + p);
+        var panel = document.getElementById('panel-' + p);
+        if (p === platform) {
+            tab.className = 'px-4 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white';
+            panel.classList.remove('hidden');
+        } else {
+            tab.className = 'px-4 py-2 rounded-lg text-sm font-medium bg-gray-800 text-gray-400 hover:text-white';
+            panel.classList.add('hidden');
+        }
+    });
+}
+</script>
+{% endblock %}
+
+{# ----------------------------------------------------------------------- #}
+{# Reusable building blocks. copyToClipboard is defined once in base.html   #}
+{# (REVUE-407 reuses it; it is NOT duplicated here).                        #}
+{# ----------------------------------------------------------------------- #}
+
+{% macro step_block(num, heading, body_html) %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+    <div class="flex items-center gap-3 mb-3">
+        <span class="bg-brand-600 text-white text-sm font-bold w-8 h-8 flex items-center justify-center rounded-full">{{ num }}</span>
+        <h2 class="font-semibold text-lg text-white">{{ heading }}</h2>
+    </div>
+    <p class="text-gray-400 text-sm">{{ body_html | safe }}</p>
+</div>
+{% endmacro %}
+
+{% macro yaml_step(num, heading, platform, yaml) %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+    <div class="flex items-center gap-3 mb-4">
+        <span class="bg-brand-600 text-white text-sm font-bold w-8 h-8 flex items-center justify-center rounded-full">{{ num }}</span>
+        <h2 class="font-semibold text-lg text-white">{{ heading }}</h2>
+    </div>
+    <div class="relative">
+        <pre class="bg-gray-950 border border-gray-800 rounded-lg p-4 text-sm text-gray-300 overflow-x-auto"><code>{{ yaml }}</code></pre>
+        <button id="copy-{{ platform }}-yaml"
+                onclick="copyToClipboard(document.getElementById('{{ platform }}-yaml-src').textContent, 'copy-{{ platform }}-yaml')"
+                class="copy-btn absolute top-3 right-3 bg-gray-800 hover:bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg">
+            Copy
+        </button>
+    </div>
+    {# Hidden raw copy of the snippet — copyToClipboard reads its textContent so
+       multi-line YAML copies intact (same pattern as onboarding.html). #}
+    <pre id="{{ platform }}-yaml-src" class="hidden">{{ yaml }}</pre>
+</div>
+{% endmacro %}
+
+{% macro provider_step(num, platform, default_provider, default_model) %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+    <div class="flex items-center gap-3 mb-3">
+        <span class="bg-brand-600 text-white text-sm font-bold w-8 h-8 flex items-center justify-center rounded-full">{{ num }}</span>
+        <h2 class="font-semibold text-lg text-white">Choose your provider &amp; model</h2>
+    </div>
+    <p class="text-gray-400 text-sm mb-3">
+        Set <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_PROVIDER</code> and
+        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_MODEL</code> as variables
+        (or pass <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">--provider</code> /
+        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">--model</code> on the
+        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">revue-ci review</code> command).
+    </p>
+    <p class="text-gray-500 text-sm">
+        Sensible default for {{ platform | capitalize }}:
+        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_PROVIDER={{ default_provider }}</code>,
+        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_MODEL={{ default_model }}</code>.
+        This is only a default — any supported provider works with the same
+        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_API_KEY</code> variable.
+    </p>
+</div>
+{% endmacro %}
