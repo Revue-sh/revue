@@ -30,11 +30,18 @@ router = APIRouter()
 
 @router.get("/activate", response_class=HTMLResponse)
 async def activate_page(request: Request) -> HTMLResponse:
-    """Browser activation form. Unauthenticated — anyone with a licence
-    key can land here. The form POSTs to ``/api/v2/licence/activate`` via
-    a small inline script and renders the resulting JWT for the user to
-    copy into ``~/.config/revue/licence.jwt`` (or, for the CLI path,
-    invoke ``revue activate <key>`` instead).
+    """CLI-first activation fallback (REVUE-384). Unauthenticated — anyone with
+    a licence key can land here. Step 1 is a single paste input; on a valid
+    paste the Activation Command-Box echoes ``revue activate <key>`` as the
+    recommended path. The legacy browser-mint flow (POST
+    ``/api/v2/licence/activate``) moves below the fold, collapsed, as the only
+    raw-JWT surface.
+
+    The page takes no request input into its rendered context: the command and
+    its copy payload are built client-side from the pasted key (validated against
+    ``^lic_[a-f0-9]{32}$`` before anything renders). The reusable Command-Box's
+    masked state is owned by the Account→Plan consumer (out of scope here) and is
+    covered by a macro-render unit test, not this unauthenticated page.
     """
     return templates.TemplateResponse(request, "activate.html", {})
 

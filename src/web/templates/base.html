@@ -39,12 +39,33 @@
     {% include "partials/footer.html" %}
 
     <script>
-    function copyToClipboard(text, btnId) {
+    function copyToClipboard(text, btnId, label) {
+        // `label` is optional and defaults to 'Copied!' so existing callers
+        // (e.g. the dashboard licence card) are unaffected. The Activation
+        // Command-Box passes 'Copied! ✓' (REVUE-384).
+        const btn = document.getElementById(btnId);
+        // Capture the resting label ONCE so a rapid second click (while the
+        // button already reads the copied label) cannot snapshot that as the
+        // "original" and leave it stuck. Clear any in-flight revert timer too.
+        if (btn && !btn.dataset.copyOrig) { btn.dataset.copyOrig = btn.textContent; }
         navigator.clipboard.writeText(text).then(() => {
-            const btn = document.getElementById(btnId);
-            const orig = btn.textContent;
-            btn.textContent = 'Copied!';
-            setTimeout(() => { btn.textContent = orig; }, 2000);
+            if (!btn) return;
+            btn.textContent = label || 'Copied!';
+            if (btn._copyTimer) { clearTimeout(btn._copyTimer); }
+            btn._copyTimer = setTimeout(() => {
+                btn.textContent = btn.dataset.copyOrig || 'Copy';
+                delete btn.dataset.copyOrig;
+            }, 2000);
+        }).catch(() => {
+            // writeText can reject (insecure context, denied permission,
+            // unfocused document). Surface the failure instead of silently
+            // implying success — matters most for the masked-copy case. Clear
+            // any pending success-revert timer so it can't overwrite this label.
+            if (btn) {
+                if (btn._copyTimer) { clearTimeout(btn._copyTimer); }
+                btn.textContent = 'Copy failed';
+                delete btn.dataset.copyOrig;
+            }
         });
     }
     </script>

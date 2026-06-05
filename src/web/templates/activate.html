@@ -1,78 +1,177 @@
 {% extends "base.html" %}
+{% from "partials/command_box.html" import command_box %}
 
 {% block title %}Activate Revue{% endblock %}
 
 {% block body %}
 <section class="activate-section" style="max-width: 640px; margin: 4rem auto; padding: 2rem;">
-  <h1>Activate Revue</h1>
-  <p>
-    Paste your licence key below to generate the signed JWT that
-    <code>revue</code> uses for offline verification. If you prefer the
-    CLI flow, run <code>revue activate &lt;key&gt;</code> instead — same
-    result, no browser needed.
+  <h1 class="text-2xl font-semibold mb-2">Activate Revue</h1>
+
+  <p class="text-gray-400 mb-6">
+    Paste your licence key to get the one command to run in your terminal.
   </p>
 
-  <form id="activate-form" autocomplete="off">
-    <label for="licence-key">Licence key</label>
+  {# Step 1 — the single paste input. The command-box and mint form stay hidden
+     until the pasted value matches ^lic_[a-f0-9]{32}$. #}
+  <div class="mb-4">
+    <label for="licence-key" class="block text-sm text-gray-300 mb-1">Paste your licence key</label>
     <input
       type="text"
       id="licence-key"
       name="key"
       placeholder="lic_…"
-      required
-      pattern="^lic_[a-f0-9]{32}$"
       autocomplete="off"
       spellcheck="false"
-      style="width: 100%; font-family: monospace;"
+      class="w-full font-mono bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100"
     />
-    <input type="hidden" id="machine-fingerprint" name="machine_fingerprint" value="browser" />
+    <p id="licence-key-error" role="alert" class="text-sm text-red-400 mt-1" hidden></p>
+  </div>
 
-    <p class="text-sm text-gray-400 my-4">
-      By activating, you agree to our
-      <a href="/terms" class="text-purple-400 underline">Terms of Service</a>
-      and
-      <a href="/privacy" class="text-purple-400 underline">Privacy Policy</a>.
+  {# Step 2 — the reusable Command-Box (default state). Hidden until a valid
+     paste; filled client-side from the pasted value via the shared init below. #}
+  <div id="command-box-wrap" hidden>
+    {{ command_box(
+         dom_id="activation-command-box",
+         command="",
+         caption="Run this in your terminal — no browser needed.",
+    ) }}
+  </div>
+
+  {# Below the fold: the legacy browser-mint flow, collapsed by default. This is
+     the ONLY raw-JWT surface on the page. #}
+  <details id="mint-jwt" class="mt-10 border-t border-gray-800 pt-6">
+    <summary class="cursor-pointer text-gray-400 hover:text-gray-200 text-sm">Activate in browser (advanced)</summary>
+    <p class="text-sm text-gray-500 my-3">
+      Generates the signed JWT in your browser. Prefer the command above; use
+      this only if you cannot run the CLI.
     </p>
-
-    <button type="submit">Activate</button>
-  </form>
-
-  <div id="activate-result" role="status" aria-live="polite" style="margin-top: 2rem;"></div>
+    <form id="activate-form" autocomplete="off">
+      <input
+        type="text"
+        name="key"
+        id="mint-key"
+        placeholder="lic_…"
+        pattern="^lic_[a-f0-9]{32}$"
+        autocomplete="off"
+        spellcheck="false"
+        class="w-full font-mono bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100"
+      />
+      <input type="hidden" id="machine-fingerprint" name="machine_fingerprint" value="browser" />
+      <p class="text-sm text-gray-400 my-4">
+        By activating, you agree to our
+        <a href="/terms" class="text-purple-400 underline">Terms of Service</a>
+        and
+        <a href="/privacy" class="text-purple-400 underline">Privacy Policy</a>.
+      </p>
+      <button type="submit" class="bg-gray-800 hover:bg-gray-700 text-white text-sm px-4 py-2 rounded-lg">Activate in browser</button>
+    </form>
+    <div id="activate-result" role="status" aria-live="polite" style="margin-top: 2rem;"></div>
+  </details>
 
   <script>
     (function () {
+      // REVUE-384: command name lives in a single constant so a later rename
+      // (e.g. revue-local) is a one-line change.
+      const COMMAND_NAME = "revue";
+      const KEY_PATTERN = /^lic_[a-f0-9]{32}$/;
+
+      const input = document.getElementById("licence-key");
+      const errorEl = document.getElementById("licence-key-error");
+      const boxWrap = document.getElementById("command-box-wrap");
+      const box = document.getElementById("activation-command-box");
+      // Null-guard: if the page structure ever changes so these are absent,
+      // bail rather than throw a TypeError that kills the whole script.
+      const cmdEl = box ? box.querySelector(".command-box-command") : null;
+
+      function showError(msg) {
+        errorEl.textContent = msg;
+        errorEl.hidden = false;
+      }
+      function clearError() {
+        errorEl.textContent = "";
+        errorEl.hidden = true;
+      }
+      function hideBox() {
+        boxWrap.hidden = true;
+        // Never leave a stale payload that a later Copy could place on the
+        // clipboard. The payload is only ever a validated `revue activate <key>`.
+        box.dataset.copyPayload = "";
+        cmdEl.textContent = "";
+      }
+
+      // Sync the command-box to the current field value. `showMessage` controls
+      // whether an inline validation message is surfaced (true on blur/Enter so
+      // we don't nag on every keystroke). Returns true when the value is valid.
+      // The displayed command and the copy payload are ALWAYS kept in lock-step
+      // with the field — they can never disagree (review finding #4).
+      function sync(showMessage) {
+        const value = input.value.trim();
+        if (value === "") {
+          hideBox();
+          if (showMessage) showError("Paste your licence key to continue.");
+          return false;
+        }
+        if (!KEY_PATTERN.test(value)) {
+          hideBox();
+          if (showMessage) {
+            showError("That doesn't look like a licence key (expected lic_ followed by 32 hex characters).");
+          }
+          return false;
+        }
+        // Valid: the payload is exactly `revue activate <validated-key>`.
+        clearError();
+        const command = COMMAND_NAME + " activate " + value;
+        cmdEl.textContent = command;
+        box.dataset.copyPayload = command;
+        boxWrap.hidden = false;
+        return true;
+      }
+
+      if (input && box && cmdEl && errorEl && boxWrap) {
+        // On every keystroke: keep the box in sync (show it for a valid key,
+        // hide it the moment the value becomes invalid/empty) but stay quiet —
+        // the nag message only appears on blur/Enter.
+        input.addEventListener("input", function () { sync(false); });
+        input.addEventListener("blur", function () { sync(true); });
+        input.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") { e.preventDefault(); sync(true); }
+        });
+      } else {
+        console.warn("activate: command-box init skipped — expected elements missing.");
+      }
+
+      // Browser-mint fallback (below the fold) — unchanged behaviour, posts to
+      // the existing endpoint and renders the raw JWT.
       const form = document.getElementById("activate-form");
       const result = document.getElementById("activate-result");
-
+      if (!form || !result) return;
       form.addEventListener("submit", async function (event) {
         event.preventDefault();
         result.textContent = "Activating…";
-        const key = document.getElementById("licence-key").value.trim();
+        const key = document.getElementById("mint-key").value.trim();
         const machine_fingerprint = document.getElementById("machine-fingerprint").value;
-
         try {
           const resp = await fetch("/api/v2/licence/activate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key, machine_fingerprint }),
           });
-          const body = await resp.json();
-
-          // S10: build the result DOM via createElement + textContent
-          // rather than innerHTML string concatenation. The current
-          // server-side messages are static, but defence-in-depth: any
-          // future change that echoes user input back through body.error,
-          // body.message, or body.tier is automatically XSS-safe under
-          // this rendering path.
+          // A 5xx can return a non-JSON body (e.g. an HTML 502 page). Treat an
+          // unparseable body as an empty object so we surface a server-error
+          // message below rather than mislabelling it a network error.
+          let body;
+          try {
+            body = await resp.json();
+          } catch (parseErr) {
+            body = {};
+          }
           while (result.firstChild) result.removeChild(result.firstChild);
-
           function appendHeader(text) {
             const h = document.createElement("h2");
             h.textContent = text;
             result.appendChild(h);
           }
           function appendParagraph(parts) {
-            // parts: array of either {text: "..."} or {tag: "strong"|"code", text: "..."}
             const p = document.createElement("p");
             for (const part of parts) {
               if (part.tag) {
@@ -85,7 +184,6 @@
             }
             result.appendChild(p);
           }
-
           if (resp.ok) {
             appendHeader("JWT issued");
             appendParagraph([

@@ -1,0 +1,56 @@
+{#
+  Activation Command-Box — reusable shared component (REVUE-384).
+
+  A dark card with a brand-purple border, a monospace command line, and a Copy
+  button that flips to "Copied! ✓" for ~2s (reusing copyToClipboard from
+  base.html). Consumed by /activate (default state, full command visible) and,
+  later, the Account→Plan page (masked state). The macro emits ONLY the static
+  skeleton + a `data-copy-payload` attribute; the actual command text and copy
+  payload may be set server-side (params) or client-side (shared JS init).
+
+  States:
+    default  — `command` shown verbatim; Copy yields `copy_payload` (or `command`).
+    masked   — `masked_display` shown (e.g. lic_••••1234) while Copy still yields
+               the FULL `copy_payload`. The full value never appears as visible
+               text — only inside the `data-copy-payload` attribute.
+    copied   — transient label state owned by copyToClipboard, not rendered here.
+
+  Params:
+    dom_id        — id for the card element (defaults to "command-box"; the
+                    copy button id is derived as "<dom_id>-copy"). Restrict to
+                    HTML-id-safe characters; it is only ever rendered into
+                    autoescaped HTML-attribute contexts (never a JS string).
+    command       — the visible command line (default state).
+    copy_payload  — the exact string Copy writes to the clipboard.
+                    Defaults to `command` when omitted.
+    caption       — small helper text under the command (optional).
+    masked        — when true, render `masked_display` instead of `command`.
+    masked_display— the masked visible text (e.g. lic_••••1234).
+
+  Caller contract: in masked mode the caller MUST pass `copy_payload` (the full
+  unmasked value). Omitting it makes Copy yield the empty `command` default —
+  the masked display would have nothing to copy.
+#}
+{% macro command_box(dom_id="command-box", command="", copy_payload=none, caption="", masked=False, masked_display="") %}
+{% set _payload = copy_payload if copy_payload is not none else command %}
+{% set _visible = masked_display if masked else command %}
+<div id="{{ dom_id }}"
+     class="command-box bg-gray-950 border border-purple-500/60 rounded-lg p-4"
+     data-copy-payload="{{ _payload }}"
+     {% if masked %}data-masked="true"{% endif %}>
+  <div class="flex items-center justify-between gap-3">
+    <code class="command-box-command font-mono text-sm text-gray-100 break-all">{{ _visible }}</code>
+    {# The onclick is `this`-relative: it reads the payload off the enclosing
+       `.command-box` card and the button's own id. dom_id therefore appears
+       ONLY in HTML-attribute contexts (id="..."), which Jinja autoescapes — it
+       never enters a JS-string literal, so a hostile dom_id cannot break out. #}
+    <button id="{{ dom_id }}-copy"
+            type="button"
+            class="copy-btn shrink-0 bg-purple-600 hover:bg-purple-500 text-white text-xs px-3 py-1.5 rounded-lg"
+            onclick="copyToClipboard(this.closest('.command-box').dataset.copyPayload, this.id, 'Copied! ✓')">Copy</button>
+  </div>
+  {% if caption %}
+  <p class="command-box-caption text-xs text-gray-500 mt-2">{{ caption }}</p>
+  {% endif %}
+</div>
+{% endmacro %}

@@ -223,6 +223,13 @@ def test_browser_fallback_paste_key_roundtrips_into_cli(
     licence file the way a user would (AC3); then invoke the real CLI gate,
     which verifies the JWT against the embedded public key and proceeds
     (AC4 -> exit 0).
+
+    REVUE-384 redesign: the browser-mint form is no longer the page's hero.
+    It is the CLI-first fallback's "Activate in browser (advanced)" path,
+    collapsed below the fold inside a native ``<details id="mint-jwt">`` with
+    its own key input (``#mint-key``) and submit button. The round-trip is
+    unchanged in intent; we just expand the disclosure first, then drive the
+    mint form through it.
     """
     sync_playwright = pytest.importorskip(
         "playwright.sync_api",
@@ -242,8 +249,17 @@ def test_browser_fallback_paste_key_roundtrips_into_cli(
         page = browser.new_page()
         try:
             page.goto(f"{licence_server}/activate")
-            page.locator("#licence-key").fill(key)
-            page.locator("button[type='submit']").click()
+
+            # Expand the collapsed "Activate in browser (advanced)" disclosure
+            # to reveal the mint form (REVUE-384 moved it below the fold).
+            details = page.locator("#mint-jwt")
+            details.locator("summary").click()
+            mint_key = page.locator("#mint-key")
+            mint_key.wait_for(state="visible", timeout=10000)
+
+            # Paste a valid key into the mint form and submit it.
+            mint_key.fill(key)
+            page.locator("#mint-jwt button[type='submit']").click()
 
             # AC2: the JWT is rendered into the result surface (textarea).
             textarea = page.locator("#activate-result textarea")
@@ -398,10 +414,16 @@ def test_expired_pasted_token_is_rejected(
 def test_browser_form_rejects_invalid_key_without_rendering_jwt(
     licence_server, monkeypatch, tmp_path
 ):
-    """TC6: submitting the ``/activate`` fallback form with a malformed key
+    """TC6: submitting the browser-mint fallback form with a malformed key
     must be rejected by HTML5 validation (``pattern="^lic_[a-f0-9]{32}$"``)
     -- the form does not submit, no JWT is rendered, and the CLI is never
     invoked.
+
+    REVUE-384 redesign: the HTML5 ``pattern`` now lives on the mint form's own
+    input (``#mint-key``) inside the collapsed "Activate in browser (advanced)"
+    disclosure -- the top-level ``#licence-key`` paste input drives the
+    CLI-first command box via JS, not the mint POST. We expand the disclosure
+    and assert the mint input rejects the malformed key.
     """
     sync_playwright = pytest.importorskip(
         "playwright.sync_api",
@@ -413,13 +435,18 @@ def test_browser_form_rejects_invalid_key_without_rendering_jwt(
         page = browser.new_page()
         try:
             page.goto(f"{licence_server}/activate")
-            page.locator("#licence-key").fill("not-a-valid-key")
-            page.locator("button[type='submit']").click()
+
+            # Expand the collapsed mint form, then drive its key input.
+            page.locator("#mint-jwt summary").click()
+            mint_key = page.locator("#mint-key")
+            mint_key.wait_for(state="visible", timeout=10000)
+            mint_key.fill("not-a-valid-key")
+            page.locator("#mint-jwt button[type='submit']").click()
 
             # HTML5 pattern validation blocks submit; the field reports invalid
             # and the result surface stays empty (no JWT textarea appears).
             is_valid = page.evaluate(
-                "document.getElementById('licence-key').checkValidity()"
+                "document.getElementById('mint-key').checkValidity()"
             )
             assert is_valid is False, "malformed key must fail HTML5 validation"
 

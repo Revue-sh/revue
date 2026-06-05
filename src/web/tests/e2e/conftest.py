@@ -153,6 +153,44 @@ def base_url(_e2e_db):
 
 
 @pytest.fixture(scope="function")
+def seed_active_licence(_e2e_db):
+    """SQL factory: create a user + workspace + active licence, return the key.
+
+    REVUE-384: the e2e server runs out-of-process against the same SQLite file
+    (``DATABASE_PATH`` == ``_e2e_db``), so a row written here from the test
+    process is visible to the uvicorn child. Reuses the ``models`` layer
+    (``create_user``/``create_workspace``/``create_license_key``) rather than
+    raw SQL so the seed stays in lock-step with the schema. The returned key
+    matches ``generate_license_key()`` (``lic_`` + 32 hex), which is exactly the
+    shape ``/activate`` validates client-side.
+    """
+    import sqlite3
+    import uuid
+
+    from license import generate_license_key
+    from models import create_license_key, create_user, create_workspace
+
+    def _seed(*, tier: str = "indie") -> str:
+        key = generate_license_key()
+        conn = sqlite3.connect(_e2e_db)
+        conn.row_factory = sqlite3.Row
+        try:
+            user_id = create_user(
+                conn,
+                email=f"seed-{uuid.uuid4().hex[:8]}@test.com",
+                password_hash="x",
+            )
+            ws_id = create_workspace(conn, user_id, "seed-ws")
+            create_license_key(conn, ws_id, key, tier=tier)
+            conn.commit()
+        finally:
+            conn.close()
+        return key
+
+    return _seed
+
+
+@pytest.fixture(scope="function")
 def logged_in_page(page, base_url):
     """Create a user via the signup UI and return the logged-in Playwright page."""
     import uuid
