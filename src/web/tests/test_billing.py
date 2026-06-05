@@ -712,3 +712,437 @@ async def test_dashboard_reflects_db_tier_after_upgrade(client: AsyncClient, _tm
     assert "Pro" in resp.text
     assert "$29/mo" in resp.text          # pro price badge (USD)
     assert "$0/mo" not in resp.text       # stale free badge gone
+
+
+# =====================================================================
+# REVUE-413 — persist current_period_end + subscription_status; real
+# lapsed transition. Stripe-status → licence-state mapping:
+#   active / trialing            → active  (tier from price_id, is_active=1)
+#   past_due / unpaid            → LAPSED  (is_active=0, tier RETAINED)
+#   canceled / deleted-no-status → free    (tier reset via update_user_tier)
+#   incomplete / incomplete_expired / paused → no tier/is_active change
+# =====================================================================
+
+# A realistic Stripe subscription period-end: epoch seconds for a future
+# renewal date (2025-12-31T00:00:00Z). Stripe sends current_period_end as a
+# top-level epoch int on the subscription object.
+_PERIOD_END_EPOCH = 1767139200
+_PERIOD_END_ISO = "2025-12-31T00:00:00+00:00"
+
+
+def _make_subscription_event_full(
+    event_type: str,
+    customer_id: str,
+    price_id: str | None = None,
+    status: str | None = None,
+    current_period_end: int | None = None,
+) -> dict:
+    """Build a subscription event carrying status + current_period_end, the
+    two fields process_webhook_event previously discarded."""
+    obj: dict = {"customer": customer_id}
+    if price_id is not None:
+        obj["items"] = {"data": [{"price": {"id": price_id}}]}
+    if status is not None:
+        obj["status"] = status
+    if current_period_end is not None:
+        obj["current_period_end"] = current_period_end
+    return {"type": event_type, "data": {"object": obj}}
+
+
+def _seed_subscribed_user(email: str, customer_id: str, key: str, tier: str = "pro"):
+    """Create a user + workspace + active licence wired to a Stripe customer."""
+    from database import get_db
+    from models import create_user, create_workspace, create_license_key
+
+    with get_db() as conn:
+        uid = create_user(conn, email, "hash")
+        wsid = create_workspace(conn, uid, "ws")
+        create_license_key(conn, wsid, key, tier=tier, reviews_limit=None)
+        conn.execute(
+            "UPDATE users SET tier = ?, stripe_customer_id = ? WHERE id = ?",
+            (tier, customer_id, uid),
+        )
+    return uid
+
+
+def test_webhook_subscription_updated_persists_current_period_end(monkeypatch, _tmp_db):
+    """subscription.updated carrying current_period_end persists it onto the
+    licence row and it is readable via the licence accessor."""
+    # Arrange
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_413")
+    uid = _seed_subscribed_user("renew@test.com", "cus_renew", "lic_renew")
+    event = _make_subscription_event_full(
+        "customer.subscription.updated",
+        "cus_renew",
+        price_id="price_pro_413",
+        status="active",
+        current_period_end=_PERIOD_END_EPOCH,
+    )
+
+    # Act
+    from billing import process_webhook_event
+    from database import get_db
+    with get_db() as conn:
+        process_webhook_event(event, conn)
+
+    # Assert — renewal date persisted and readable through the active accessor
+    from models import get_license_for_user
+    with get_db() as conn:
+        lic = get_license_for_user(conn, uid)
+    assert lic.current_period_end == _PERIOD_END_ISO
+    assert lic.subscription_status == "active"
+    assert lic.is_active is True
+    assert lic.tier == "pro"
+
+
+def test_webhook_past_due_marks_lapsed_and_retains_tier(monkeypatch, _tmp_db):
+    """past_due status marks the licence is_active=False while RETAINING tier —
+    the Lapsed state must be reachable and NOT forced to free."""
+    # Arrange
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_413")
+    _seed_subscribed_user("lapsed@test.com", "cus_lapsed", "lic_lapsed")
+    event = _make_subscription_event_full(
+        "customer.subscription.updated",
+        "cus_lapsed",
+        price_id="price_pro_413",
+        status="past_due",
+        current_period_end=_PERIOD_END_EPOCH,
+    )
+
+    # Act
+    from billing import process_webhook_event
+    from database import get_db
+    with get_db() as conn:
+        result = process_webhook_event(event, conn)
+
+    # Assert — lapsed: inactive, tier retained (read via unfiltered accessor)
+    from models import get_license_by_key
+    with get_db() as conn:
+        lic = get_license_by_key(conn, "lic_lapsed")
+    assert lic.is_active is False
+    assert lic.tier == "pro"          # tier RETAINED, NOT forced to free
+    assert lic.subscription_status == "past_due"
+    assert "lapsed" in result
+
+
+def test_webhook_unpaid_marks_lapsed_and_retains_tier(monkeypatch, _tmp_db):
+    """unpaid status is treated identically to past_due: lapsed, tier retained."""
+    # Arrange
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_413")
+    _seed_subscribed_user("unpaid@test.com", "cus_unpaid", "lic_unpaid")
+    event = _make_subscription_event_full(
+        "customer.subscription.updated",
+        "cus_unpaid",
+        price_id="price_pro_413",
+        status="unpaid",
+    )
+
+    # Act
+    from billing import process_webhook_event
+    from database import get_db
+    with get_db() as conn:
+        process_webhook_event(event, conn)
+
+    # Assert
+    from models import get_license_by_key
+    with get_db() as conn:
+        lic = get_license_by_key(conn, "lic_unpaid")
+    assert lic.is_active is False
+    assert lic.tier == "pro"
+
+
+def test_webhook_recovery_from_lapsed_reactivates_licence(monkeypatch, _tmp_db):
+    """A lapsed licence that recovers (past_due → active) must flip is_active
+    back to True, or a paid-up user stays locked out forever."""
+    # Arrange — drive the licence into the lapsed state first
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_413")
+    _seed_subscribed_user("recover@test.com", "cus_recover", "lic_recover")
+    from billing import process_webhook_event
+    from database import get_db
+    with get_db() as conn:
+        process_webhook_event(
+            _make_subscription_event_full(
+                "customer.subscription.updated", "cus_recover",
+                price_id="price_pro_413", status="past_due",
+            ),
+            conn,
+        )
+
+    # Act — payment recovers; Stripe sends status=active
+    with get_db() as conn:
+        process_webhook_event(
+            _make_subscription_event_full(
+                "customer.subscription.updated", "cus_recover",
+                price_id="price_pro_413", status="active",
+                current_period_end=_PERIOD_END_EPOCH,
+            ),
+            conn,
+        )
+
+    # Assert — reactivated, tier intact, renewal date refreshed
+    from models import get_license_by_key
+    with get_db() as conn:
+        lic = get_license_by_key(conn, "lic_recover")
+    assert lic.is_active is True
+    assert lic.tier == "pro"
+    assert lic.subscription_status == "active"
+    assert lic.current_period_end == _PERIOD_END_ISO
+
+
+def test_webhook_canceled_status_downgrades_to_free(monkeypatch, _tmp_db):
+    """A genuine full cancellation (status=canceled) maps to free per the
+    documented rule — distinct from past_due's lapsed state."""
+    # Arrange — the cancelled subscription still carries a future
+    # current_period_end (Stripe sends it); the free row must NOT keep it.
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_413")
+    _seed_subscribed_user("canceled@test.com", "cus_canceled", "lic_canceled")
+    event = _make_subscription_event_full(
+        "customer.subscription.updated",
+        "cus_canceled",
+        price_id="price_pro_413",
+        status="canceled",
+        current_period_end=_PERIOD_END_EPOCH,
+    )
+
+    # Act
+    from billing import process_webhook_event
+    from database import get_db
+    with get_db() as conn:
+        result = process_webhook_event(event, conn)
+
+    # Assert — downgraded to free, renewal date cleared (no "renews on X")
+    from models import get_user_by_email, get_license_by_key
+    with get_db() as conn:
+        user = get_user_by_email(conn, "canceled@test.com")
+        lic = get_license_by_key(conn, "lic_canceled")
+    assert user.tier == "free"
+    assert "free" in result
+    assert lic.current_period_end is None
+
+
+def test_webhook_price_id_to_tier_derivation_unchanged_regression(monkeypatch, _tmp_db):
+    """REVUE-413 Test Case 4 (explicit regression): the existing
+    price_id → tier derivation is UNAFFECTED by the new status-dispatch path.
+
+    An active subscription event carrying a known price_id must still resolve to
+    the tier that ``tier_from_price_id`` maps that price to — i.e. the
+    status-driven dispatch added in REVUE-413 routes an active event through the
+    unchanged price→tier logic, not around it. Asserted for two distinct prices
+    so a single hard-coded tier can't pass by accident."""
+    # Arrange — two configured prices mapping to two different tiers
+    monkeypatch.setenv("STRIPE_PRICE_INDIE_MONTHLY", "price_indie_tc4")
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_tc4")
+    from billing import tier_from_price_id, process_webhook_event
+    from database import get_db
+    from models import get_license_by_key
+    # Sanity: the derivation function itself maps these prices as expected.
+    assert tier_from_price_id("price_indie_tc4") == "indie"
+    assert tier_from_price_id("price_pro_tc4") == "pro"
+
+    _seed_subscribed_user("tc4indie@test.com", "cus_tc4_indie", "lic_tc4_indie", tier="free")
+    _seed_subscribed_user("tc4pro@test.com", "cus_tc4_pro", "lic_tc4_pro", tier="free")
+
+    # Act — active subscription events carrying each known price_id
+    with get_db() as conn:
+        process_webhook_event(
+            _make_subscription_event_full(
+                "customer.subscription.updated", "cus_tc4_indie",
+                price_id="price_indie_tc4", status="active",
+            ),
+            conn,
+        )
+        process_webhook_event(
+            _make_subscription_event_full(
+                "customer.subscription.created", "cus_tc4_pro",
+                price_id="price_pro_tc4", status="active",
+            ),
+            conn,
+        )
+
+    # Assert — each licence resolved to the tier its price_id derives to,
+    # matching tier_from_price_id exactly (derivation unchanged by dispatch).
+    with get_db() as conn:
+        indie_lic = get_license_by_key(conn, "lic_tc4_indie")
+        pro_lic = get_license_by_key(conn, "lic_tc4_pro")
+    assert indie_lic.tier == tier_from_price_id("price_indie_tc4") == "indie"
+    assert pro_lic.tier == tier_from_price_id("price_pro_tc4") == "pro"
+
+
+def test_webhook_cancel_after_lapse_reactivates_free_licence(monkeypatch, _tmp_db):
+    """REVUE-413 review finding: a licence that lapsed (is_active=0) and then
+    cancels must land as an ACTIVE free-tier licence — otherwise the stale
+    is_active=0 from the lapse permanently locks the user out of the free quota
+    and the subscription_status stays a misleading 'past_due'."""
+    # Arrange — drive the licence into the lapsed state first
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_413")
+    _seed_subscribed_user("lapsecancel@test.com", "cus_lc", "lic_lc")
+    from billing import process_webhook_event
+    from database import get_db
+    with get_db() as conn:
+        process_webhook_event(
+            _make_subscription_event_full(
+                "customer.subscription.updated", "cus_lc",
+                price_id="price_pro_413", status="past_due",
+            ),
+            conn,
+        )
+
+    # Act — subscription is then cancelled (status=canceled)
+    with get_db() as conn:
+        process_webhook_event(
+            _make_subscription_event_full(
+                "customer.subscription.updated", "cus_lc",
+                price_id="price_pro_413", status="canceled",
+            ),
+            conn,
+        )
+
+    # Assert — free AND active again, status no longer stale 'past_due'
+    from models import get_license_by_key
+    with get_db() as conn:
+        lic = get_license_by_key(conn, "lic_lc")
+    assert lic.tier == "free"
+    assert lic.is_active is True       # NOT stuck at the lapsed is_active=0
+    assert lic.subscription_status == "canceled"
+
+
+def test_webhook_delete_after_lapse_reactivates_free_licence(monkeypatch, _tmp_db):
+    """Same reactivation requirement as cancel, via the deleted event path:
+    lapse then customer.subscription.deleted → active free licence."""
+    # Arrange — lapse first
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_413")
+    _seed_subscribed_user("lapsedel@test.com", "cus_ld", "lic_ld")
+    from billing import process_webhook_event
+    from database import get_db
+    with get_db() as conn:
+        process_webhook_event(
+            _make_subscription_event_full(
+                "customer.subscription.updated", "cus_ld",
+                price_id="price_pro_413", status="past_due",
+            ),
+            conn,
+        )
+
+    # Act — subscription deleted
+    with get_db() as conn:
+        process_webhook_event(
+            {"type": "customer.subscription.deleted",
+             "data": {"object": {"customer": "cus_ld", "items": {"data": []}}}},
+            conn,
+        )
+
+    # Assert — free, active, status reset
+    from models import get_license_by_key
+    with get_db() as conn:
+        lic = get_license_by_key(conn, "lic_ld")
+    assert lic.tier == "free"
+    assert lic.is_active is True
+    assert lic.subscription_status == "canceled"
+
+
+def test_webhook_incomplete_status_leaves_state_unchanged(monkeypatch, _tmp_db):
+    """incomplete status (checkout not finished) must not change tier or
+    is_active — the safest no-op per the documented mapping."""
+    # Arrange
+    monkeypatch.setenv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_413")
+    _seed_subscribed_user("incomplete@test.com", "cus_incomplete", "lic_incomplete")
+    event = _make_subscription_event_full(
+        "customer.subscription.updated",
+        "cus_incomplete",
+        price_id="price_pro_413",
+        status="incomplete",
+    )
+
+    # Act
+    from billing import process_webhook_event
+    from database import get_db
+    with get_db() as conn:
+        process_webhook_event(event, conn)
+
+    # Assert — unchanged from the seeded active pro state
+    from models import get_license_by_key
+    with get_db() as conn:
+        lic = get_license_by_key(conn, "lic_incomplete")
+    assert lic.is_active is True
+    assert lic.tier == "pro"
+
+
+def test_set_license_subscription_state_does_not_touch_tier(_tmp_db):
+    """set_license_subscription_state writes is_active + period/status without
+    altering tier or reviews_limit (unlike update_user_tier)."""
+    # Arrange
+    from database import get_db
+    from models import (
+        create_user, create_workspace, create_license_key,
+        set_license_subscription_state, get_license_by_key,
+    )
+    with get_db() as conn:
+        uid = create_user(conn, "state@test.com", "hash")
+        wsid = create_workspace(conn, uid, "ws")
+        create_license_key(conn, wsid, "lic_state", tier="pro", reviews_limit=None)
+
+    # Act
+    with get_db() as conn:
+        set_license_subscription_state(
+            conn, uid,
+            is_active=False,
+            subscription_status="past_due",
+            current_period_end=_PERIOD_END_ISO,
+        )
+
+    # Assert
+    with get_db() as conn:
+        lic = get_license_by_key(conn, "lic_state")
+    assert lic.is_active is False
+    assert lic.tier == "pro"               # untouched
+    assert lic.reviews_limit is None       # untouched
+    assert lic.subscription_status == "past_due"
+    assert lic.current_period_end == _PERIOD_END_ISO
+
+
+def test_license_keys_migration_safe_on_existing_rows(_tmp_db, tmp_path):
+    """The current_period_end + subscription_status migration applies cleanly
+    forward and is safe on a pre-migration license_keys row (columns added,
+    default NULL, existing data intact)."""
+    # Arrange — build a DB whose license_keys lacks the two new columns,
+    # simulating a row created before this migration shipped.
+    import sqlite3
+    db_path = str(tmp_path / "legacy.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """CREATE TABLE license_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            key TEXT UNIQUE NOT NULL,
+            tier TEXT NOT NULL DEFAULT 'free',
+            reviews_used_this_month INTEGER DEFAULT 0,
+            reviews_limit INTEGER DEFAULT 25,
+            period_reset_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_active INTEGER DEFAULT 1
+        )"""
+    )
+    conn.execute(
+        "INSERT INTO license_keys (workspace_id, key, tier) VALUES (1, 'legacy_key', 'indie')"
+    )
+    conn.commit()
+    conn.close()
+
+    # Act — run the migration forward against the legacy DB
+    from database import _run_migrations
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _run_migrations(conn)
+    conn.commit()
+
+    # Assert — new columns exist, default NULL, legacy data preserved
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(license_keys)").fetchall()}
+    assert "current_period_end" in cols
+    assert "subscription_status" in cols
+    row = conn.execute(
+        "SELECT tier, current_period_end, subscription_status FROM license_keys WHERE key = 'legacy_key'"
+    ).fetchone()
+    conn.close()
+    assert row["tier"] == "indie"                  # existing data intact
+    assert row["current_period_end"] is None       # safe default
+    assert row["subscription_status"] is None

@@ -40,6 +40,11 @@ class LicenseKey:
     period_reset_at: Optional[str]
     created_at: str
     is_active: bool
+    # REVUE-413: Stripe renewal date (ISO-8601 UTC) + raw subscription status,
+    # persisted from the subscription webhook. Optional — NULL on legacy/pre-
+    # migration rows and until the first subscription event arrives.
+    current_period_end: Optional[str] = None
+    subscription_status: Optional[str] = None
 
 
 @dataclass
@@ -84,6 +89,7 @@ def row_to_user(row: sqlite3.Row) -> User:
 
 
 def row_to_license_key(row: sqlite3.Row) -> LicenseKey:
+    keys = row.keys()
     return LicenseKey(
         id=row["id"],
         workspace_id=row["workspace_id"],
@@ -94,6 +100,11 @@ def row_to_license_key(row: sqlite3.Row) -> LicenseKey:
         period_reset_at=row["period_reset_at"],
         created_at=row["created_at"],
         is_active=bool(row["is_active"]),
+        # Defensive read (like row_to_user): a pre-migration row lacks these
+        # columns, so guard with ``in keys`` rather than a bare row[...] that
+        # would raise on the missing column. REVUE-413.
+        current_period_end=row["current_period_end"] if "current_period_end" in keys else None,
+        subscription_status=row["subscription_status"] if "subscription_status" in keys else None,
     )
 
 
@@ -558,6 +569,34 @@ def update_user_tier(conn: sqlite3.Connection, user_id: int, tier: str) -> None:
         """UPDATE license_keys SET tier = ?, reviews_limit = ?
            WHERE workspace_id IN (SELECT id FROM workspaces WHERE user_id = ?)""",
         (tier, limit, user_id),
+    )
+
+
+def set_license_subscription_state(
+    conn: sqlite3.Connection,
+    user_id: int,
+    *,
+    is_active: bool,
+    subscription_status: Optional[str] = None,
+    current_period_end: Optional[str] = None,
+) -> None:
+    """Persist Stripe subscription state onto the user's licence row(s) WITHOUT
+    touching tier or reviews_limit.
+
+    REVUE-413: this is the lapsed/recovery path. ``update_user_tier`` force-sets
+    tier + reviews_limit, which would discard the retained tier the Lapsed state
+    depends on, so the lapsed/active-recovery transitions use this function
+    instead. ``is_active=False`` with the tier left intact is what makes the
+    Lapsed state (inactive licence, tier preserved) reachable in production;
+    flipping ``is_active`` back to True on recovery un-locks a user who paid up.
+
+    Scope matches ``update_user_tier``: every licence under the user's workspaces.
+    """
+    conn.execute(
+        """UPDATE license_keys
+           SET is_active = ?, subscription_status = ?, current_period_end = ?
+           WHERE workspace_id IN (SELECT id FROM workspaces WHERE user_id = ?)""",
+        (1 if is_active else 0, subscription_status, current_period_end, user_id),
     )
 
 

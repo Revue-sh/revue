@@ -47,7 +47,15 @@ CREATE TABLE IF NOT EXISTS license_keys (
     reviews_limit INTEGER DEFAULT 25,
     period_reset_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_active INTEGER DEFAULT 1
+    is_active INTEGER DEFAULT 1,
+    -- REVUE-413: Stripe subscription metadata persisted from the webhook.
+    -- ``current_period_end`` is the renewal/expiry instant (ISO-8601 UTC string,
+    -- derived from the subscription's epoch ``current_period_end``); the Account
+    -- → Plan page (REVUE-382) renders it as the renewal line. ``subscription_status``
+    -- is the raw Stripe status (active/past_due/unpaid/canceled/...) that drives
+    -- the lapsed-vs-free state. Both NULL until the first subscription webhook.
+    current_period_end TIMESTAMP,
+    subscription_status TEXT
 );
 
 CREATE TABLE IF NOT EXISTS review_runs (
@@ -184,22 +192,40 @@ _ACTIVATION_ATTEMPTS_MIGRATIONS = [
     ("blocked", "ALTER TABLE activation_attempts ADD COLUMN blocked INTEGER DEFAULT 0"),
 ]
 
+_LICENSE_KEYS_MIGRATIONS = [
+    # REVUE-413: persist the Stripe renewal date + raw subscription status so the
+    # webhook no longer discards them. Safe/idempotent on existing rows — both
+    # default NULL until the next subscription.created/updated event populates them.
+    ("current_period_end", "ALTER TABLE license_keys ADD COLUMN current_period_end TIMESTAMP"),
+    ("subscription_status", "ALTER TABLE license_keys ADD COLUMN subscription_status TEXT"),
+]
+
 
 def _run_migrations(conn: sqlite3.Connection) -> None:
-    """Apply idempotent column migrations. SQLite doesn't support ADD COLUMN IF NOT EXISTS."""
+    """Apply idempotent column migrations. SQLite doesn't support ADD COLUMN IF NOT EXISTS.
+
+    Each block guards on the target table actually existing (``if <table>_cols``)
+    so a partial schema — e.g. a fixture DB holding only license_keys — does not
+    crash the run with ``no such table``.
+    """
     user_cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
     for col_name, sql in _USERS_MIGRATIONS:
-        if col_name not in user_cols:
+        if user_cols and col_name not in user_cols:
             conn.execute(sql)
 
     run_cols = {row[1] for row in conn.execute("PRAGMA table_info(review_runs)").fetchall()}
     for col_name, sql in _REVIEW_RUNS_MIGRATIONS:
-        if col_name not in run_cols:
+        if run_cols and col_name not in run_cols:
             conn.execute(sql)
 
     attempt_cols = {row[1] for row in conn.execute("PRAGMA table_info(activation_attempts)").fetchall()}
     for col_name, sql in _ACTIVATION_ATTEMPTS_MIGRATIONS:
         if attempt_cols and col_name not in attempt_cols:
+            conn.execute(sql)
+
+    lk_cols = {row[1] for row in conn.execute("PRAGMA table_info(license_keys)").fetchall()}
+    for col_name, sql in _LICENSE_KEYS_MIGRATIONS:
+        if lk_cols and col_name not in lk_cols:
             conn.execute(sql)
 
 

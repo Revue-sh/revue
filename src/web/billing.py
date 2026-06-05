@@ -27,9 +27,68 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 _LOG = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# REVUE-413: Stripe subscription-status → licence-state mapping
+# ---------------------------------------------------------------------------
+# A subscription.created/updated event carries a ``status``. That status decides
+# whether the licence stays active, lapses (inactive but tier retained), drops
+# to free, or is left untouched. Encoded as a registry (not an if/elif chain) so
+# adding a status is a one-line table edit. Any status NOT listed here is treated
+# as "no_change" (the safe default) — a new/unknown Stripe status never silently
+# downgrades or unlocks a customer.
+#
+#   "active"   → set tier from price_id, is_active=True   (normal / recovery)
+#   "lapsed"   → is_active=False, RETAIN tier             (dunning: past_due/unpaid)
+#   "free"     → reset tier to free via update_user_tier  (genuine cancellation)
+#   "no_change"→ leave tier + is_active untouched         (transient states)
+_SUBSCRIPTION_STATUS_STATE: dict[str, str] = {
+    "active": "active",
+    "trialing": "active",
+    "past_due": "lapsed",
+    "unpaid": "lapsed",
+    "canceled": "free",
+    "incomplete": "no_change",
+    "incomplete_expired": "no_change",
+    "paused": "no_change",
+}
+
+# When a subscription.created/updated event omits ``status`` entirely (older
+# fixtures, partial payloads), assume the subscription is live — this preserves
+# the pre-REVUE-413 behaviour where a status-less created/updated event upgraded
+# the tier from the price id.
+_DEFAULT_STATUS_STATE = "active"
+
+
+def _state_for_status(status: Optional[str]) -> str:
+    """Map a raw Stripe subscription status to a licence state token.
+
+    The state tokens (``active`` / ``lapsed`` / ``free`` / ``no_change``) and the
+    full status→state table are defined on ``_SUBSCRIPTION_STATUS_STATE`` above —
+    see that block comment for the token list and per-state semantics.
+
+    Unknown statuses map to ``"no_change"`` so an unrecognised value can never
+    downgrade or re-activate a licence by accident.
+    """
+    if status is None:
+        return _DEFAULT_STATUS_STATE
+    return _SUBSCRIPTION_STATUS_STATE.get(status, "no_change")
+
+
+def _epoch_to_iso(epoch: Optional[int]) -> Optional[str]:
+    """Convert a Stripe epoch-seconds timestamp to an ISO-8601 UTC string.
+
+    Stripe sends ``current_period_end`` as integer epoch seconds; the licence row
+    stores it as a human-readable ISO instant. Returns None for a missing/None
+    value (no renewal date to persist).
+    """
+    if epoch is None:
+        return None
+    return datetime.fromtimestamp(int(epoch), tz=timezone.utc).isoformat()
 
 # ---------------------------------------------------------------------------
 # Tier config
@@ -240,9 +299,18 @@ def process_webhook_event(event, conn) -> str:
     """Process a verified Stripe webhook event and update the DB.
 
     Handles:
-        customer.subscription.created   → upgrade user tier
-        customer.subscription.updated   → sync tier on plan change
+        customer.subscription.created   → upgrade user tier (+ persist renewal/status)
+        customer.subscription.updated   → sync tier OR lapse OR cancel per status
         customer.subscription.deleted   → downgrade to free
+
+    On created/updated the licence state is driven by the subscription ``status``
+    via ``_SUBSCRIPTION_STATUS_STATE`` (REVUE-413):
+        active/trialing → set tier from price_id, is_active=True, persist renewal
+        past_due/unpaid → LAPSED: is_active=False, RETAIN tier, persist status
+        canceled        → downgrade to free (genuine cancellation)
+        other/unknown   → no change (safe default)
+
+    The ``deleted`` event always maps to free regardless of status.
 
     Args:
         event: stripe.Event object (already verified).
@@ -256,6 +324,7 @@ def process_webhook_event(event, conn) -> str:
         get_user_by_stripe_customer,
         update_user_tier,
         update_stripe_customer_id,
+        set_license_subscription_state,
     )
 
     event_type = event["type"]
@@ -304,11 +373,70 @@ def process_webhook_event(event, conn) -> str:
         return f"skipped:unknown_customer:{customer_id}"
 
     if event_type == "customer.subscription.deleted":
+        # The deleted event is a genuine, final cancellation — always free,
+        # regardless of any status field. Regression-locked behaviour.
         update_user_tier(conn, user.id, "free")
+        # Reset the subscription state too: a user who lapsed (is_active=0) and
+        # then cancels must land as an ACTIVE free-tier licence — otherwise the
+        # stale is_active=0 from the lapse permanently locks them out of the
+        # free quota, and the stale 'past_due' status misrenders. No renewal
+        # date for a cancelled subscription.
+        set_license_subscription_state(
+            conn, user.id,
+            is_active=True,
+            subscription_status="canceled",
+            current_period_end=None,
+        )
         _LOG.info("User %s downgraded to free (subscription cancelled)", user.id)
         return f"downgraded:user={user.id}:free"
 
-    # created / updated — find the tier from the price ID
+    # created / updated — dispatch on the subscription STATE first (REVUE-413).
+    # State must be resolved before any tier work: a `canceled` status can arrive
+    # on an updated event that still carries the (now-defunct) price id, and must
+    # map to free rather than re-upgrading to that price's tier.
+    status = obj.get("status")
+    state = _state_for_status(status)
+    period_end = _epoch_to_iso(obj.get("current_period_end"))
+
+    if state == "free":
+        # Genuine cancellation delivered as an updated event (status=canceled).
+        update_user_tier(conn, user.id, "free")
+        # Same reset as the deleted branch: clear any prior lapsed is_active=0 so
+        # the free-tier user keeps their free quota, and record the real status
+        # instead of leaving a stale 'past_due'. current_period_end is NULLed (not
+        # carried from the event): a cancelled subscription has no renewal date, so
+        # persisting Stripe's still-present current_period_end would make the
+        # Account → Plan page render a "renews on X" line for a free/cancelled plan.
+        set_license_subscription_state(
+            conn, user.id,
+            is_active=True,
+            subscription_status=status,
+            current_period_end=None,
+        )
+        _LOG.info("User %s downgraded to free (status=%s)", user.id, status)
+        return f"downgraded:user={user.id}:free:status={status}"
+
+    if state == "lapsed":
+        # Dunning (past_due / unpaid): suspend access but RETAIN the tier so the
+        # Lapsed state — inactive licence, tier preserved — is reachable and the
+        # Re-subscribe CTA is real. NOTE: Stripe always sends current_period_end
+        # on a subscription object, so persisting it here cannot null out a prior
+        # value in practice; no COALESCE guard needed.
+        set_license_subscription_state(
+            conn, user.id,
+            is_active=False,
+            subscription_status=status,
+            current_period_end=period_end,
+        )
+        _LOG.info("User %s lapsed (status=%s, tier retained)", user.id, status)
+        return f"lapsed:user={user.id}:status={status}"
+
+    if state == "no_change":
+        # Transient / unknown status (incomplete, paused, ...): touch nothing.
+        _LOG.info("User %s subscription status=%s — no licence change", user.id, status)
+        return f"skipped:status={status}"
+
+    # state == "active" — find the tier from the price ID and (re)activate.
     # `items` may arrive as null; coerce as with metadata above.
     items = (obj.get("items") or {}).get("data", [])
     price_id = items[0]["price"]["id"] if items else None
@@ -321,5 +449,13 @@ def process_webhook_event(event, conn) -> str:
         return f"skipped:unknown_price:{price_id}"
 
     update_user_tier(conn, user.id, new_tier)
-    _LOG.info("User %s upgraded to %s (price %s)", user.id, new_tier, price_id)
+    # Persist renewal date + status and (re)activate — a recovery from a prior
+    # lapsed state flips is_active back to True so the paid-up user is unlocked.
+    set_license_subscription_state(
+        conn, user.id,
+        is_active=True,
+        subscription_status=status,
+        current_period_end=period_end,
+    )
+    _LOG.info("User %s upgraded to %s (price %s, status=%s)", user.id, new_tier, price_id, status)
     return f"upgraded:user={user.id}:tier={new_tier}"
