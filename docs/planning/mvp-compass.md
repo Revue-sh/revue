@@ -86,10 +86,9 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 **Concurrency lanes — activation-UX cluster:**
 - **Lane 0 (landed):** REVUE-332 (E2E infra), REVUE-384 (`/activate` + shared Command-Box), REVUE-407 (CI setup page) — all done.
 - **Lane 1 (now open):** REVUE-361 and REVUE-382 run in parallel — both consume 384's Command-Box (done) but touch different files (`onboarding/billing_success` vs `dashboard/Account→Plan`), so no collision.
-- **Lane 2 (after 407's route — now open):** REVUE-408 wires site-wide links to the CI page. Must serialize against REVUE-365 + REVUE-366 on `landing.html` — see collision table above.
-- **Lane 3 (last):** REVUE-409 reuses 361/382/384 tests via `E2E_BASE_URL`; requires 332 landed.
+- **Lane 2 (now open):** REVUE-408 (site-wide two-mode links — serialize vs REVUE-365 + REVUE-366 on `landing.html`) **and** REVUE-409 (staging-E2E gate) run in parallel — no file collision (408=`landing.html`, 409=`bitbucket-pipelines.yml` + reuses existing `src/web/tests/e2e/`). REVUE-409 is gated on Lane 1 (361/382) + staging-deploy infra (347/348), **not** on 408; it reuses 361/382/384/407 tests via `E2E_BASE_URL` and adds no assertions. Its pipeline step gates prod promotion at *runtime*, but that's pipeline ordering, not a dev dependency on 408.
 
-**Hard serial points:** (a) 409 last (reuses the others' tests). Everything else parallelizes.
+**Hard serial points:** none — REVUE-409 depends on Lane 1's tests + staging deploy, not on 408. Everything else parallelizes.
 
 ---
 
