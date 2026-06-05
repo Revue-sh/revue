@@ -1,6 +1,6 @@
 # MVP Compass — /revue-local public launch
 
-**Last updated:** 2026-06-05 (activation-UX cluster scoped — REVUE-361 repurposed; 407/408/409 created; 383 rejected). Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
+**Last updated:** 2026-06-05 (REVUE-384/407/386 merged — activation-UX cluster: 384+407 done, 4 blockers remain). Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
 **Source of truth for "next pick."** Jira's priority field ≠ launch-path order; *this doc* is the launch-path order.
 
 ---
@@ -13,15 +13,15 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**~50 done · 6 hard launch blockers (activation-UX cluster, below) · run `/epic-progress REVUE-269` for the live tally.**
+**~53 done · 4 hard launch blockers (activation-UX cluster, below) · run `/epic-progress REVUE-269` for the live tally.**
 The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The remaining gate is the **activation-UX cluster** (§ below): the post-purchase "now what?" path + supporting pages + E2E.
 
 **Recently shipped (last 5):**
+- **REVUE-386** — drop redundant /revue command-file shim — skill is sole source of /revue
+- **REVUE-407** — dedicated /docs/ci-setup page consolidating all-platform CI instructions
+- **REVUE-384** — demote /activate to CLI-first paste-key fallback + reusable Command-Box
 - **REVUE-332** — Out-of-process uvicorn E2E fixture
 - **REVUE-406** — align Step-5b prompt with the lean compass model
-- **REVUE-397** — licence-validator retries transient API-unreachable before failing (bounded retry + backoff; SRP refactor)
-- **REVUE-339** — cooperative deadline + finalize budget reservation for agent_timeout (no lost findings on hard-kill)
-- **REVUE-362** — production observability on `/api/v2/licence/activate` (Prometheus `/metrics`, Fly alerts, Grafana dashboard) · ⚠️ staging-alert validation pending (`do-not-run-automation-after-merge`)
 
 ---
 
@@ -31,18 +31,14 @@ The narrative critical path (REVUE-275 → 280 → 281) and the launch spine —
 
 The post-purchase **"now what?"** gap: today `/billing/success` shows no key or command, and `/onboarding` is CI-first — a just-paid user has no on-screen path to `revue activate`. The licence-key **email was rejected** (REVUE-383); activation is fully CLI + authenticated-web. This cluster closes the gap. Design spec: `docs/planning/ux-activation-flow-spec.md`.
 
-**Build order: `332 → 384 → 361 + 382 → 407 → 408 → 409`.**
+**Build order: `361 + 382 → 408 → 409`.**
 
 | Jira | Story | Role in the chain |
 |------|-------|-------------------|
-| REVUE-384 | Demote `/activate`; build the shared Activation Command-Box | Owns the component 361/382 consume — build first |
-| REVUE-361 | Post-purchase activation handoff (`/billing/success` + `/onboarding`) | Repurposed from the rejected email ticket; consumes 384, links 407 |
-| REVUE-382 | Account → Plan licence-status page | Consumes 384; data deps REVUE-389 + usage source |
-| REVUE-407 | Dedicated `/docs/ci-setup` page | Consolidates onboarding + `quickstart-*`; link target for 361/408 |
+| REVUE-361 | Post-purchase activation handoff (`/billing/success` + `/onboarding`) | Repurposed from the rejected email ticket; consumes 384 (done), links 407 (done) |
+| REVUE-382 | Account → Plan licence-status page | Consumes 384 (done); data deps REVUE-389 + usage source |
 | REVUE-408 | Site-wide two-mode (CLI/CI) messaging | `landing.html` is CI-only today; shared partial |
 | REVUE-409 | Post-merge Playwright E2E vs staging | Reuses 361/382/384 tests via `E2E_BASE_URL`; per-state staging accounts |
-
-Naming dep: **REVUE-386** (`revue` vs `revue-local`) feeds 361/384/407/408 command strings — resolve in lockstep.
 
 ### 🟡 Important pre-launch polish — ship before public launch, not a hard technical gate
 
@@ -76,7 +72,6 @@ Naming dep: **REVUE-386** (`revue` vs `revue-local`) feeds 361/384/407/408 comma
 - **REVUE-399** — consolidate install-wizard stub fixtures into a shared factory (INFO; relates 395)
 - **REVUE-373** — `install.sh` calls non-existent `revue --version` (Low; non-gating)
 - **REVUE-387** — Tailwind Typography plugin for prose pages (Low; cosmetic)
-- **REVUE-386** — reconcile /revue-local vs /revue name across docs (Low; non-gating)
 
 ---
 
@@ -87,15 +82,14 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 | Pair / group | Shared file(s) |
 |---|---|
 | REVUE-365 + REVUE-366 + REVUE-408 | `src/web/templates/landing.html` (pricing copy + hero disclaimer + two-mode messaging) |
-| REVUE-361 + REVUE-407 | `src/web/templates/onboarding.html` (CLI-first refactor + CI-YAML move to `/docs/ci-setup`) |
 
 **Concurrency lanes — activation-UX cluster:**
-- **Lane 0 (start together):** REVUE-332 (E2E infra — landed), REVUE-384 (`/activate` + shared Command-Box), REVUE-407 (CI setup page) — no inter-dependency. 332 is landed.
-- **Lane 1 (after 384 lands):** REVUE-361 and REVUE-382 run in parallel — both consume 384's Command-Box but touch different files (`onboarding/billing_success` vs `dashboard/Account→Plan`), so no collision.
-- **Lane 2 (after 407's route exists):** REVUE-408 wires site-wide links to the CI page. Must serialize against REVUE-365 + REVUE-366 on `landing.html` — see collision table above.
+- **Lane 0 (landed):** REVUE-332 (E2E infra), REVUE-384 (`/activate` + shared Command-Box), REVUE-407 (CI setup page) — all done.
+- **Lane 1 (now open):** REVUE-361 and REVUE-382 run in parallel — both consume 384's Command-Box (done) but touch different files (`onboarding/billing_success` vs `dashboard/Account→Plan`), so no collision.
+- **Lane 2 (after 407's route — now open):** REVUE-408 wires site-wide links to the CI page. Must serialize against REVUE-365 + REVUE-366 on `landing.html` — see collision table above.
 - **Lane 3 (last):** REVUE-409 reuses 361/382/384 tests via `E2E_BASE_URL`; requires 332 landed.
 
-**Hard serial points:** (a) 384 before 361 + 382 (shared component); (b) 409 last (reuses the others' tests). Everything else parallelizes. Note: 361 links to 407 via a `url_for` placeholder — 361 need not wait for 407 to finish.
+**Hard serial points:** (a) 409 last (reuses the others' tests). Everything else parallelizes.
 
 ---
 
