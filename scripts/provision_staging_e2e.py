@@ -509,14 +509,18 @@ def _read_licence_key(client, *, log) -> str:
     """
     from staging_e2e_accounts import extract_licence_key
 
-    for path in ("/onboarding", "/dashboard"):
+    # /onboarding and /dashboard use get_license_for_user (is_active=1 filter)
+    # which hides lapsed rows. /account/plan uses get_any_license_for_user
+    # (unfiltered) and renders any_license.key unconditionally — the key is
+    # readable there even for lapsed accounts.
+    for path in ("/onboarding", "/dashboard", "/account/plan"):
         key = extract_licence_key(client.get(path).text)
         if key:
             log("  read licence key (value hidden)")
             return key
     raise RuntimeError(
-        "Could not read the account's licence key from /onboarding or "
-        "/dashboard — verify the account state manually (see runbook)."
+        "Could not read the account's licence key from /onboarding, /dashboard, "
+        "or /account/plan — verify the account state manually (see runbook)."
     )
 
 
