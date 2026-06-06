@@ -16,6 +16,97 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
+# ---------------------------------------------------------------------------
+# REVUE-409: staging seeding strategy
+#
+# Staging (E2E_BASE_URL set) has NO DB access, so the local SQL ``_seed`` factory
+# cannot run. Instead each licence STATE the reused suite needs maps to a
+# PRE-PROVISIONED staging account whose credentials + licence key live in
+# Bitbucket repository secrets under a documented scheme:
+#
+#     STAGING_E2E_<STATE>_EMAIL / _PASSWORD / _LICENCE_KEY
+#
+# The staging seeding fixtures classify each test's required state from the SAME
+# parameters the local factory accepts (``tier`` / ``is_active`` / ``validated``)
+# and resolve the matching account — so the SAME test bodies run unchanged: they
+# read ``_last_email`` / the returned key exactly as before, only the values now
+# come from a real account instead of a freshly-seeded SQLite row.
+# ---------------------------------------------------------------------------
+
+# Canonical licence states. The not-activated state is reached by a fresh signup
+# (the ``logged_in_page`` fixture), so its account is OPTIONAL on staging — it is
+# listed for completeness in case a future test seeds ``validated=False``.
+STATE_ACTIVE_PRO = "ACTIVE_PRO"
+STATE_ACTIVE_INDIE = "ACTIVE_INDIE"
+STATE_FREE = "FREE"
+STATE_LAPSED = "LAPSED"
+STATE_NOT_ACTIVATED = "NOT_ACTIVATED"
+
+
+def _classify_state(
+    *,
+    tier: str,
+    is_active: bool,
+    validated: bool,
+) -> str:
+    """Map the local seed factory's parameters to a canonical staging STATE.
+
+    Precedence is load-bearing: subscription/validation flags are checked BEFORE
+    the tier, because the lapsed tests pass ``tier="pro"`` — a tier-first check
+    would misroute them to ACTIVE_PRO and silently exercise the wrong account.
+
+    Order:
+      1. ``is_active is False``  -> LAPSED        (tier preserved but subscription lapsed)
+      2. ``validated is False``  -> NOT_ACTIVATED (never-validated key)
+      3. ``tier == "free"``      -> FREE
+      4. ``tier == "pro"``       -> ACTIVE_PRO
+      5. otherwise               -> ACTIVE_INDIE
+    """
+    if is_active is False:
+        return STATE_LAPSED
+    if validated is False:
+        return STATE_NOT_ACTIVATED
+    if tier == "free":
+        return STATE_FREE
+    if tier == "pro":
+        return STATE_ACTIVE_PRO
+    return STATE_ACTIVE_INDIE
+
+
+def _staging_account(state: str) -> dict:
+    """Resolve a STATE to its pre-provisioned staging account from env secrets.
+
+    Reads ``STAGING_E2E_<STATE>_EMAIL`` / ``_PASSWORD`` / ``_LICENCE_KEY``. Raises
+    a clear, actionable error naming the exact missing secret so a provisioning
+    gap surfaces explicitly in the failing run (AC7: gaps are logged, not hidden)
+    rather than as an opaque login timeout.
+    """
+    email = os.environ.get(f"STAGING_E2E_{state}_EMAIL")
+    password = os.environ.get(f"STAGING_E2E_{state}_PASSWORD")
+    licence_key = os.environ.get(f"STAGING_E2E_{state}_LICENCE_KEY")
+    missing = [
+        name
+        for name, value in (
+            (f"STAGING_E2E_{state}_EMAIL", email),
+            (f"STAGING_E2E_{state}_PASSWORD", password),
+            (f"STAGING_E2E_{state}_LICENCE_KEY", licence_key),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Staging E2E account for state {state!r} is not provisioned — "
+            f"missing repository secret(s): {', '.join(missing)}. "
+            f"See docs/runbooks/staging-e2e-account.md."
+        )
+    return {"email": email, "password": password, "key": licence_key}
+
+
+def _staging_enabled() -> bool:
+    """True when the suite targets a deployed environment (E2E_BASE_URL set)."""
+    return bool(os.environ.get("E2E_BASE_URL"))
+
+
 def pytest_configure(config):
     """Set SECRET_KEY before any test module is collected or imported.
 
@@ -193,7 +284,34 @@ def seed_active_licence(_e2e_db):
     Returns a namedtuple-like dict with ``key``, ``email``, ``password``.
     For backward compat, the factory is also directly callable with just
     ``tier`` and returns the key string (matching the original contract).
+
+    REVUE-409 staging branch: when ``E2E_BASE_URL`` is set there is no DB to seed
+    into, so instead of writing a row the factory classifies the requested state
+    from its params and resolves the matching PRE-PROVISIONED staging account. It
+    sets ``_last_email`` / ``_last_password`` to that account's credentials and
+    returns its real licence key — so the test bodies (which read those exact
+    attributes and then log in via the UI) run unchanged.
     """
+    if _staging_enabled():
+        def _seed_staging(
+            *,
+            tier: str = "indie",
+            is_active: bool = True,
+            current_period_end: "str | None" = None,
+            subscription_status: "str | None" = None,
+            validated: bool = True,
+            password: str = "testpass123",  # noqa: ARG001 — overridden by the real account
+        ) -> str:
+            state = _classify_state(tier=tier, is_active=is_active, validated=validated)
+            account = _staging_account(state)
+            _seed_staging._last_email = account["email"]  # type: ignore[attr-defined]
+            _seed_staging._last_password = account["password"]  # type: ignore[attr-defined]
+            return account["key"]
+
+        _seed_staging._last_email = ""  # type: ignore[attr-defined]
+        _seed_staging._last_password = ""  # type: ignore[attr-defined]
+        return _seed_staging
+
     import sqlite3
     import uuid
 
@@ -289,7 +407,27 @@ def seed_user_with_licence(_e2e_db):
 
     Seeds the user with ``password_hash="x"`` (cannot log in via the UI — that is
     why the cookie is minted directly in ``auth_cookie``).
+
+    REVUE-409 staging branch: when ``E2E_BASE_URL`` is set, return the matching
+    pre-provisioned account's identity — ``email`` / ``password`` / ``tier`` /
+    ``key`` (real licence key). The ``password`` is added (absent from the local
+    return) because the staging ``auth_cookie`` logs in through the UI rather than
+    minting a cookie. No test body reads ``user_id`` (a local DB int with no
+    staging meaning), so omitting it does not change any test.
     """
+    if _staging_enabled():
+        def _seed_staging(*, tier: str = "indie") -> dict:
+            state = _classify_state(tier=tier, is_active=True, validated=True)
+            account = _staging_account(state)
+            return {
+                "email": account["email"],
+                "password": account["password"],
+                "tier": tier,
+                "key": account["key"],
+            }
+
+        return _seed_staging
+
     import sqlite3
     import uuid
 
@@ -327,10 +465,27 @@ def auth_cookie(base_url):
     Returns a callable ``(page, identity) -> None`` taking the dict produced by
     ``seed_user_with_licence``. The cookie is scoped to the running server's host
     so it travels with same-host navigations.
+
+    REVUE-409 staging branch: minting a cookie requires the server's SECRET_KEY,
+    which staging does not share. Instead, when ``E2E_BASE_URL`` is set, establish
+    the session by logging in through the real UI with the pre-provisioned
+    account's email + password — the same login flow the suite already uses. The
+    callable signature ``(page, identity)`` is unchanged, so test bodies that do
+    ``auth_cookie(page, identity)`` run verbatim.
     """
     from urllib.parse import urlparse
 
     import auth
+
+    if _staging_enabled():
+        def _login_ui(page, identity: dict) -> None:
+            page.goto(base_url + "/login")
+            page.locator("input[name='email']").fill(identity["email"])
+            page.locator("input[name='password']").fill(identity["password"])
+            page.locator("button[type='submit']").click()
+            page.wait_for_url("**/dashboard", timeout=10_000)
+
+        return _login_ui
 
     def _inject(page, identity: dict) -> None:
         token = auth._get_serializer().dumps(

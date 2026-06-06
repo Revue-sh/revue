@@ -144,6 +144,50 @@ definitions:
             assert_422 "https://staging.revue.sh/api/license/validate"
             assert_manifest "https://staging.revue.sh/skills/manifest.json"
 
+    # REVUE-409: post-merge Playwright E2E against the LIVE staging app. Reuses
+    # the EXISTING src/web/tests/e2e/ suite verbatim — only E2E_BASE_URL and the
+    # seeding strategy change (the conftest fixtures branch on E2E_BASE_URL and
+    # resolve per-state PRE-PROVISIONED staging accounts from the STAGING_E2E_*
+    # repository secrets, since staging has no DB to seed). A PLAIN step (no
+    # trigger: manual) so a red run is a HARD failure that halts the pipeline,
+    # blocking the manual prod-promotion step below from ever becoming available.
+    #
+    # The STAGING_E2E_<STATE>_{EMAIL,PASSWORD,LICENCE_KEY} secrets must be
+    # provisioned BEFORE the first main run can pass — see
+    # docs/runbooks/staging-e2e-account.md. The guard below fails fast with the
+    # exact missing secret names rather than as an opaque login timeout.
+    - step: &e2e-web-staging
+        name: "E2E → Staging"
+        image: python:3.12-slim
+        caches:
+          - e2e-venv
+        script:
+          - export E2E_BASE_URL=https://staging.revue.sh
+          # Fail fast (and name the gap) if the per-state secrets are missing.
+          - |
+            set -eu
+            missing=""
+            for state in ACTIVE_PRO ACTIVE_INDIE FREE LAPSED; do
+              for field in EMAIL PASSWORD LICENCE_KEY; do
+                var="STAGING_E2E_${state}_${field}"
+                eval "val=\${$var:-}"
+                if [ -z "$val" ]; then missing="$missing $var"; fi
+              done
+            done
+            if [ -n "$missing" ]; then
+              echo "Missing required staging-E2E repository secret(s):$missing" >&2
+              echo "Provision them per docs/runbooks/staging-e2e-account.md before merge." >&2
+              exit 1
+            fi
+          - test -x .venv-e2e/bin/python || python3 -m venv .venv-e2e
+          - export PATH="$PWD/.venv-e2e/bin:$PATH"
+          - python3 -c "import fastapi, uvicorn" 2>/dev/null || pip install --quiet -r src/web/requirements.txt
+          - python3 -c "import pytest_playwright" 2>/dev/null || pip install --quiet pytest-playwright
+          - python3 -m playwright install --with-deps chromium
+          # Full e2e suite headless against staging (chromium). TC-9: this
+          # INCLUDES test_ci_setup_page.py (REVUE-407 staging parity).
+          - cd src/web && python3 -m pytest tests/e2e -q --browser chromium
+
     # REVUE-419: the prod-deploy SCRIPT is anchored here (&prod-deploy-script) so
     # the API-triggerable `custom: deploy-production` pipeline reuses the exact
     # same deploy logic — the two paths CANNOT drift. The only difference between
@@ -249,6 +293,11 @@ definitions:
           # instead (where fastapi is installed), so exclude it from this light
           # root run.
           - python3 -m pytest tests/ --ignore=tests/integration --ignore=tests/test_activation_rate_limit.py -q
+          # REVUE-409: unit-test the pure plan-builder of the staging-E2E
+          # provisioning script (scripts/provision_staging_e2e.py). It is pure
+          # Python (httpx/stripe are lazy-imported only on a live run), so it
+          # runs in this lean ci-venv with no extra deps.
+          - python3 -m pytest scripts/tests/ -q
           # Fresh-venv smoke test (REVUE-310) — gated behind @pytest.mark.slow
           # so it doesn't run during local `pytest`, but CI runs it explicitly
           # so package-graph regressions surface before tag time.
@@ -518,6 +567,9 @@ pipelines:
       - step: *build-web-image-fly
       - step: *deploy-web-staging
       - step: *smoke-web-staging
+      # REVUE-409: a red staging E2E run halts the pipeline here, so the manual
+      # *deploy-web-production step never becomes available.
+      - step: *e2e-web-staging
       - step: *deploy-web-production
       - step: *smoke-web-production
       - step:

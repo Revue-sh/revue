@@ -18,9 +18,28 @@ Local run:
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 pytestmark = pytest.mark.e2e
+
+# REVUE-409 logged gap (AC7): one assertion below pins an EXACT renewal date that
+# the local SQL factory injects (current_period_end="2099-12-31"). A static,
+# pre-provisioned staging account renders whatever date its real Stripe-test
+# subscription carries, which cannot be forced to a far-future literal and which
+# staging has no DB to override. That single value is therefore unreproducible on
+# staging, so the date-pinning test is skipped there explicitly (the gap is
+# logged, not hidden) — every other Active-Pro assertion still runs via the NULL
+# variant. See docs/runbooks/staging-e2e-account.md "Logged gaps".
+_skip_on_staging_unreproducible = pytest.mark.skipif(
+    bool(os.environ.get("E2E_BASE_URL")),
+    reason=(
+        "E2E_BASE_URL set — asserts an exact local-seeded renewal date "
+        "(2099-12-31) that a static staging account cannot reproduce (AC7 "
+        "logged gap; the NULL-period Active-Pro test covers the rest)"
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +129,7 @@ def test_active_pro_null_period_end(page, base_url, seed_active_licence):
 # TC2b — Active Pro with a NON-NULL current_period_end (the populated variant)
 # ---------------------------------------------------------------------------
 
+@_skip_on_staging_unreproducible
 def test_active_pro_with_renewal_date(page, base_url, seed_active_licence):
     """AC2: Active Pro with a populated current_period_end renders the full
     Active surface — masked key box, the renewal/validity line with the date,

@@ -66,6 +66,7 @@ def test_main_branch_pipeline_promotes_single_image_from_staging_to_prod() -> No
         "Build Web Image → Fly Registry",
         "Deploy Web → Staging",
         "Smoke Test → Staging",
+        "E2E → Staging",  # REVUE-409: post-merge Playwright E2E gates prod promotion
         "Deploy Web → Production",
         "Smoke Test → Production",
         "Tag Release (if warranted)",
@@ -204,3 +205,89 @@ def test_production_smoke_tests_gate_health_and_license_validation_paths() -> No
     assert "--retry 12 --retry-all-errors --connect-timeout 5 --max-time 20" in script
     assert "422" in script
     assert "exit 1" in script
+
+
+# ---------------------------------------------------------------------------
+# REVUE-409 — the E2E → Staging step gates prod promotion
+# ---------------------------------------------------------------------------
+
+def test_e2e_staging_step_sits_between_smoke_staging_and_prod_deploy() -> None:
+    """TC-6: *e2e-web-staging runs AFTER *smoke-web-staging and BEFORE
+    *deploy-web-production, so a red staging run halts the pipeline before the
+    manual prod-deploy step becomes available (TC-7)."""
+    # Act
+    names = _step_names()
+
+    # Assert
+    i_smoke = names.index("Smoke Test → Staging")
+    i_e2e = names.index("E2E → Staging")
+    i_prod = names.index("Deploy Web → Production")
+    assert i_smoke < i_e2e < i_prod, (
+        "E2E → Staging must sit between Smoke Test → Staging and "
+        f"Deploy Web → Production; actual names={names}"
+    )
+
+
+def test_e2e_staging_step_is_plain_hard_gate_not_manual() -> None:
+    """TC-7: the staging E2E step is a PLAIN step (no ``trigger: manual``), so a
+    failure is hard and halts the pipeline — it must never be skippable."""
+    # Arrange
+    step = _step_named("E2E → Staging")
+
+    # Assert
+    assert "trigger" not in step, "E2E → Staging must be a plain (hard) step"
+
+
+def test_e2e_staging_step_runs_full_suite_against_staging_headless() -> None:
+    """AC5/TC-9: the step sets E2E_BASE_URL to staging, reuses the e2e-venv
+    cache, installs Playwright+Chromium, and runs the FULL src/web/tests/e2e/
+    suite headless (chromium) — which includes test_ci_setup_page.py."""
+    # Arrange
+    step = _step_named("E2E → Staging")
+
+    # Act
+    script = _script_text(step)
+
+    # Assert
+    assert step.get("caches") == ["e2e-venv"]
+    assert "E2E_BASE_URL=https://staging.revue.sh" in script
+    assert "playwright install --with-deps chromium" in script
+    # Runs the whole suite directory (no single-file selection) headless.
+    assert "pytest tests/e2e" in script
+    assert "--browser chromium" in script
+
+
+def test_e2e_staging_step_guards_required_per_state_secrets() -> None:
+    """AC2/AC7: the step fails fast naming any missing STAGING_E2E_<STATE>_*
+    secret rather than as an opaque login timeout — so a provisioning gap is
+    logged explicitly. The four required states are guarded."""
+    # Arrange
+    step = _step_named("E2E → Staging")
+
+    # Act
+    script = _script_text(step)
+
+    # Assert
+    for state in ("ACTIVE_PRO", "ACTIVE_INDIE", "FREE", "LAPSED"):
+        assert state in script, f"guard must check the {state} account secrets"
+    assert "STAGING_E2E_" in script
+    assert "Missing required staging-E2E repository secret" in script
+
+
+def test_e2e_staging_step_contains_no_secret_values_only_refs() -> None:
+    """No secret VALUES live in the YAML — only env/secret-name references. The
+    guard composes variable NAMES (STAGING_E2E_<STATE>_<FIELD>); it must never
+    embed an email, password, or licence key literal."""
+    # Arrange
+    step = _step_named("E2E → Staging")
+
+    # Act
+    script = _script_text(step)
+
+    # Assert
+    assert "lic_" not in script  # no licence-key literal
+    assert "@" not in script  # no email literal
+    # The NAME tokens are referenced/composed, never a value. The guard builds
+    # STAGING_E2E_<STATE>_<FIELD> from a FIELD loop, so the field names appear.
+    assert "LICENCE_KEY" in script
+    assert "STAGING_E2E_" in script

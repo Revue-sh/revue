@@ -9,14 +9,14 @@ inline CI YAML that used to live on /onboarding is gone.
 Run against the out-of-process uvicorn harness (REVUE-332). Local:
     cd src/web && python3 -m pytest tests/e2e/test_cli_first_activation_e2e.py
 
-Staging parity: the seed+cookie path needs a local DB and a known SECRET_KEY, so
-seed-dependent tests skip when E2E_BASE_URL is set (same convention as
-test_ci_setup_page.py). REVUE-409 reuses these tests against staging where it
-can seed.
+Staging parity (REVUE-409): these tests run against staging too. The
+seed+cookie path no longer skips — the ``seed_user_with_licence`` and
+``auth_cookie`` fixtures branch on ``E2E_BASE_URL``: on staging they resolve a
+pre-provisioned account and establish the session via the real UI login (no
+local DB, no shared SECRET_KEY required). The test bodies below are unchanged.
 """
 from __future__ import annotations
 
-import os
 import re
 
 import pytest
@@ -33,12 +33,6 @@ KEY_RE = re.compile(r"^lic_[a-f0-9]{32}$")
 HERO_ID = "activation-command-box"
 SHARE_ID = "share-key-box"
 
-_STAGING = bool(os.environ.get("E2E_BASE_URL"))
-_skip_staging = pytest.mark.skipif(
-    _STAGING,
-    reason="E2E_BASE_URL set — seed+cookie auth needs a local DB and known SECRET_KEY",
-)
-
 
 def _authed(page, base_url, identity, auth_cookie, path):
     """Inject the seeded user's session cookie, then navigate to ``path``."""
@@ -54,7 +48,6 @@ def _authed(page, base_url, identity, auth_cookie, path):
 # ---------------------------------------------------------------------------
 # TC-01 — /billing/success hero shows the seeded user's full key
 # ---------------------------------------------------------------------------
-@_skip_staging
 def test_success_hero_shows_full_activate_command(
     page, base_url, seed_user_with_licence, auth_cookie
 ):
@@ -74,7 +67,6 @@ def test_success_hero_shows_full_activate_command(
 # ---------------------------------------------------------------------------
 # TC-02 — masked handoff line: masked display, Copy yields the full key
 # ---------------------------------------------------------------------------
-@_skip_staging
 def test_success_handoff_masked_copy_yields_full_key(
     page, base_url, seed_user_with_licence, auth_cookie
 ):
@@ -108,7 +100,6 @@ def test_success_handoff_masked_copy_yields_full_key(
 # ---------------------------------------------------------------------------
 # TC-03 — compact CI card links to ci_setup; no REVUE_LICENSE_KEY YAML
 # ---------------------------------------------------------------------------
-@_skip_staging
 def test_success_ci_card_links_out_no_inline_yaml(
     page, base_url, seed_user_with_licence, auth_cookie
 ):
@@ -126,7 +117,6 @@ def test_success_ci_card_links_out_no_inline_yaml(
 # ---------------------------------------------------------------------------
 # TC-04 — /onboarding hero is the first major interactive element
 # ---------------------------------------------------------------------------
-@_skip_staging
 def test_onboarding_hero_first_with_full_key(
     page, base_url, seed_user_with_licence, auth_cookie
 ):
@@ -149,7 +139,6 @@ def test_onboarding_hero_first_with_full_key(
 # ---------------------------------------------------------------------------
 # TC-05 — free-tier user sees a non-blank command-box with their key
 # ---------------------------------------------------------------------------
-@_skip_staging
 def test_onboarding_free_tier_renders_key(
     page, base_url, seed_user_with_licence, auth_cookie
 ):
@@ -167,7 +156,6 @@ def test_onboarding_free_tier_renders_key(
 # ---------------------------------------------------------------------------
 # TC-06 — onboarding CI card links out; no inline GitHub/GitLab YAML remains
 # ---------------------------------------------------------------------------
-@_skip_staging
 def test_onboarding_ci_card_no_inline_yaml(
     page, base_url, seed_user_with_licence, auth_cookie
 ):
@@ -188,7 +176,6 @@ def test_onboarding_ci_card_no_inline_yaml(
 # ---------------------------------------------------------------------------
 # TC-07 — Copy flips to "Copied! ✓" then reverts (~2s)
 # ---------------------------------------------------------------------------
-@_skip_staging
 def test_copy_label_flips_then_reverts(
     page, base_url, seed_user_with_licence, auth_cookie
 ):
@@ -216,7 +203,6 @@ def test_copy_label_flips_then_reverts(
 # ---------------------------------------------------------------------------
 # TC-08 — "Two ways to use Revue" framing; CI card after the command-box in DOM
 # ---------------------------------------------------------------------------
-@_skip_staging
 @pytest.mark.parametrize("path", ["/billing/success", "/onboarding"])
 def test_two_ways_framing_ci_card_after_hero(
     page, base_url, seed_user_with_licence, auth_cookie, path

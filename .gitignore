@@ -85,3 +85,8 @@ ruvector.db
 
 # Node tooling (Claude Code statusline helper deps — never tracked)
 node_modules/
+
+# REVUE-409 staging-E2E provisioning output — emitted account creds + licence
+# keys for the STAGING_E2E_* secrets. NEVER commit; paste into Bitbucket secrets.
+.staging-e2e-creds.local
+*.staging-e2e-creds.local
