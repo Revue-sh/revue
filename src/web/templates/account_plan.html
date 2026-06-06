@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/command_box.html" import command_box %}
+{% from "partials/_two_mode_block.html" import two_mode_block %}
 {% block title %}Account — Plan — Revue{% endblock %}
 {% block body %}
 <div class="min-h-full">
@@ -22,7 +23,13 @@
       <a href="/account/plan" class="text-gray-300">Plan</a>
     </nav>
 
-    <h1 class="text-2xl font-bold mb-8">Account — Plan</h1>
+    <h1 class="text-2xl font-bold mb-6">Account — Plan</h1>
+
+    {# Two ways to use Revue — CLI/local primary, CI complementary (REVUE-408).
+       Shared partial; consistent language with landing + dashboard. #}
+    <div class="mb-8">
+      {{ two_mode_block(variant="compact", ci_setup_url=url_for('ci_setup')) }}
+    </div>
 
     {# ------------------------------------------------------------------ #}
     {# ACTIVE state (paid tier, is_active=True)                            #}

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/command_box.html" import command_box %}
+{% from "partials/_two_mode_block.html" import two_mode_block %}
 
 {% block title %}Activate Revue{% endblock %}
 
@@ -35,6 +36,13 @@
          command="",
          caption="Run this in your terminal — no browser needed.",
     ) }}
+  </div>
+
+  {# Light-touch two-mode context (REVUE-408): frame this CLI activation as the
+     primary local/pre-commit mode, with CI as the team complement. Shared
+     partial — no inline copy duplication. #}
+  <div class="mt-8 pt-6 border-t border-gray-800">
+    {{ two_mode_block(variant="compact", ci_setup_url=url_for('ci_setup')) }}
   </div>
 
   {# Below the fold: the legacy browser-mint flow, collapsed by default. This is

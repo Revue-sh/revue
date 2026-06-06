@@ -38,6 +38,23 @@ def test_onboarding_shows_license_key(logged_in_page, base_url):
     assert "revue activate lic_" in hero.locator(".command-box-command").inner_text()
 
 
+def test_dashboard_shows_both_modes(logged_in_page, base_url):
+    # REVUE-408: the dashboard surfaces both ways to use Revue — CLI/local
+    # (primary) and CI (team automation) — via the shared two-mode partial.
+    logged_in_page.goto(base_url + "/dashboard")
+    page = logged_in_page
+
+    cli = page.locator('[data-mode="cli"]')
+    ci = page.locator('[data-mode="ci"]')
+    assert cli.count() >= 1
+    assert ci.count() >= 1
+    # CLI block describes the local/pre-commit primary mode.
+    assert "before you commit" in cli.first.inner_text().lower()
+    # Every CI reference links to the canonical CI setup page.
+    ci_link = ci.first.locator('a[href$="/docs/ci-setup"]')
+    assert ci_link.count() >= 1
+
+
 def test_runs_page_loads(logged_in_page, base_url):
     logged_in_page.goto(base_url + "/runs")
     page = logged_in_page

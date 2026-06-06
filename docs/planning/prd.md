@@ -34,10 +34,10 @@ Revue ships in two configurations:
 ### 2.1 The AI Development Paradox
 
 AI coding tools (GitHub Copilot, Cursor, Windsurf) are creating a paradox:
-- Code is written 5–10x faster
-- AI-generated code has **2x more bugs** than human-written code
-- PR volume grows **10x** while reviewer headcount stays flat
-- The model that wrote the code has context bias — it misses its own mistakes
+- **AI-assisted code is more often insecure — and developers trust it more.** In a controlled study, participants with an AI assistant wrote significantly less secure code yet were *more* confident their code was secure ([Perry et al., "Do Users Write More Insecure Code with AI Assistants?", Stanford, ACM CCS 2023](https://arxiv.org/abs/2211.03622)).
+- **Roughly half of AI-generated code contains a vulnerability.** Across five leading models, almost half of generated snippets contained bugs that are often impactful and could be exploited ([Cybersecurity Risks of AI-Generated Code, Georgetown CSET, Nov 2024](https://cset.georgetown.edu/publication/cybersecurity-risks-of-ai-generated-code/)).
+- **Throughput is rising faster than review capacity.** AI adoption correlates with larger batch sizes and lower software-delivery stability and throughput ([DORA 2024](https://dora.dev/research/2024/dora-report/)), while overall developer and pull-request activity keeps climbing year over year ([GitHub Octoverse](https://github.blog/news-insights/octoverse/)) — yet reviewer headcount stays flat.
+- The model that wrote the code has context bias — it misses its own mistakes.
 
 ### 2.2 Current State of Code Review
 
@@ -67,7 +67,7 @@ Most teams have Layer 1. Almost none have Layer 2 in a structured form — AI ag
 ### 3.1 Product Vision
 > Revue is the AI review layer that every engineering team installs once and relies on forever — the safety net that catches what humans miss, at every stage of the development lifecycle.
 
-**Why this matters now.** AI coding tools (Copilot, Cursor, Windsurf) have created a structural paradox (§2.1): code is written 5–10× faster, but AI-generated code carries 2× the bug rate of human-written code, and PR volume grows 10× while reviewer headcount stays flat. The model that wrote the code has context bias — it misses its own mistakes. Human reviewers are the only backstop, and they are overwhelmed.
+**Why this matters now.** AI coding tools (Copilot, Cursor, Windsurf) have created a structural paradox (§2.1): AI-assisted developers ship code faster but write code that is *less* secure — while being *more* confident it is fine ([Stanford, ACM CCS 2023](https://arxiv.org/abs/2211.03622)) — and roughly half of AI-generated snippets contain a vulnerability ([Georgetown CSET, Nov 2024](https://cset.georgetown.edu/publication/cybersecurity-risks-of-ai-generated-code/)). Throughput is rising faster than review capacity ([DORA 2024](https://dora.dev/research/2024/dora-report/); [GitHub Octoverse 2025](https://github.blog/news-insights/octoverse/)). The model that wrote the code has context bias — it misses its own mistakes. Human reviewers are the only backstop, and they are overwhelmed.
 
 Revue's job is to remove that bottleneck without forcing teams to trade quality for throughput. Every comment Revue posts must give a developer the same value as a senior teammate's inline review: anchored where the issue is, attributed to who is saying it, and — where possible — one-click applicable. Anything less is noise, and noise makes the bottleneck worse.
 

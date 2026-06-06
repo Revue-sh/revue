@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/_two_mode_block.html" import two_mode_block %}
 {% block title %}Revue — AI Code Review{% endblock %}
 {% block body %}
 <div class="min-h-full">
@@ -13,26 +14,60 @@
         </div>
     </nav>
 
-    <!-- Hero -->
-    <section class="max-w-4xl mx-auto px-6 pt-24 pb-16 text-center">
-        <h1 class="text-5xl font-extrabold tracking-tight mb-6">
-            Cut your AI API spend<br>
-            <span class="text-brand-400">by 79–88%</span>
+    <!-- Hero — review-quality positioning (REVUE-408 PART B) -->
+    {# Responsive vertical rhythm: tighter on mobile so the demoted cost block
+       (Beat 2) stays above the fold; full spacing restored from the sm: breakpoint. #}
+    <section class="max-w-4xl mx-auto px-6 pt-10 sm:pt-24 pb-8 sm:pb-12 text-center">
+        <!-- Eyebrow / kicker -->
+        <p class="text-brand-400 font-semibold tracking-wide uppercase text-sm mb-3 sm:mb-4">Code review for local &amp; CI</p>
+        <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight mb-4 sm:mb-6">
+            Real review at AI speed
         </h1>
-        <p class="text-xl text-gray-400 mb-10 max-w-2xl mx-auto">
-            Multi-agent AI reviews every pull request in your CI pipeline.
-            Catch issues before they hit expensive AI API re-review cycles.
+        <p class="text-lg sm:text-xl text-gray-400 mb-6 sm:mb-10 max-w-2xl mx-auto">
+            AI writes code that looks right and ships fast — but AI-assisted code is more often insecure,
+            and the people shipping it are more confident it's fine. Revue is the independent reviewer,
+            locally and in CI.
         </p>
-        <p class="text-gray-500 text-sm -mt-6 mb-10 max-w-2xl mx-auto">
-            Savings assume Revue's default DeepSeek-V4-Pro model vs. the Anthropic Sonnet baseline. BYOK users pay their chosen provider's rates.
-        </p>
+
+        <!-- Proof strip — two cited, linked stats -->
+        <div class="grid sm:grid-cols-2 gap-3 sm:gap-4 max-w-3xl mx-auto mb-6 sm:mb-10 text-left">
+            <a href="https://cset.georgetown.edu/publication/cybersecurity-risks-of-ai-generated-code/"
+               target="_blank" rel="noopener"
+               class="block bg-gray-900 border border-gray-800 hover:border-brand-600 rounded-xl p-5">
+                <p class="text-gray-200 text-sm font-medium mb-2">~half of AI-generated code carries a security vulnerability</p>
+                <p class="text-gray-500 text-xs">Georgetown CSET, Nov 2024 <span class="text-brand-400">&#8599;</span></p>
+            </a>
+            <a href="https://arxiv.org/abs/2211.03622"
+               target="_blank" rel="noopener"
+               class="block bg-gray-900 border border-gray-800 hover:border-brand-600 rounded-xl p-5">
+                <p class="text-gray-200 text-sm font-medium mb-2">Developers using AI write less secure code — and trust it more</p>
+                <p class="text-gray-500 text-xs">Stanford, ACM CCS 2023 <span class="text-brand-400">&#8599;</span></p>
+            </a>
+        </div>
+
         <a href="/signup" class="inline-block bg-brand-600 hover:bg-brand-700 text-white text-lg px-8 py-3 rounded-lg font-semibold">
             Get started free
         </a>
         <p class="text-gray-500 text-sm mt-3">25 free reviews/month &middot; No credit card required</p>
+    </section>
 
-        <!-- TCO Table Teaser -->
-        <div class="mt-16 bg-gray-900 border border-gray-800 rounded-xl p-8 max-w-2xl mx-auto">
+    {# ------------------------------------------------------------------ #}
+    {# Beat 2 — cost, DEMOTED below the hero (stays above the fold).        #}
+    {# Heading + body are the approved final copy (REVUE-408 PART B).       #}
+    {# Keep this copy in this single, easily-editable spot.                 #}
+    {# ------------------------------------------------------------------ #}
+    <section class="max-w-3xl mx-auto px-6 pb-16">
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-8">
+            <h2 class="text-2xl font-bold mb-3">The expensive part is CI, not you.</h2>
+            <p class="text-gray-400 mb-6">
+                AI code review in CI runs on metered API spend — and on a top model like Claude Sonnet
+                that's a separate bill from your Max/Enterprise plan, climbing with every PR. Revue cuts
+                it two ways: run the skill locally before you commit — it rides your existing Claude Code
+                subscription, no extra API bill — and let CI default to a cheaper model. Sonnet still gives
+                the best quality if you want it; that trade-off is yours.
+            </p>
+
+            <!-- Cost-comparison table — the precise 79–88% figure lives here -->
             <p class="text-gray-400 text-sm font-medium mb-4">Typical monthly cost for a team of 5</p>
             <div class="space-y-3 text-left">
                 <div class="flex justify-between items-center">
@@ -45,8 +80,21 @@
                     <span class="text-xl font-semibold text-green-400">$100–$250</span>
                 </div>
             </div>
-            <p class="text-gray-500 text-xs mt-4">vs. Anthropic Sonnet 4.5 baseline. See <a href="#pricing" class="text-brand-400 hover:text-brand-300">pricing table</a> for details.</p>
+            <p class="text-green-400 text-sm font-medium mt-4">~79–88% lower than the Anthropic Sonnet 4.5 baseline.</p>
+            <p class="text-gray-500 text-xs mt-2">
+                vs. Anthropic Sonnet 4.5 baseline. See <a href="#pricing" class="text-brand-400 hover:text-brand-300">pricing table</a> for details.
+                <span id="savings-assumptions-tooltip"
+                      class="inline-block cursor-help underline decoration-dotted text-brand-400"
+                      title="Savings assume Revue's default DeepSeek-V4-Pro model vs. the Anthropic Sonnet 4.5 baseline. BYOK users pay their chosen provider's rates.">
+                    (savings assumptions ?)
+                </span>
+            </p>
         </div>
+    </section>
+
+    <!-- Two ways to use Revue — CLI/local primary, CI complementary (REVUE-408 PART A) -->
+    <section class="max-w-5xl mx-auto px-6 pb-20">
+        {{ two_mode_block(variant="full", ci_setup_url=url_for('ci_setup')) }}
     </section>
 
     <!-- Benefits -->
@@ -60,7 +108,7 @@
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
                 <div class="text-brand-400 text-3xl mb-3">&#x1f512;</div>
                 <h3 class="text-lg font-semibold mb-2">Your Code Stays Private</h3>
-                <p class="text-gray-400 text-sm">Revue runs inside your CI runner. Source code never leaves your infrastructure. Only license checks go to our API.</p>
+                <p class="text-gray-400 text-sm">Revue runs where you do — locally and inside your own CI runner. Source code never leaves your infrastructure. Only licence checks reach our API.</p>
             </div>
             <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
                 <div class="text-brand-400 text-3xl mb-3">&#x1f511;</div>

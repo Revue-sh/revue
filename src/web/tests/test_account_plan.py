@@ -686,3 +686,25 @@ async def test_account_plan_free_cta_shows_currency_symbol(client):
     # The price line must carry the symbol, e.g. "$9/mo" — never a blank "9/mo".
     assert f"{CURRENCY_SYMBOL}9/mo" in html
     assert ">9/mo" not in html  # guard against the symbol rendering blank
+
+
+@pytest.mark.asyncio
+async def test_account_plan_renders_both_modes(client):
+    """REVUE-408: the Account → Plan page reflects both modes (CLI primary, CI
+    complementary) using the shared two-mode partial."""
+    resp = await client.post(
+        "/signup",
+        data={"email": "twomode-plan@test.com", "password": "password1"},
+        follow_redirects=False,
+    )
+    cookie = resp.cookies.get("revue_session")
+    client.cookies.set("revue_session", cookie)
+
+    resp = await client.get("/account/plan")
+    assert resp.status_code == 200
+    html = resp.content.decode()
+    assert 'data-mode="cli"' in html
+    assert 'data-mode="ci"' in html
+    assert "before you commit" in html.lower()
+    assert "/docs/ci-setup" in html
+    assert html.index('data-mode="cli"') < html.index('data-mode="ci"')

@@ -1,0 +1,73 @@
+{#
+  Two-Mode Block — the single source of "Two ways to use Revue" copy (REVUE-408).
+
+  Renders both canonical ways to use Revue, with the CLI / local mode FIRST and
+  primary, and the CI / pipeline mode as the team / PR-automation complement.
+  This partial is the ONLY place the two-mode marketing copy may live — no
+  in-scope surface (landing, dashboard, account/plan, activate) is permitted to
+  duplicate this copy inline. A lint/unit guard
+  (tests/test_two_mode_block_single_source.py) enforces that.
+
+  Stable Playwright selectors: each mode root carries a data-mode attribute
+  (data-mode="cli" / data-mode="ci") that survives copy changes. Every CI
+  reference links to the canonical /docs/ci-setup page via url_for('ci_setup').
+
+  Params:
+    variant — "full" (default): the two-column card block for marketing/landing
+              surfaces. "compact": a slim two-line variant for authenticated /
+              dense surfaces (dashboard, account/plan). Both share the SAME copy.
+    ci_setup_url — the href for every CI reference. Callers pass
+              ``url_for('ci_setup')`` from their OWN render context (where the
+              request is bound) — Jinja macros do not inherit the caller's
+              context, so resolving ``url_for`` inside the macro would raise
+              KeyError('request'). Defaults to the canonical "/docs/ci-setup"
+              path so the macro still renders standalone (e.g. in unit tests).
+#}
+{% macro two_mode_block(variant="full", ci_setup_url="/docs/ci-setup") %}
+{% if variant == "compact" %}
+<div class="two-mode-block grid sm:grid-cols-2 gap-4" data-two-mode>
+  <div data-mode="cli" class="bg-gray-900 border border-brand-700 rounded-lg p-4">
+    <p class="text-xs font-semibold text-brand-400 uppercase tracking-wide mb-1">Local &amp; pre-commit · primary</p>
+    <p class="text-sm text-gray-300">
+      Activate the CLI to review code locally — in your terminal, editor, or AI agent — before you commit.
+    </p>
+  </div>
+  <div data-mode="ci" class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">CI pipeline · team automation</p>
+    <p class="text-sm text-gray-400">
+      Add a <code class="font-mono text-gray-200">REVUE_LICENSE_KEY</code> secret to automate reviews on every PR/MR.
+      <a href="{{ ci_setup_url }}" class="text-brand-400 hover:underline">CI setup &rarr;</a>
+    </p>
+  </div>
+</div>
+{% else %}
+<div class="two-mode-block" data-two-mode>
+  <h2 class="text-3xl font-bold text-center mb-3">Two ways to use Revue</h2>
+  <p class="text-center text-gray-400 mb-10 max-w-2xl mx-auto">
+    Start locally, before you commit. Add CI when your team wants every pull request reviewed automatically.
+  </p>
+  <div class="grid md:grid-cols-2 gap-8">
+    {# CLI / local — primary, listed first #}
+    <div data-mode="cli" class="bg-gray-900 border-2 border-brand-600 rounded-xl p-6 relative">
+      <div class="absolute -top-3 left-6 bg-brand-600 text-white text-xs px-3 py-1 rounded-full font-medium">Primary</div>
+      <h3 class="text-lg font-semibold mb-2 mt-2">Local &amp; pre-commit — the command is the hero</h3>
+      <p class="text-gray-400 text-sm mb-4">
+        Run <code class="font-mono text-gray-100">revue activate &lt;key&gt;</code>, then review code locally —
+        in your terminal, editor, or AI coding agent — before it ever lands in a commit. This is where Revue
+        catches the most, at the moment of highest leverage.
+      </p>
+      <a href="/activate" class="text-brand-400 hover:underline text-sm font-medium">Activate the CLI &rarr;</a>
+    </div>
+    {# CI / pipeline — complementary team automation #}
+    <div data-mode="ci" class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h3 class="text-lg font-semibold mb-2 mt-2">CI pipeline — automated team reviews</h3>
+      <p class="text-gray-400 text-sm mb-4">
+        Add a <code class="font-mono text-gray-200">REVUE_LICENSE_KEY</code> secret and a pipeline step to run
+        the same multi-agent review automatically on every Pull or Merge Request, posted as inline comments.
+      </p>
+      <a href="{{ ci_setup_url }}" class="text-brand-400 hover:underline text-sm font-medium">CI setup guide &rarr;</a>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endmacro %}

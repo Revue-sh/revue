@@ -43,6 +43,23 @@ async def test_dashboard_requires_auth(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_dashboard_renders_both_modes(client: AsyncClient):
+    """REVUE-408: the dashboard surfaces both ways to use Revue — CLI/local
+    (primary) and CI (team automation) — via the shared two-mode partial."""
+    await _signup_and_get_cookies(client, email="twomode-dash@test.com")
+    resp = await client.get("/dashboard")
+    html = resp.content.decode()
+    assert 'data-mode="cli"' in html
+    assert 'data-mode="ci"' in html
+    # CLI block describes the local/pre-commit mode.
+    assert "before you commit" in html.lower()
+    # CI reference links to the canonical CI setup page.
+    assert "/docs/ci-setup" in html
+    # CLI (primary) is rendered before CI.
+    assert html.index('data-mode="cli"') < html.index('data-mode="ci"')
+
+
+@pytest.mark.asyncio
 async def test_onboarding_renders_cli_hero(client: AsyncClient):
     """REVUE-361: onboarding leads with the Activation Command-Box hero
     pre-filled with the signed-up (free-tier) user's key."""

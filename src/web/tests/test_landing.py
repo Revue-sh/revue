@@ -1,0 +1,127 @@
+"""Landing page tests — new hero positioning + two-mode block (REVUE-408).
+
+PART B retires the cost-first hero ("Cut your AI API spend by 79–88%") and
+installs the review-quality hero:
+  - eyebrow / kicker:  Code review for local & CI
+  - H1:                Real review at AI speed
+  - subhead + a two-stat proof strip, each cited with a real outbound link
+  - cost DEMOTED to the second beat ("The expensive part is CI, not you.")
+    with the precise 79–88% figure kept ON the cost table.
+
+These assertions avoid pinning en-/em-dash characters (which round-trip through
+HTML entities and fail byte comparisons); they key on dash-free fragments, the
+attribution text, and the outbound link hosts.
+"""
+from __future__ import annotations
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_landing_eyebrow_and_new_h1_present(client: AsyncClient):
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    html = resp.content.decode()
+    # Eyebrow / kicker above the H1 (the '&' renders as the &amp; entity, so
+    # assert a dash/amp-free fragment).
+    assert "Code review for local" in html
+    # New H1.
+    assert "Real review at AI speed" in html
+
+
+@pytest.mark.asyncio
+async def test_landing_retired_cost_first_h1_is_gone(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # The retired cost-first headline must not appear anywhere on the page.
+    assert "Cut your AI API spend" not in html
+
+
+@pytest.mark.asyncio
+async def test_landing_subhead_present(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # Dash-free fragments from the subhead (em-dashes are entity-encoded).
+    assert "the independent reviewer" in html
+    assert "more often insecure" in html
+
+
+@pytest.mark.asyncio
+async def test_landing_proof_strip_cited_stats_with_links(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # Stat 1 — Georgetown CSET, Nov 2024 — with its real outbound link.
+    assert "Georgetown CSET" in html
+    assert "cset.georgetown.edu/publication/cybersecurity-risks-of-ai-generated-code" in html
+    # Stat 2 — Stanford, ACM CCS 2023 — with its real outbound link.
+    assert "Stanford" in html
+    assert "arxiv.org/abs/2211.03622" in html
+
+
+@pytest.mark.asyncio
+async def test_landing_cost_demoted_to_second_beat(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # The cost beat heading is present...
+    assert "The expensive part is CI, not you." in html
+    # ...and appears AFTER the H1 (cost is demoted, not the headline).
+    assert html.index("Real review at AI speed") < html.index("The expensive part is CI, not you.")
+
+
+@pytest.mark.asyncio
+async def test_landing_cost_figure_kept_on_cost_section(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # The precise 79–88% figure survives — now in the cost section, NOT the H1.
+    assert "79" in html and "88%" in html
+    # It must NOT be the H1 anymore.
+    h1_region = html[html.index("Real review at AI speed"):html.index("Real review at AI speed") + 200]
+    assert "88%" not in h1_region
+
+
+@pytest.mark.asyncio
+async def test_landing_byok_disclaimer_not_in_hero(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # The BYOK / savings-assumptions disclaimer is relocated out of the hero
+    # block (to reclaim mobile vertical space). If it still exists on the page,
+    # it must sit AFTER the proof strip / hero — never between H1 and proof.
+    if "BYOK users pay their chosen provider" in html:
+        assert html.index("arxiv.org/abs/2211.03622") < html.index(
+            "BYOK users pay their chosen provider"
+        )
+
+
+@pytest.mark.asyncio
+async def test_landing_shows_both_modes(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # Two-mode block on landing: CLI/local primary, CI complementary.
+    assert 'data-mode="cli"' in html
+    assert 'data-mode="ci"' in html
+    assert html.index('data-mode="cli"') < html.index('data-mode="ci"')
+    # Landing carries the explicit `revue activate` reference (AC).
+    assert "revue activate" in html
+    # Every CI reference links to the canonical CI setup page.
+    assert "/docs/ci-setup" in html
+
+
+@pytest.mark.asyncio
+async def test_landing_legacy_ci_only_strings_gone(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # REVUE-408 AC: no in-scope surface retains CI-only framing that excludes
+    # or subordinates CLI mode.
+    assert "reviews every pull request in your CI pipeline" not in html
+    assert "Revue runs inside your CI runner" not in html
+
+
+@pytest.mark.asyncio
+async def test_landing_cta_and_free_offer_intact(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # Existing CTA + free offer must remain.
+    assert "Get started free" in html
+    assert "25 free reviews" in html
+    assert "No credit card required" in html
