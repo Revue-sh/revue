@@ -192,8 +192,13 @@ def resolve_account_key(base_url: str, email: str, password: str) -> str:
     the login that is required to reach an authenticated page.
 
     Flow: ``POST /login`` (follow redirects) → ``GET /onboarding`` (fallback
-    ``GET /dashboard``) → extract ``lic_<32 hex>``. Raises a clear, actionable
-    ``RuntimeError`` NAMING the account if no key can be read.
+    ``GET /dashboard``, then ``GET /account/plan``) → extract ``lic_<32 hex>``.
+    /account/plan uses ``get_any_license_for_user`` (unfiltered), so the key is
+    visible even for lapsed accounts (``is_active=False``). /onboarding and
+    /dashboard use the filtered ``get_license_for_user`` which hides lapsed rows,
+    so without the /account/plan fallback the lapsed key is never returned.
+    Raises a clear, actionable ``RuntimeError`` NAMING the account if no key
+    can be read.
     """
     httpx = _httpx()
     base = base_url.rstrip("/")
@@ -204,15 +209,15 @@ def resolve_account_key(base_url: str, email: str, password: str) -> str:
         csrf_form_post(
             client, "/login", "/login", {"email": email, "password": password}
         )
-        for path in ("/onboarding", "/dashboard"):
+        for path in ("/onboarding", "/dashboard", "/account/plan"):
             key = extract_licence_key(client.get(path).text)
             if key:
                 return key
     raise RuntimeError(
         f"Could not read the licence key for staging E2E account {email!r} from "
-        f"/onboarding or /dashboard after login. The account may not exist or may "
-        f"not be activated — re-run the provision-staging-e2e pipeline step "
-        f"(ensure-exists). See docs/runbooks/staging-e2e-account.md."
+        f"/onboarding, /dashboard, or /account/plan after login. The account may "
+        f"not exist or may not be activated — re-run the provision-staging-e2e "
+        f"pipeline step (ensure-exists). See docs/runbooks/staging-e2e-account.md."
     )
 
 
