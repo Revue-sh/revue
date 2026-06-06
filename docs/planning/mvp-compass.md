@@ -1,6 +1,6 @@
 # MVP Compass — /revue-local public launch
 
-**Last updated:** 2026-06-06 (REVUE-408 + REVUE-418 merged — site-wide two-mode messaging + CSRF protection; 1 hard blocker remains). Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
+**Last updated:** 2026-06-06 (REVUE-409 merged — post-merge staging E2E gate via signed synthetic-webhook provisioning; 0 hard launch blockers). Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
 **Source of truth for "next pick."** Jira's priority field ≠ launch-path order; *this doc* is the launch-path order.
 
 ---
@@ -13,29 +13,23 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**~60 done · 1 hard launch blocker (staging E2E gate, below) · run `/epic-progress REVUE-269` for the live tally.**
-The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The full activation-UX cluster Lane 1 (361 + 413 + 382) and Lane 2 (408) are now done. The remaining gate is **409** (staging E2E).
+**~60 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
+The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The full activation-UX cluster Lane 1 (361 + 413 + 382) and Lane 2 (408) are done. REVUE-409 (staging E2E gate) is merged and in post-merge staging validation; launch is now gated only on that validation completing + the pre-launch polish items below.
 
 **Recently shipped (last 5):**
+- **REVUE-409** — post-merge staging E2E gate via signed synthetic-webhook provisioning *(merged — in post-merge staging validation)*
 - **REVUE-418** — systemic CSRF protection on all session-cookie form POSTs
 - **REVUE-408** — site-wide two-mode (CLI/CI) messaging + new review-quality landing hero
 - **REVUE-382** — Account → Plan licence-status page
 - **REVUE-413** — persist subscription `current_period_end` + real lapsed transition
-- **REVUE-361** — CLI-first post-purchase activation handoff (`/billing/success` + `/onboarding`)
 
 ---
 
 ## What's ahead
 
-### 🔴 Hard launch blockers — Activation UX cluster (epic REVUE-269, label `mvp`)
+### 🔴 Hard launch blockers
 
-The post-purchase **"now what?"** gap: today `/billing/success` shows no key or command, and `/onboarding` is CI-first — a just-paid user has no on-screen path to `revue activate`. The licence-key **email was rejected** (REVUE-383); activation is fully CLI + authenticated-web. This cluster closes the gap. Design spec: `docs/planning/ux-activation-flow-spec.md`.
-
-**Build order: `409`.**
-
-| Jira | Story | Role in the chain |
-|------|-------|-------------------|
-| REVUE-409 | Post-merge Playwright E2E vs staging | Reuses 361/382/384 tests via `E2E_BASE_URL`; per-state staging accounts |
+The last hard blocker (REVUE-409 — post-merge staging E2E gate) is merged and in post-merge staging validation. Launch is now gated only on that validation completing + the pre-launch polish items below.
 
 ### 🟡 Important pre-launch polish — ship before public launch, not a hard technical gate
 
@@ -76,9 +70,9 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 **Concurrency lanes — activation-UX cluster:**
 - **Lane 0 (landed):** REVUE-332 (E2E infra), REVUE-384 (`/activate` + shared Command-Box), REVUE-407 (CI setup page) — all done.
 - **Lane 1 (landed):** REVUE-361 (`/billing/success` + `/onboarding` activation handoff), REVUE-413 (persist subscription `current_period_end` + real lapsed transition), and REVUE-382 (Account → Plan licence-status page) — all merged.
-- **Lane 2 (now open):** REVUE-408 is merged. REVUE-409 (staging-E2E gate) is the sole remaining item — gated on Lane 1 (361/382) + staging-deploy infra (347/348); reuses 361/382/384/407 tests via `E2E_BASE_URL`. Its pipeline step gates prod promotion at *runtime*.
+- **Lane 2 (landed):** REVUE-408 and REVUE-409 both merged. REVUE-409 remains in post-merge staging validation (label `do-not-run-automation-after-merge`); its pipeline step gates prod promotion at *runtime*.
 
-**Hard serial points:** none — REVUE-409 depends on Lane 1's tests + staging deploy. Everything else parallelizes.
+**Hard serial points:** none — all activation-UX cluster tickets are merged. Everything parallelizes.
 
 ---
 
