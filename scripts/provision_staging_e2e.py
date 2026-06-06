@@ -249,9 +249,19 @@ def build_state_plan(state: str, cfg: Config) -> StatePlan:
         Action("signup", f"POST {cfg.base_url}/signup as {email} (or log in if it exists; reset state)")
     ]
 
-    if state == STATE_NOT_ACTIVATED:
+    # Two states skip the activate round-trip (and so never read the licence key):
+    #   NOT_ACTIVATED — intentionally never-validated; the key stays not-activated.
+    #   LAPSED        — derive_plan_state resolves lapsed from is_active=False ALONE
+    #                   (it checks lapsed BEFORE last_validated_at), so no validation
+    #                   stamp is needed. Critically, once the past_due webhook lands
+    #                   the lapsed key is unreadable from EVERY authenticated surface
+    #                   (/onboarding + /dashboard filter is_active=1; the /account/plan
+    #                   lapsed block renders no key) — so reading it would break the
+    #                   idempotent re-run. The key is deliberately unreadable for
+    #                   lapsed; do NOT add a key-bearing page to satisfy provisioning.
+    if state in (STATE_NOT_ACTIVATED, STATE_LAPSED):
         actions.append(
-            Action("none", "skip activate round-trip — key stays never-validated (not-activated)")
+            Action("none", "skip activate round-trip — no licence-key read needed for this state")
         )
     else:
         actions.append(
@@ -326,11 +336,17 @@ def _execute_state(plan: StatePlan, cfg: Config, *, log: Callable[[str], None]) 
     log(f"[{plan.state}] ensuring {email}")
 
     with httpx.Client(base_url=cfg.base_url, timeout=30.0, follow_redirects=True) as client:
-        # 1. Signup (idempotent: if the account exists, log in instead).
-        licence_key = _signup_or_login(client, email, password, log=log)
+        # 1. Signup (idempotent: if the account exists, log in instead). This
+        #    establishes the authenticated session but does NOT read the key —
+        #    only the activate round-trip needs it, so the read lives in step 2.
+        _signup_or_login(client, email, password, log=log)
 
-        # 2. Activate round-trip to stamp last_validated_at (skip not-activated).
+        # 2. Activate round-trip to stamp last_validated_at (skip not-activated +
+        #    lapsed). The licence key is read HERE — only on the path that uses it —
+        #    so LAPSED never attempts a read it cannot satisfy (its key is
+        #    intentionally unreadable once past_due lands; see build_state_plan).
         if any(a.kind == "activate_roundtrip" for a in plan.actions):
+            licence_key = _read_licence_key(client, log=log)
             _activate_roundtrip(client, cfg, licence_key, log=log)
 
         # 3. Emit the signed synthetic subscription webhook(s) for the paid states.
@@ -468,8 +484,14 @@ def _verify_timeout_message(state: str, timeout: float) -> str:
     return base + cause + " See docs/runbooks/staging-e2e-account.md."
 
 
-def _signup_or_login(client, email: str, password: str, *, log) -> str:
-    """Sign up the account; if it already exists, log in. Return its licence key.
+def _signup_or_login(client, email: str, password: str, *, log) -> None:
+    """Sign up the account; if it already exists, log in. Establishes the session.
+
+    Does NOT read the licence key: that is only needed for the activate round-trip
+    and is read there (``_execute_state`` step 2), so the states that skip activate
+    (NOT_ACTIVATED, LAPSED) never attempt a read. LAPSED in particular CANNOT read
+    its key once past_due lands, so coupling the read to login would break its
+    idempotent re-run.
 
     Idempotency — verified against the real app (src/web/routes/auth_routes.py):
     a duplicate signup re-renders ``signup.html`` with HTTP **200** and the body
@@ -491,13 +513,10 @@ def _signup_or_login(client, email: str, password: str, *, log) -> str:
     # (auth_routes.signup_submit). A fresh signup redirects (200 after follow) to
     # /onboarding and does NOT contain it.
     if "already exists" in resp.text.lower():
-        log("  account exists → logging in to read state")
+        log("  account exists → logging in")
         csrf_form_post(
             client, "/login", "/login", {"email": email, "password": password}
         )
-    # The licence key is rendered into the authenticated onboarding/dashboard
-    # page; read it from there. (Parser kept defensive — the maintainer verifies.)
-    return _read_licence_key(client, log=log)
 
 
 def _read_licence_key(client, *, log) -> str:
@@ -509,18 +528,21 @@ def _read_licence_key(client, *, log) -> str:
     """
     from staging_e2e_accounts import extract_licence_key
 
-    # /onboarding and /dashboard use get_license_for_user (is_active=1 filter)
-    # which hides lapsed rows. /account/plan uses get_any_license_for_user
-    # (unfiltered) and renders any_license.key unconditionally — the key is
-    # readable there even for lapsed accounts.
-    for path in ("/onboarding", "/dashboard", "/account/plan"):
+    # Only the active/free/not-activated states reach here — they all render the
+    # key on /onboarding (the activation command-box). LAPSED never calls this:
+    # its key is intentionally unreadable from every authenticated surface once
+    # past_due lands (/onboarding + /dashboard filter is_active=1; the /account/plan
+    # lapsed block renders no key), and it skips the activate round-trip that would
+    # need it. Do NOT add /account/plan as a "lapsed fallback" — there is no key on
+    # that page for a lapsed account, so it cannot help, and lapsed does not get here.
+    for path in ("/onboarding", "/dashboard"):
         key = extract_licence_key(client.get(path).text)
         if key:
             log("  read licence key (value hidden)")
             return key
     raise RuntimeError(
-        "Could not read the account's licence key from /onboarding, /dashboard, "
-        "or /account/plan — verify the account state manually (see runbook)."
+        "Could not read the account's licence key from /onboarding or /dashboard "
+        "— verify the account state manually (see runbook)."
     )
 
 

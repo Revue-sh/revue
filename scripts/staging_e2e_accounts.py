@@ -192,13 +192,15 @@ def resolve_account_key(base_url: str, email: str, password: str) -> str:
     the login that is required to reach an authenticated page.
 
     Flow: ``POST /login`` (follow redirects) → ``GET /onboarding`` (fallback
-    ``GET /dashboard``, then ``GET /account/plan``) → extract ``lic_<32 hex>``.
-    /account/plan uses ``get_any_license_for_user`` (unfiltered), so the key is
-    visible even for lapsed accounts (``is_active=False``). /onboarding and
-    /dashboard use the filtered ``get_license_for_user`` which hides lapsed rows,
-    so without the /account/plan fallback the lapsed key is never returned.
-    Raises a clear, actionable ``RuntimeError`` NAMING the account if no key
-    can be read.
+    ``GET /dashboard``) → extract ``lic_<32 hex>``. Both use the filtered
+    ``get_license_for_user`` (is_active=1), which renders the key for every state
+    that HAS a readable key. This is NEVER called for a LAPSED account: a lapsed
+    licence is hidden on /onboarding + /dashboard and the /account/plan lapsed
+    block renders no key, so the key is intentionally unreadable — the conftest
+    short-circuits LAPSED with a sentinel before reaching here (see
+    ``_staging_account``). Do NOT re-add an /account/plan fallback for lapsed: that
+    page carries no key for a lapsed account. Raises a clear, actionable
+    ``RuntimeError`` NAMING the account if no key can be read.
     """
     httpx = _httpx()
     base = base_url.rstrip("/")
@@ -209,15 +211,15 @@ def resolve_account_key(base_url: str, email: str, password: str) -> str:
         csrf_form_post(
             client, "/login", "/login", {"email": email, "password": password}
         )
-        for path in ("/onboarding", "/dashboard", "/account/plan"):
+        for path in ("/onboarding", "/dashboard"):
             key = extract_licence_key(client.get(path).text)
             if key:
                 return key
     raise RuntimeError(
         f"Could not read the licence key for staging E2E account {email!r} from "
-        f"/onboarding, /dashboard, or /account/plan after login. The account may "
-        f"not exist or may not be activated — re-run the provision-staging-e2e "
-        f"pipeline step (ensure-exists). See docs/runbooks/staging-e2e-account.md."
+        f"/onboarding or /dashboard after login. The account may not exist or may "
+        f"not be activated — re-run the provision-staging-e2e pipeline step "
+        f"(ensure-exists). See docs/runbooks/staging-e2e-account.md."
     )
 
 

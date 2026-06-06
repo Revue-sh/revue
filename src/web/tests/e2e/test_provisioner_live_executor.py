@@ -78,9 +78,13 @@ def test_provisioner_signup_csrf_login_resolves_user_id_and_key(base_url):
     password = "testpass123"  # local app accepts any >=8 char password
 
     with httpx.Client(base_url=base_url, timeout=30.0, follow_redirects=True) as client:
-        # BLOCKER 1 + 3: CSRF-aware signup that establishes a session and reads
-        # the key (a 403 here, or a wrong idempotency branch, makes this raise).
-        key = prov._signup_or_login(client, email, password, log=lambda *_: None)
+        # BLOCKER 1 + 3: CSRF-aware signup that establishes a session (a 403 here,
+        # or a wrong idempotency branch, makes this raise), then read the key off
+        # the authenticated page. The key read is now decoupled from signup/login —
+        # only the activate-needing states read it, so _execute_state reads it
+        # separately; here we exercise both legs against the live local app.
+        prov._signup_or_login(client, email, password, log=lambda *_: None)
+        key = prov._read_licence_key(client, log=lambda *_: None)
         assert key.startswith("lic_"), f"expected a lic_ key, got {key!r}"
 
         # BLOCKER 2: the user_id must be readable from the /onboarding marker.
@@ -281,7 +285,10 @@ def test_signed_webhook_lapsed_converges_without_validation(base_url):
     email = f"e2e-lapsed-{uuid.uuid4().hex[:8]}@revue-e2e.test"
     plan = prov.build_state_plan(accts.STATE_LAPSED, cfg)
     plan = prov.StatePlan(state=plan.state, email=email, actions=plan.actions)
-    # _execute_state runs signup→activate(no-op locally: no JWT key)→emit→verify.
+    # _execute_state runs signup→emit→verify for LAPSED: there is NO activate
+    # round-trip (and so NO licence-key read) — lapsed renders from is_active=False
+    # alone, and once past_due lands the key is unreadable from every surface, so
+    # reading it would break the idempotent re-run.
     prov._execute_state(plan, cfg, log=lambda *_: None)
 
     # Re-login and assert the lapsed cues explicitly: PRO tier retained, no 'invalid'.
@@ -302,7 +309,8 @@ def test_activate_payload_accepted_not_422(base_url):
     _require_local()
     email = f"e2e-act-{uuid.uuid4().hex[:8]}@revue-e2e.test"
     with httpx.Client(base_url=base_url, timeout=30.0, follow_redirects=True) as client:
-        key = prov._signup_or_login(client, email, "testpass123", log=lambda *_: None)
+        prov._signup_or_login(client, email, "testpass123", log=lambda *_: None)
+        key = prov._read_licence_key(client, log=lambda *_: None)
         resp = client.post(
             "/api/v2/licence/activate",
             json={"key": key, "machine_fingerprint": prov._E2E_FINGERPRINT},

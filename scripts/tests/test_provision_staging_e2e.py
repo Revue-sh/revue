@@ -60,11 +60,16 @@ def test_active_pro_renewal_emits_webhooks_after_activate():
     assert "2099-12-31" in detail  # the fixed renewal date the page asserts
 
 
-def test_lapsed_emit_detail_records_past_due_not_cancel():
-    """LAPSED emits webhooks (the active+past_due sequence); the detail records the
-    past_due-not-cancel semantics (cancel maps to FREE in billing.py)."""
+def test_lapsed_skips_activate_and_emits_past_due_webhooks():
+    """LAPSED must NOT run the activate round-trip (it renders from is_active=False
+    alone, and its key is unreadable once past_due lands — reading it would break
+    the idempotent re-run). It signs up then emits the active+past_due webhook
+    sequence; the detail records the past_due-not-cancel semantics (cancel maps to
+    FREE in billing.py)."""
     plan = prov.build_state_plan(prov.STATE_LAPSED, _dry_cfg())
-    assert _action_kinds(plan) == ["signup", "activate_roundtrip", "emit_webhooks"]
+    kinds = _action_kinds(plan)
+    assert "activate_roundtrip" not in kinds
+    assert kinds == ["signup", "none", "emit_webhooks"]
     detail = [a for a in plan.actions if a.kind == "emit_webhooks"][0].detail
     assert "past_due" in detail
     assert "cancel" in detail.lower()  # explicitly warns cancel != lapsed
@@ -235,37 +240,46 @@ _SIGNUP_FORM = (
 _KEY = "lic_" + "0a1b2c3d" * 4
 
 
-def test_signup_or_login_fresh_signup_submits_csrf_and_reads_key():
+def test_signup_or_login_fresh_signup_submits_csrf_then_key_is_readable():
     """Fresh signup: GET /signup renders the csrf field, the POST echoes it, the
-    redirect lands on /onboarding which carries the key."""
+    redirect lands on /onboarding which carries the key.
+
+    _signup_or_login only ESTABLISHES the session (returns None now) — the key read
+    is decoupled into _read_licence_key, called separately by the activate-needing
+    states so LAPSED never reads a key it cannot satisfy."""
     client = _FakeHttpClient(pages={
         "/signup": _SIGNUP_FORM,
         ("POST", "/signup"): f"<code>revue activate {_KEY}</code>",  # redirected onboarding
         "/onboarding": f"<code>revue activate {_KEY}</code>",
     })
-    key = prov._signup_or_login(client, "e2e-free@revue-e2e.test", "pw",
-                                log=lambda *_: None)
-    assert key == _KEY
+    assert prov._signup_or_login(
+        client, "e2e-free@revue-e2e.test", "pw", log=lambda *_: None
+    ) is None
     signup_posts = [d for p, d in client.posts if p == "/signup"]
     assert signup_posts and signup_posts[0]["csrf_token"] == _CSRF
+    # The key is readable from the established session via the decoupled reader.
+    assert prov._read_licence_key(client, log=lambda *_: None) == _KEY
 
 
 def test_signup_or_login_duplicate_signup_falls_back_to_login():
     """Duplicate signup returns HTTP 200 with the 'already exists' phrase (NOT
     400/409 — verified against auth_routes.py). Detection is by body text, and the
-    fallback POSTs a CSRF-tokened /login."""
+    fallback POSTs a CSRF-tokened /login. _signup_or_login returns None (session
+    only); the key remains readable via the decoupled _read_licence_key."""
     client = _FakeHttpClient(pages={
         "/signup": _SIGNUP_FORM,
         ("POST", "/signup"): "An account with this email already exists.",
         "/login": _SIGNUP_FORM,  # carries a csrf field too
         "/onboarding": f"key {_KEY}",
     })
-    key = prov._signup_or_login(client, "e2e-free@revue-e2e.test", "pw",
-                                log=lambda *_: None)
-    assert key == _KEY
+    assert prov._signup_or_login(
+        client, "e2e-free@revue-e2e.test", "pw", log=lambda *_: None
+    ) is None
     # A /login POST happened, carrying the csrf token.
     login_posts = [d for p, d in client.posts if p == "/login"]
     assert login_posts and login_posts[0]["csrf_token"] == _CSRF
+    # Key still readable post-login via the decoupled reader.
+    assert prov._read_licence_key(client, log=lambda *_: None) == _KEY
 
 
 def test_resolve_user_id_reads_onboarding_marker():

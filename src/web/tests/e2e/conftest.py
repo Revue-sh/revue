@@ -183,11 +183,21 @@ def _staging_account(state: str) -> dict:
         )
     domain = os.environ.get("STAGING_E2E_EMAIL_DOMAIN") or DEFAULT_EMAIL_DOMAIN
     email = email_for(state, domain)
-    # Wrap the real key in a repr-masked str subclass BEFORE it enters the memo
-    # cache or any fixture return — so a pytest failure dumping locals shows
-    # ``'lic_***'`` instead of the real staging key in the CI log. The value still
-    # compares/str()s as the real key, so logins and key assertions are unchanged.
-    key = _RedactedKey(resolve_account_key(base_url, email, password))
+    # LAPSED has NO readable licence key on any authenticated surface: /onboarding
+    # + /dashboard filter is_active=1 (hiding the lapsed row) and the /account/plan
+    # lapsed block renders the "subscription ended" CTAs WITHOUT the key. This is by
+    # design — do NOT add a key-bearing page for lapsed. The lapsed E2E tests never
+    # read the key (they log in via email + password), so carry an empty sentinel
+    # key for that state instead of calling resolve_account_key (which would raise).
+    if state == STATE_LAPSED:
+        key = _RedactedKey("")
+    else:
+        # Wrap the real key in a repr-masked str subclass BEFORE it enters the memo
+        # cache or any fixture return — so a pytest failure dumping locals shows
+        # ``'lic_***'`` instead of the real staging key in the CI log. The value
+        # still compares/str()s as the real key, so logins and key assertions are
+        # unchanged.
+        key = _RedactedKey(resolve_account_key(base_url, email, password))
     account = {"email": email, "password": password, "key": key}
     _STAGING_ACCOUNT_CACHE[state] = account
     return account

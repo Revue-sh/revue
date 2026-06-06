@@ -208,11 +208,18 @@ def test_seed_active_licence_staging_maps_pro_to_active_pro_account(staging_env)
 
 def test_seed_active_licence_staging_maps_lapsed_pro_to_lapsed_account(staging_env):
     """A lapsed seed (tier='pro', is_active=False) must hit the LAPSED account,
-    NOT the active-pro one — the precedence bug this guards against."""
+    NOT the active-pro one — the precedence bug this guards against.
+
+    LAPSED intentionally exposes NO readable licence key (it is hidden on every
+    authenticated surface once past_due lands), so the staging branch returns an
+    EMPTY SENTINEL key WITHOUT calling ``resolve_account_key`` — the lapsed tests
+    log in via ``_last_email`` / ``_last_password``, never the key. The empty key
+    (not the mocked ``"lapsed-licence_key-value"``) proves resolve was skipped."""
     factory = conftest.seed_active_licence.__wrapped__(_e2e_db=None)
     key = factory(tier="pro", is_active=False, subscription_status="canceled")
-    assert key == "lapsed-licence_key-value"
+    assert key == ""  # empty sentinel — lapsed has no key; resolve_account_key skipped
     assert factory._last_email == "e2e-lapsed@revue-e2e.test"
+    assert factory._last_password == "shared-pw-value"
 
 
 def test_seed_active_licence_staging_default_call_is_active_indie(staging_env):
