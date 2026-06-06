@@ -144,10 +144,17 @@ definitions:
             assert_422 "https://staging.revue.sh/api/license/validate"
             assert_manifest "https://staging.revue.sh/skills/manifest.json"
 
+    # REVUE-419: the prod-deploy SCRIPT is anchored here (&prod-deploy-script) so
+    # the API-triggerable `custom: deploy-production` pipeline reuses the exact
+    # same deploy logic — the two paths CANNOT drift. The only difference between
+    # the manual main-branch step and the custom step is `trigger: manual`
+    # (present here, absent on the custom step where the API call IS the
+    # authorization). Both deploy the SAME image: registry.fly.io/revue-staging
+    # :${BITBUCKET_COMMIT}, built+pushed by the merge pipeline for that commit.
     - step: &deploy-web-production
         name: "Deploy Web → Production"
         trigger: manual
-        script:
+        script: &prod-deploy-script
           - apt-get update -qq && apt-get install -y --no-install-recommends curl
           - curl -fsSL https://fly.io/install.sh -o /tmp/fly-install.sh && sh /tmp/fly-install.sh
           - export PATH="$HOME/.fly/bin:$PATH"
@@ -625,6 +632,88 @@ pipelines:
       - step: *revue-review
 
   custom:
+    # -----------------------------------------------------------------------
+    # REVUE-419: API-triggerable production WEB deploy.
+    #
+    # Bitbucket Cloud has NO REST API to play/continue an individual `trigger:
+    # manual` step inside a running pipeline, but it CAN trigger a whole custom
+    # pipeline via a selector. This pipeline gives an API-initiated prod-deploy
+    # path WITHOUT weakening the manual gate on the normal merge flow — that
+    # step (branches.main → *deploy-web-production) stays `trigger: manual`.
+    #
+    # The deploy step here reuses *prod-deploy-script (the SAME logic as the
+    # manual main step) and the smoke step reuses *smoke-web-production, so the
+    # custom path can never diverge from the gated path. The deploy step has NO
+    # `trigger: manual` — the API call that starts this pipeline IS the human
+    # authorization.
+    #
+    # ANTI-DOWNGRADE GUARD (load-bearing, ENFORCED — not a convention):
+    # The Bitbucket API can trigger this custom pipeline with a
+    # `pipeline_commit_target` pointing at an ARBITRARY old main commit, not just
+    # ref_name=main. ${BITBUCKET_COMMIT} then resolves to that old SHA; if a
+    # stale registry.fly.io/revue-staging:<old-SHA> image still exists, prod
+    # would be silently DOWNGRADED to an old/vulnerable image, bypassing the
+    # manual gate. The first step below ("Guard → refuse non-main-HEAD trigger")
+    # fetches origin/main and HARD-FAILS unless ${BITBUCKET_COMMIT} equals the
+    # current origin/main HEAD. It is a SEPARATE step — deliberately NOT folded
+    # into *prod-deploy-script — because that anchor is reused by the manual
+    # main-branch deploy step, where main may legitimately have advanced past
+    # the trigger commit; folding the guard in would wrongly refuse a valid
+    # manual deploy. The guard compares HEAD COMMITS (not BITBUCKET_BRANCH ==
+    # main), which is strictly stronger and works even when BITBUCKET_BRANCH is
+    # unset for commit-target triggers.
+    #
+    # Once the guard passes, ${BITBUCKET_COMMIT} == main's HEAD == the merge
+    # commit, which is exactly the commit the merge pipeline already built+pushed
+    # as registry.fly.io/revue-staging:${BITBUCKET_COMMIT}, so this deploys the
+    # already-staged image. (If that image was never pushed, `flyctl deploy`
+    # fails loudly with image-not-found.)
+    #
+    # STAGING-GREEN PRECONDITION (operator responsibility): this custom path does
+    # NOT re-run deploy-web-staging / smoke-web-staging — by design, to stay fast.
+    # Before triggering, the operator MUST confirm the latest main pipeline's
+    # `smoke-web-staging` for THIS exact SHA was SUCCESSFUL. The prod
+    # `*smoke-web-production` step below is the post-deploy net, not a substitute
+    # for that pre-trigger staging check. (A future hard-gate option — prepending
+    # deploy-web-staging + smoke-web-staging to this pipeline — is being decided
+    # separately and is intentionally NOT added here.)
+    #
+    # WEB-DEPLOY ONLY: this pipeline must never reference any tag/Nuitka/PyPI
+    # publish step — the publish-path human gate is non-negotiable and untouched.
+    #
+    # Trigger:
+    #   POST https://api.bitbucket.org/2.0/repositories/cbscd/revue/pipelines/
+    #   {"target":{"type":"pipeline_ref_target","ref_type":"branch",
+    #    "ref_name":"main","selector":{"type":"custom","pattern":"deploy-production"}}}
+    # -----------------------------------------------------------------------
+    deploy-production:
+      # Anti-downgrade / off-branch guard — see the block comment above. Refuses
+      # any trigger whose commit is not the current origin/main HEAD, so a
+      # commit-target trigger on a stale SHA cannot silently downgrade prod.
+      - step:
+          name: "Guard → refuse non-main-HEAD trigger"
+          script:
+            # python:3.12-slim ships no git — install it so the guard can run.
+            # If this fetch/rev-parse can't run, the step fails closed (refuses
+            # the deploy), which is the safe direction.
+            - apt-get update -qq && apt-get install -y --no-install-recommends git
+            - |
+              set -eu
+              # Resolve main HEAD into its own command (not inside the comparison
+              # substitution) so a fetch/rev-parse failure aborts loudly under
+              # `set -e` and surfaces the real git error, instead of yielding an
+              # empty string that masquerades as a downgrade-guard refusal.
+              git fetch --depth=1 origin main
+              MAIN_HEAD="$(git rev-parse FETCH_HEAD)"
+              if [ "$MAIN_HEAD" != "$BITBUCKET_COMMIT" ]; then
+                echo "REFUSING prod deploy: $BITBUCKET_COMMIT is not current origin/main HEAD $MAIN_HEAD (off-branch or downgrade trigger)" >&2
+                exit 1
+              fi
+      - step:
+          name: "Deploy Web → Production (API-triggered)"
+          script: *prod-deploy-script
+      - step: *smoke-web-production
+
     debug-revue-skill-macos-build:
       - step:
           name: "Debug — Build macOS ARM64 (revue skill)"
