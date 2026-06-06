@@ -63,10 +63,7 @@ The post-purchase **"now what?"** gap: today `/billing/success` shows no key or 
 | REVUE-379 | Manifest endpoint cache lock — coalesce concurrent cold-cache PyPI fetches | Idempotent / low-severity at current traffic |
 | REVUE-380 | Manifest must skip yanked PyPI releases for `current_version` | Low likelihood under single-maintainer release flow |
 | REVUE-385 | support/legal mailbox backup + retention automation | Operational hygiene; non-gating |
-| REVUE-389 | Go live with Stripe — live key, live prices, customer portal | ⚠️ **Deferred — now UNBLOCKED (REVUE-381 entity registration is Done), pending the go-live decision.** REVUE-315 (config) is done + staging-verified in test mode. Not needed for the pre-revenue /revue-local free launch; pick up when paid revenue is imminent. |
-| REVUE-414 | Stripe webhook robustness hardening | Follow-up to 413; edge-case resilience, not launch-blocking |
-| REVUE-415 | Cancel-at-period-end persistence + 'won't renew' UI indicator | UX polish for cancellation state; non-gating at launch |
-| REVUE-416 | Extract billing licence-lookup service layer / DIP refactor | Code quality / SOLID; no user impact |
+| REVUE-389 | Go live with Stripe — live key, live prices, customer portal | ⚠️ **Deferred — now UNBLOCKED (REVUE-381 entity registration is Done), pending the go-live decision.** REVUE-315 (config) is done + staging-verified in test mode. Not needed for the pre-revenue /revue-local free launch; pick up when paid revenue is imminent. **Go-live remit now also covers cancel-at-period-end (webhook persist + "won't renew" UI) and revisiting the 413 webhook edge cases — folded in from rejected REVUE-415/414 to avoid deferral tickets.** |
 
 ### 🔧 Tooling follow-up (open)
 
