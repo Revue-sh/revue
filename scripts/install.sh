@@ -600,8 +600,12 @@ main() {
   close_tty
 
   # Step 8: Verify installation.
+  # REVUE-373: use the `version` subcommand (supported on all published wheels).
+  # Guard with `|| true` so a failure here (e.g. edge-platform import error in
+  # revue_core) never aborts a successful install under `set -e` — the install
+  # state is already correct; this is a best-effort sanity print only.
   info "Installation complete"
-  revue --version
+  revue version || warn "version check failed — install was successful; run 'revue version' manually to diagnose"
   info "Ready to use: invoke /revue in Claude Code"
 }
 

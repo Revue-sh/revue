@@ -1170,3 +1170,104 @@ def test_guard_normalises_amd64_alias_to_x86_64_for_linux(installer_env):
 
     # Assert — amd64 treated as x86_64, so the install proceeds.
     assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# REVUE-373 — install.sh version-check step must not abort under set -e
+# ---------------------------------------------------------------------------
+
+
+def _make_revue_stub_strict_version(bin_dir: Path, *, claude_skills_dir: Path) -> Path:
+    """A revue stub that mimics the real CLI's subcommand behaviour for version:
+
+    - ``revue version``     → exits 0  (the `version` subparser, always worked)
+    - ``revue --version``   → exits 2  (would fail pre-REVUE-360; mimics old argparse rejection)
+    - ``revue install-skill ...`` → exits 0 and writes the skill files
+
+    This lets us assert that install.sh no longer calls ``revue --version`` and
+    that the post-install step completes without aborting the installer.
+    """
+    log = bin_dir / "revue.log"
+    script = bin_dir / "revue"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env bash
+            echo "revue $*" >> "{log}"
+            if [ "$1" = "install-skill" ]; then
+                target="{claude_skills_dir}"
+                prev=""
+                for arg in "$@"; do
+                    if [ "$prev" = "--target-dir" ]; then
+                        target="$arg"
+                    fi
+                    prev="$arg"
+                done
+                mkdir -p "$target/revue"
+                printf '# revue skill\\n' > "$target/revue/SKILL.md"
+                exit 0
+            fi
+            if [ "$1" = "version" ]; then
+                echo "0.0.0-test"
+                exit 0
+            fi
+            # Simulate old argparse rejection of --version (REVUE-373 regression guard).
+            if [ "$1" = "--version" ]; then
+                echo "error: argument command: invalid choice: --version" >&2
+                exit 2
+            fi
+            exit 0
+            """
+        )
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return log
+
+
+def test_install_version_step_uses_version_subcommand_not_double_dash(installer_env):
+    """AC1 (static) — install.sh must call ``revue version``, not ``revue --version``.
+
+    If someone edits install.sh and re-introduces ``revue --version``, this test
+    catches it without needing to run the installer at all.
+    """
+    # Arrange / Act — read the script text directly.
+    text = INSTALL_SCRIPT.read_text()
+
+    # Assert — double-dash form is gone; subcommand form is present.
+    assert "revue --version" not in text, (
+        "REVUE-373: install.sh must use 'revue version', not 'revue --version' "
+        "(--version was rejected by argparse on old wheels)"
+    )
+    assert "revue version" in text, (
+        "REVUE-373: install.sh must call 'revue version' to verify the install"
+    )
+
+
+def test_install_version_step_does_not_abort_when_version_subcommand_fails(installer_env):
+    """AC2 — a failing version check must NOT abort a successful install.
+
+    Uses a stub that correctly exits 0 on ``revue version`` but exits 2 on
+    ``revue --version`` (old argparse behaviour).  If install.sh were still
+    calling ``--version``, the stub would abort the script under set -e and
+    the test would fail.
+    """
+    # Arrange
+    bin_dir: Path = installer_env["bin"]
+    home: Path = installer_env["home"]
+    _make_stub(bin_dir, "uv")
+    revue_log = _make_revue_stub_strict_version(
+        bin_dir, claude_skills_dir=home / ".claude" / "skills"
+    )
+
+    # Act
+    result = _run_installer(env=installer_env["env"], cwd=installer_env["workspace"])
+
+    # Assert — installer exits 0 and the version subcommand was called (not --version).
+    assert result.returncode == 0, result.stderr
+    log_text = revue_log.read_text()
+    assert "revue version" in log_text, (
+        f"expected 'revue version' in revue.log, got:\n{log_text}"
+    )
+    assert "revue --version" not in log_text, (
+        f"installer must not call 'revue --version'; got:\n{log_text}"
+    )
