@@ -31,8 +31,11 @@ def test_onboarding_shows_license_key(logged_in_page, base_url):
     logged_in_page.goto(base_url + "/onboarding")
     page = logged_in_page
 
-    # Onboarding page should show the license key
-    assert page.locator("text=license key").first.is_visible()
+    # REVUE-361: onboarding now leads with the Activation Command-Box hero,
+    # which renders the user's key inside `revue activate <key>`.
+    hero = page.locator("#activation-command-box")
+    assert hero.count() == 1
+    assert "revue activate lic_" in hero.locator(".command-box-command").inner_text()
 
 
 def test_runs_page_loads(logged_in_page, base_url):

@@ -506,6 +506,65 @@ async def test_billing_success_page(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_billing_success_leads_with_cli_command_box(client: AsyncClient):
+    """REVUE-361 success-hero/success-handoff/success-ci-card: the success page
+    leads with the Activation Command-Box (full key) and a masked share box, and
+    demotes CI to a link-out card with no inline YAML."""
+    await _signup(client)
+    resp = await client.get("/billing/success")
+    body = resp.content
+    # Hero command-box, full `revue activate <key>`.
+    assert b'id="activation-command-box"' in body
+    assert b"revue activate lic_" in body
+    # success-hero AC: the command-box is above all other content — it must come
+    # FIRST in document order, ahead of the celebratory confirmation, the share
+    # box, and the CI card. Order is keyed off the unique dom_id / link strings,
+    # not raw HTML scans, so cosmetic markup changes don't break the assertion.
+    hero_pos = body.index(b'id="activation-command-box"')
+    share_pos = body.index(b'id="share-key-box"')
+    ci_pos = body.index(b"/docs/ci-setup")
+    confirm_pos = body.index(b"You're all set")
+    assert hero_pos < confirm_pos, "command-box must precede the confirmation banner"
+    assert hero_pos < share_pos, "command-box must precede the share box"
+    assert hero_pos < ci_pos, "command-box must precede the CI card"
+    # Masked share affordance.
+    assert b'id="share-key-box"' in body
+    assert b"Copy key to share with your developer" in body
+    assert b"\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2" in body  # the •••• mask
+    # CI demoted to a link-out card; no inline secret-name YAML.
+    assert b"/docs/ci-setup" in body
+    assert b"Reviewing in CI" in body
+    assert b"REVUE_LICENSE_KEY" not in body
+    # Two-ways framing present.
+    assert b"Two ways to use Revue" in body
+
+
+@pytest.mark.asyncio
+async def test_billing_success_no_key_never_renders_blank_box(
+    client: AsyncClient, monkeypatch
+):
+    """REVUE-361 robustness: if the active licence is not yet resolvable (webhook
+    race, or a free user opening the URL directly), the page must NOT render a
+    blank command-box — it falls back to a provisioning prompt instead."""
+    await _signup(client)
+    import routes.billing_routes as billing_routes
+
+    monkeypatch.setattr(billing_routes, "get_license_for_user", lambda conn, uid: None)
+    resp = await client.get("/billing/success")
+    assert resp.status_code == 200
+    body = resp.content
+    # No command-box at all when there's no key — never an empty `revue activate`.
+    assert b'id="activation-command-box"' not in body
+    assert b'id="share-key-box"' not in body
+    # The only `revue activate` reference allowed on the no-key path is the inert
+    # placeholder in the provisioning prompt — never a real pre-filled command.
+    assert b"revue activate lic_" not in body
+    # The fallback positively renders the provisioning prompt with a path forward.
+    assert b"provisioned" in body
+    assert b"revue activate &lt;your-key&gt;" in body
+
+
+@pytest.mark.asyncio
 async def test_billing_portal_without_subscription(client: AsyncClient, monkeypatch):
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_123")
     await _signup(client)

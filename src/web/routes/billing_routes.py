@@ -124,8 +124,19 @@ async def checkout_success(request: Request) -> HTMLResponse:
     if not session:
         return RedirectResponse("/login", status_code=303)
 
+    # REVUE-361: the page leads with the Activation Command-Box pre-filled with
+    # the user's real licence key. The key is NOT on the session, so look it up
+    # from the DB. ``get_license_for_user`` returns the latest *active* key for
+    # the user's workspace, or None (e.g. a webhook race right after checkout,
+    # or a free user opening this URL directly) — the template falls back to a
+    # CLI-first "activate later" prompt so the command-box never renders blank.
+    user_id = session["user_id"]
+    with get_db() as conn:
+        license_key = get_license_for_user(conn, user_id)
+
     return templates.TemplateResponse(request, "billing_success.html", {
         "session": session,
+        "license_key": license_key,
     })
 
 

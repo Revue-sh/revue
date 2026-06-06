@@ -16,20 +16,30 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
+def pytest_configure(config):
+    """Set SECRET_KEY before any test module is collected or imported.
+
+    auth.py binds SECRET_KEY at module import time
+    (``SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-...")``)
+    so the only safe place to force the test value is here — before pytest
+    collection triggers the first import of any src/web module. Setting it in
+    a fixture is too late: the module may already be cached with the default
+    key. The uvicorn child inherits this value via os.environ, ensuring the
+    test process and the server sign/verify cookies with the same key.
+    """
+    os.environ.setdefault("SECRET_KEY", "test-secret")
+
+
 @pytest.fixture(scope="session")
 def _e2e_db():
     """Create a temporary SQLite DB that lives for the entire test session."""
     tmp_dir = tempfile.mkdtemp()
     db_path = os.path.join(tmp_dir, "e2e_test.db")
 
-    os.environ["SECRET_KEY"] = "test-secret"
     os.environ["DATABASE_PATH"] = db_path
 
     import database
     database.init_db(db_path)
-
-    import auth
-    auth.reset_serializer()
 
     yield db_path
 
@@ -198,6 +208,89 @@ def seed_active_licence(_e2e_db):
         return key
 
     return _seed
+
+
+@pytest.fixture(scope="function")
+def seed_user_with_licence(_e2e_db):
+    """Companion to ``seed_active_licence`` returning the full identity, not just
+    the key (REVUE-361).
+
+    ``seed_active_licence`` returns only the licence key — enough for the
+    unauthenticated /activate flow, but the /billing/success and /onboarding
+    pages render the *authenticated* user's key, so a test must also be able to
+    mint that user's session cookie. Rather than change the existing factory's
+    return type (its callers do ``key = seed_active_licence()``), this sibling
+    returns a dict with ``user_id``/``email``/``tier``/``key`` — exactly the
+    fields ``auth.create_session`` signs into the session cookie.
+
+    Seeds the user with ``password_hash="x"`` (cannot log in via the UI — that is
+    why the cookie is minted directly in ``auth_cookie``).
+    """
+    import sqlite3
+    import uuid
+
+    from license import generate_license_key
+    from models import create_license_key, create_user, create_workspace
+
+    def _seed(*, tier: str = "indie") -> dict:
+        key = generate_license_key()
+        email = f"seed-{uuid.uuid4().hex[:8]}@test.com"
+        conn = sqlite3.connect(_e2e_db)
+        conn.row_factory = sqlite3.Row
+        try:
+            user_id = create_user(conn, email=email, password_hash="x")
+            ws_id = create_workspace(conn, user_id, "seed-ws")
+            create_license_key(conn, ws_id, key, tier=tier)
+            conn.commit()
+        finally:
+            conn.close()
+        return {"user_id": user_id, "email": email, "tier": tier, "key": key}
+
+    return _seed
+
+
+@pytest.fixture(scope="function")
+def auth_cookie(base_url):
+    """Inject a signed session cookie for a seeded user into the Playwright page.
+
+    The seeded user has ``password_hash="x"`` and cannot authenticate through the
+    signup/login UI, so we mint the exact cookie ``auth.create_session`` would
+    have set (``itsdangerous``-signed ``{"user_id","email","tier"}``) and add it
+    to the browser context. The serializer is keyed on ``SECRET_KEY`` (set to
+    ``test-secret`` by the ``_e2e_db`` fixture and inherited by the uvicorn
+    child), so the server's ``get_session`` round-trips it.
+
+    Returns a callable ``(page, identity) -> None`` taking the dict produced by
+    ``seed_user_with_licence``. The cookie is scoped to the running server's host
+    so it travels with same-host navigations.
+    """
+    from urllib.parse import urlparse
+
+    import auth
+
+    def _inject(page, identity: dict) -> None:
+        token = auth._get_serializer().dumps(
+            {
+                "user_id": identity["user_id"],
+                "email": identity["email"],
+                "tier": identity["tier"],
+            }
+        )
+        host = urlparse(base_url).hostname or "127.0.0.1"
+        page.context.add_cookies(
+            [
+                {
+                    "name": auth.SESSION_COOKIE,
+                    "value": token,
+                    "domain": host,
+                    "path": "/",
+                    "httpOnly": True,
+                    "sameSite": "Lax",
+                }
+            ]
+        )
+
+    return _inject
 
 
 @pytest.fixture(scope="function")

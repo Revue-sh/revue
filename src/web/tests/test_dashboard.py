@@ -43,20 +43,31 @@ async def test_dashboard_requires_auth(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_onboarding_renders(client: AsyncClient):
+async def test_onboarding_renders_cli_hero(client: AsyncClient):
+    """REVUE-361: onboarding leads with the Activation Command-Box hero
+    pre-filled with the signed-up (free-tier) user's key."""
     await _signup_and_get_cookies(client)
     resp = await client.get("/onboarding")
     assert resp.status_code == 200
-    assert b"Setup Guide" in resp.content
-    assert b"REVUE_LICENSE_KEY" in resp.content
+    assert b'id="activation-command-box"' in resp.content
+    assert b"revue activate lic_" in resp.content
 
 
 @pytest.mark.asyncio
-async def test_onboarding_has_github_and_gitlab_tabs(client: AsyncClient):
+async def test_onboarding_demotes_ci_to_linkout_card(client: AsyncClient):
+    """REVUE-361 onboarding-refactor: the inline CI YAML and platform tabs are
+    removed; CI is a compact card linking to /docs/ci-setup."""
     await _signup_and_get_cookies(client)
     resp = await client.get("/onboarding")
-    assert b"GitHub Actions" in resp.content
-    assert b"GitLab CI" in resp.content
+    body = resp.content
+    # Inline CI scaffolding is gone.
+    assert b"REVUE_LICENSE_KEY" not in body
+    assert b".github/workflows/revue.yml" not in body
+    assert b".gitlab-ci.yml" not in body
+    assert b"switchTab" not in body
+    # CI mode is a link-out to the consolidated CI-setup page.
+    assert b"/docs/ci-setup" in body
+    assert b"Reviewing in CI" in body
 
 
 @pytest.mark.asyncio

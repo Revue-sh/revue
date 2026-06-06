@@ -1,14 +1,91 @@
 {% extends "base.html" %}
+{% from "partials/command_box.html" import command_box %}
 {% block title %}Subscription activated — Revue{% endblock %}
 {% block body %}
-<div class="min-h-full flex items-center justify-center px-6 py-12">
-    <div class="w-full max-w-md text-center">
-        <div class="text-5xl mb-4">🎉</div>
-        <h1 class="text-2xl font-bold mb-2">You're all set!</h1>
-        <p class="text-gray-400 mb-6">Your subscription is now active. Your new tier and review limits are live immediately.</p>
-        <a href="/dashboard" class="inline-block bg-brand-600 hover:bg-brand-700 text-white font-semibold px-6 py-3 rounded-lg">
-            Go to dashboard →
-        </a>
+<div class="min-h-full px-6 py-12">
+  <div class="w-full max-w-2xl mx-auto">
+
+    {% if license_key %}
+    {% set _key = license_key.key %}
+    {# Masked display for the share affordance: lic_••••<last4>. The full key is
+       never rendered as visible text in the masked box — only in its
+       data-copy-payload — but it IS already visible in the hero command above,
+       which is intentional (see REVUE-361 Notes). #}
+    {% set _masked = "lic_••••" ~ _key[-4:] %}
+
+    <!-- CLI hero — the command is the hero, above ALL other content (success-hero).
+         No heading, banner, or copy precedes the command-box. -->
+    <section class="mb-6">
+      {{ command_box(
+           dom_id="activation-command-box",
+           command="revue activate " ~ _key,
+           caption="Writes your licence so Revue runs offline.",
+         ) }}
+    </section>
+
+    <!-- Confirmation sits BELOW the hero so the command leads the page. -->
+    <div class="mb-8">
+      <h1 class="text-xl font-bold mb-1">🎉 You're all set</h1>
+      <p class="text-gray-400 text-sm">
+        Your subscription is active. Run the command above to start reviewing locally.
+      </p>
     </div>
+
+    <!-- Two ways framing -->
+    <section class="mb-6">
+      <h2 class="text-base font-semibold mb-3">Two ways to use Revue</h2>
+      <p class="text-gray-400 text-sm mb-4">
+        The command above runs Revue locally and in your pre-commit flow — no CI needed.
+        Working with a developer who runs the pipeline? Hand them your key, or set up CI.
+      </p>
+
+      <!-- Share-key handoff (masked; Copy yields the full key) -->
+      <div class="mb-4">
+        <p class="text-xs text-gray-400 mb-2">Copy key to share with your developer</p>
+        {{ command_box(
+             dom_id="share-key-box",
+             masked=True,
+             masked_display=_masked,
+             copy_payload=_key,
+           ) }}
+      </div>
+
+      <!-- Compact CI card — link-out only, visually subordinate -->
+      <a href="{{ url_for('ci_setup') }}"
+         class="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-lg px-4 py-3 hover:border-gray-700">
+        <span class="text-sm text-gray-300">Reviewing in CI? Set up your pipeline</span>
+        <span class="text-brand-400 text-sm">&rarr;</span>
+      </a>
+    </section>
+
+    {% else %}
+    {# No active licence yet (webhook race or free user hitting the URL). Never
+       render a blank command-box — point to the activation flow instead. #}
+    <div class="text-center mb-8">
+      <div class="text-5xl mb-4">🎉</div>
+      <h1 class="text-2xl font-bold mb-2">You're all set!</h1>
+      <p class="text-gray-400">Your subscription is active.</p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center mb-6">
+      <p class="text-gray-300 mb-4">
+        Your licence is being provisioned. Once it's ready you can activate Revue with
+        <code class="text-brand-300">revue activate &lt;your-key&gt;</code>.
+      </p>
+      <a href="/dashboard" class="text-brand-400 hover:underline text-sm">Find your key on the dashboard →</a>
+    </div>
+    <a href="{{ url_for('ci_setup') }}"
+       class="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-lg px-4 py-3 hover:border-gray-700 max-w-2xl">
+      <span class="text-sm text-gray-300">Reviewing in CI? Set up your pipeline</span>
+      <span class="text-brand-400 text-sm">&rarr;</span>
+    </a>
+    {% endif %}
+
+    <div class="text-center mt-8">
+      <a href="/dashboard" class="inline-block bg-brand-600 hover:bg-brand-700 text-white font-semibold px-6 py-3 rounded-lg">
+        Go to dashboard →
+      </a>
+    </div>
+
+  </div>
 </div>
 {% endblock %}
