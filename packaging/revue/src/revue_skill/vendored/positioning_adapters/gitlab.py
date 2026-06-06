@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 
 from .helpers import FP_RE, _blank_slots, _http_get, _write

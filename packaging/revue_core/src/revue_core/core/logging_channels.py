@@ -11,6 +11,8 @@ Also hosts cross-adapter logging convention helpers — keep these here so
 new adapters don't drift to ad-hoc log formats.
 """
 
+from __future__ import annotations
+
 import logging
 
 from revue_core.core.display import AGENT_EMOJIS
