@@ -146,18 +146,53 @@ definitions:
             assert_422 "https://staging.revue.sh/api/license/validate"
             assert_manifest "https://staging.revue.sh/skills/manifest.json"
 
+    # REVUE-409: ensure-exists provisioning of the staging-E2E accounts, run as
+    # a dedicated PLAIN step BEFORE the E2E step. Idempotent: it signs up (or logs
+    # in) each derived account (e2e-<state>@<domain>) with the shared
+    # STAGING_E2E_PASSWORD, runs the activate round-trip, and drives the paid
+    # states via SIGNED SYNTHETIC webhooks POSTed to /webhooks/stripe (no live
+    # Stripe — STRIPE_WEBHOOK_SECRET signs the events; the price ids are carried in
+    # them). It emits NO secrets — the E2E step reads each account's licence key at
+    # runtime. A staging wipe is recovered by simply re-running this pipeline (no
+    # Stripe objects exist to clean up; no manual secret re-paste).
+    - step: &provision-staging-e2e
+        name: "Provision → Staging E2E accounts"
+        image: python:3.12-slim
+        script:
+          - export STAGING_BASE_URL=https://staging.revue.sh
+          # Fail fast (and name the gap) if the shared provisioning secrets are missing.
+          # STRIPE_WEBHOOK_SECRET + the price ids must MATCH the staging app's
+          # deployed values, or the synthetic events fail signature/price resolution.
+          - |
+            set -eu
+            missing=""
+            for var in STAGING_E2E_PASSWORD STRIPE_WEBHOOK_SECRET STRIPE_PRICE_INDIE_MONTHLY STRIPE_PRICE_PRO_MONTHLY; do
+              eval "val=\${$var:-}"
+              if [ -z "$val" ]; then missing="$missing $var"; fi
+            done
+            if [ -n "$missing" ]; then
+              echo "Missing required staging-E2E repository secret(s):$missing" >&2
+              echo "Set them per docs/runbooks/staging-e2e-account.md before merge." >&2
+              exit 1
+            fi
+          - pip install --quiet httpx
+          # Ensure-exists (NOT --dry-run): make the required accounts exist in the
+          # right state. No Stripe API key — the paid states are signed synthetic
+          # webhooks verified by the staging app against STRIPE_WEBHOOK_SECRET.
+          - python3 scripts/provision_staging_e2e.py
+
     # REVUE-409: post-merge Playwright E2E against the LIVE staging app. Reuses
     # the EXISTING src/web/tests/e2e/ suite verbatim — only E2E_BASE_URL and the
-    # seeding strategy change (the conftest fixtures branch on E2E_BASE_URL and
-    # resolve per-state PRE-PROVISIONED staging accounts from the STAGING_E2E_*
-    # repository secrets, since staging has no DB to seed). A PLAIN step (no
-    # trigger: manual) so a red run is a HARD failure that halts the pipeline,
-    # blocking the manual prod-promotion step below from ever becoming available.
-    #
-    # The STAGING_E2E_<STATE>_{EMAIL,PASSWORD,LICENCE_KEY} secrets must be
-    # provisioned BEFORE the first main run can pass — see
-    # docs/runbooks/staging-e2e-account.md. The guard below fails fast with the
-    # exact missing secret names rather than as an opaque login timeout.
+    # seeding strategy change. The conftest fixtures branch on E2E_BASE_URL and
+    # resolve each STATE's ensure-exists account: e-mail is DERIVED
+    # (e2e-<state>@<domain>), the password is the ONE shared STAGING_E2E_PASSWORD
+    # secret, and the licence KEY is read back at RUNTIME (no per-state secrets,
+    # since staging has no DB to seed). A PLAIN step (no trigger: manual) so a red
+    # run is a HARD failure that halts the pipeline, blocking the manual
+    # prod-promotion step below from ever becoming available.
+    # The *provision-staging-e2e step above runs first and ensures the accounts
+    # exist; the guard below fails fast on a missing shared secret rather than as
+    # an opaque login timeout. See docs/runbooks/staging-e2e-account.md.
     - step: &e2e-web-staging
         name: "E2E → Staging"
         image: python:3.12-slim
@@ -165,20 +200,19 @@ definitions:
           - e2e-venv
         script:
           - export E2E_BASE_URL=https://staging.revue.sh
-          # Fail fast (and name the gap) if the per-state secrets are missing.
+          # Fail fast (and name the gap) if the shared secret is missing. The
+          # licence keys are read at runtime, so only the shared password is
+          # required here (the provision step guards the Stripe secrets).
           - |
             set -eu
             missing=""
-            for state in ACTIVE_PRO ACTIVE_INDIE FREE LAPSED; do
-              for field in EMAIL PASSWORD LICENCE_KEY; do
-                var="STAGING_E2E_${state}_${field}"
-                eval "val=\${$var:-}"
-                if [ -z "$val" ]; then missing="$missing $var"; fi
-              done
+            for var in STAGING_E2E_PASSWORD; do
+              eval "val=\${$var:-}"
+              if [ -z "$val" ]; then missing="$missing $var"; fi
             done
             if [ -n "$missing" ]; then
               echo "Missing required staging-E2E repository secret(s):$missing" >&2
-              echo "Provision them per docs/runbooks/staging-e2e-account.md before merge." >&2
+              echo "Set them per docs/runbooks/staging-e2e-account.md before merge." >&2
               exit 1
             fi
           - test -x .venv-e2e/bin/python || python3 -m venv .venv-e2e
@@ -569,8 +603,11 @@ pipelines:
       - step: *build-web-image-fly
       - step: *deploy-web-staging
       - step: *smoke-web-staging
-      # REVUE-409: a red staging E2E run halts the pipeline here, so the manual
-      # *deploy-web-production step never becomes available.
+      # REVUE-409: ensure the E2E accounts exist (idempotent) BEFORE the E2E step
+      # reads their licence keys at runtime, then run the E2E suite. A red provision
+      # or E2E run halts the pipeline here, so the manual *deploy-web-production
+      # step never becomes available.
+      - step: *provision-staging-e2e
       - step: *e2e-web-staging
       - step: *deploy-web-production
       - step: *smoke-web-production
