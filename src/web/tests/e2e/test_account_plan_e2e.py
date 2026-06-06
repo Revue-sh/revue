@@ -18,28 +18,16 @@ Local run:
 """
 from __future__ import annotations
 
-import os
-
 import pytest
 
 pytestmark = pytest.mark.e2e
 
-# REVUE-409 logged gap (AC7): one assertion below pins an EXACT renewal date that
-# the local SQL factory injects (current_period_end="2099-12-31"). A static,
-# pre-provisioned staging account renders whatever date its real Stripe-test
-# subscription carries, which cannot be forced to a far-future literal and which
-# staging has no DB to override. That single value is therefore unreproducible on
-# staging, so the date-pinning test is skipped there explicitly (the gap is
-# logged, not hidden) — every other Active-Pro assertion still runs via the NULL
-# variant. See docs/runbooks/staging-e2e-account.md "Logged gaps".
-_skip_on_staging_unreproducible = pytest.mark.skipif(
-    bool(os.environ.get("E2E_BASE_URL")),
-    reason=(
-        "E2E_BASE_URL set — asserts an exact local-seeded renewal date "
-        "(2099-12-31) that a static staging account cannot reproduce (AC7 "
-        "logged gap; the NULL-period Active-Pro test covers the rest)"
-    ),
-)
+# REVUE-409: the exact-renewal-date test (test_active_pro_with_renewal_date) now
+# runs on staging too. The synthetic-webhook provisioner stamps a FIXED
+# current_period_end (2099-12-31) onto the ACTIVE_PRO_RENEWAL account — a literal a
+# live Stripe subscription could never carry — so the previously-skipped assertion
+# is reproducible everywhere. The old @_skip_on_staging_unreproducible marker and
+# its E2E_BASE_URL check are therefore removed (closing the AC7 gap).
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +97,8 @@ def test_active_pro_null_period_end(page, base_url, seed_active_licence):
         subscription_status=None,
     )
     email = seed_active_licence._last_email  # type: ignore[attr-defined]
-    _login(page, base_url, email)
+    password = seed_active_licence._last_password  # type: ignore[attr-defined]
+    _login(page, base_url, email, password)
     _go_to_plan(page, base_url)
 
     body = page.locator("body").text_content()
@@ -129,7 +118,6 @@ def test_active_pro_null_period_end(page, base_url, seed_active_licence):
 # TC2b — Active Pro with a NON-NULL current_period_end (the populated variant)
 # ---------------------------------------------------------------------------
 
-@_skip_on_staging_unreproducible
 def test_active_pro_with_renewal_date(page, base_url, seed_active_licence):
     """AC2: Active Pro with a populated current_period_end renders the full
     Active surface — masked key box, the renewal/validity line with the date,
@@ -141,7 +129,8 @@ def test_active_pro_with_renewal_date(page, base_url, seed_active_licence):
         subscription_status="active",
     )
     email = seed_active_licence._last_email  # type: ignore[attr-defined]
-    _login(page, base_url, email)
+    password = seed_active_licence._last_password  # type: ignore[attr-defined]
+    _login(page, base_url, email, password)
     _go_to_plan(page, base_url)
 
     body = page.locator("body").text_content()
@@ -166,7 +155,8 @@ def test_active_indie_renders_all_active_elements(page, base_url, seed_active_li
     """AC2: Active Indie shows Indie badge + active indicator."""
     seed_active_licence(tier="indie", is_active=True)
     email = seed_active_licence._last_email  # type: ignore[attr-defined]
-    _login(page, base_url, email)
+    password = seed_active_licence._last_password  # type: ignore[attr-defined]
+    _login(page, base_url, email, password)
     _go_to_plan(page, base_url)
 
     body = page.locator("body").text_content()
@@ -190,7 +180,8 @@ def test_copy_yields_full_key_with_handoff_label(page, base_url, seed_active_lic
     page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     key = seed_active_licence(tier="pro", is_active=True)
     email = seed_active_licence._last_email  # type: ignore[attr-defined]
-    _login(page, base_url, email)
+    password = seed_active_licence._last_password  # type: ignore[attr-defined]
+    _login(page, base_url, email, password)
     _go_to_plan(page, base_url)
 
     # The copy payload attribute on the command-box holds the full key
@@ -252,7 +243,8 @@ def test_free_validated_no_command_box(page, base_url, seed_active_licence):
     NO Activation Command-Box."""
     seed_active_licence(tier="free", is_active=True, validated=True)
     email = seed_active_licence._last_email  # type: ignore[attr-defined]
-    _login(page, base_url, email)
+    password = seed_active_licence._last_password  # type: ignore[attr-defined]
+    _login(page, base_url, email, password)
     _go_to_plan(page, base_url)
 
     body = page.locator("body").text_content()
@@ -279,7 +271,8 @@ def test_lapsed_no_invalid_word(page, base_url, seed_active_licence):
         current_period_end="2025-01-01T00:00:00",
     )
     email = seed_active_licence._last_email  # type: ignore[attr-defined]
-    _login(page, base_url, email)
+    password = seed_active_licence._last_password  # type: ignore[attr-defined]
+    _login(page, base_url, email, password)
     _go_to_plan(page, base_url)
 
     body = page.locator("body").text_content()
@@ -295,7 +288,8 @@ def test_lapsed_resubscribe_cta_present(page, base_url, seed_active_licence):
         current_period_end="2025-01-01T00:00:00",
     )
     email = seed_active_licence._last_email  # type: ignore[attr-defined]
-    _login(page, base_url, email)
+    password = seed_active_licence._last_password  # type: ignore[attr-defined]
+    _login(page, base_url, email, password)
     _go_to_plan(page, base_url)
 
     # Primary CTA
@@ -312,7 +306,8 @@ def test_free_upgrade_cta_no_command_box(page, base_url, seed_active_licence):
     """AC7: Free state shows Upgrade CTA; Activation Command-Box is absent."""
     seed_active_licence(tier="free", is_active=True)
     email = seed_active_licence._last_email  # type: ignore[attr-defined]
-    _login(page, base_url, email)
+    password = seed_active_licence._last_password  # type: ignore[attr-defined]
+    _login(page, base_url, email, password)
     _go_to_plan(page, base_url)
 
     body = page.locator("body").text_content()

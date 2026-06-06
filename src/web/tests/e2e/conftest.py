@@ -15,32 +15,89 @@ import pytest
 # Ensure src/web is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+# Ensure the repo ``scripts/`` dir is on the path so the shared staging-E2E
+# helper imports cleanly. It is stdlib-only at import time (httpx lazily
+# imported, no src/web import), so this adds no collection-time dependency.
+# Path: this file is src/web/tests/e2e/conftest.py → repo root is four ``..``
+# levels up, then ``scripts``. APPEND (not insert-at-0): ``staging_e2e_accounts``
+# is a unique name and must NOT shadow any src/web top-level module (auth,
+# database, models, license, main, csrf, …) that the local e2e fixtures import.
+sys.path.append(
+    os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "scripts")
+    )
+)
+
+from staging_e2e_accounts import (  # noqa: E402 — after the sys.path insert above
+    DEFAULT_EMAIL_DOMAIN,
+    STATE_ACTIVE_INDIE,
+    STATE_ACTIVE_PRO,
+    STATE_ACTIVE_PRO_RENEWAL,
+    STATE_FREE,
+    STATE_LAPSED,
+    STATE_NOT_ACTIVATED,
+    email_for,
+    resolve_account_key,
+)
+
 
 # ---------------------------------------------------------------------------
-# REVUE-409: staging seeding strategy
+# REVUE-409: staging seeding strategy (ensure-exists + runtime keys)
 #
 # Staging (E2E_BASE_URL set) has NO DB access, so the local SQL ``_seed`` factory
-# cannot run. Instead each licence STATE the reused suite needs maps to a
-# PRE-PROVISIONED staging account whose credentials + licence key live in
-# Bitbucket repository secrets under a documented scheme:
+# cannot run. Instead each licence STATE the reused suite needs maps to an
+# ensure-exists staging account whose e-mail is DERIVED (e2e-<state>@<domain>)
+# and whose password is the ONE shared ``STAGING_E2E_PASSWORD`` secret. The
+# account's licence KEY is read back at RUNTIME (resolve_account_key) — it is
+# never stored as a secret.
 #
-#     STAGING_E2E_<STATE>_EMAIL / _PASSWORD / _LICENCE_KEY
+# The dedicated ``Provision → Staging E2E accounts`` pipeline step
+# (scripts/provision_staging_e2e.py, ensure-exists) makes the accounts exist
+# BEFORE this suite runs, so a staging wipe is recovered by just re-running the
+# main pipeline — no manual secret re-paste.
 #
 # The staging seeding fixtures classify each test's required state from the SAME
 # parameters the local factory accepts (``tier`` / ``is_active`` / ``validated``)
 # and resolve the matching account — so the SAME test bodies run unchanged: they
 # read ``_last_email`` / the returned key exactly as before, only the values now
 # come from a real account instead of a freshly-seeded SQLite row.
+#
+# The canonical STATE constants + e-mail derivation + runtime key read are
+# imported from the shared ``staging_e2e_accounts`` helper (single source).
 # ---------------------------------------------------------------------------
 
-# Canonical licence states. The not-activated state is reached by a fresh signup
-# (the ``logged_in_page`` fixture), so its account is OPTIONAL on staging — it is
-# listed for completeness in case a future test seeds ``validated=False``.
-STATE_ACTIVE_PRO = "ACTIVE_PRO"
-STATE_ACTIVE_INDIE = "ACTIVE_INDIE"
-STATE_FREE = "FREE"
-STATE_LAPSED = "LAPSED"
-STATE_NOT_ACTIVATED = "NOT_ACTIVATED"
+
+class _Redacted(str):
+    """A secret string whose ``repr`` is masked (e.g. ``lic_***`` / ``***``).
+
+    A pytest failure dumps locals, and the resolved staging licence keys + the
+    shared ``STAGING_E2E_PASSWORD`` are REAL secrets. A plain ``str`` would print
+    verbatim into the CI log. This ``str`` SUBCLASS behaves identically for every
+    value-bearing use — ``==``, ``str()``, slicing, f-strings, dict membership all
+    operate on the real characters, so the login/return paths and the existing
+    ``key == "..."`` / ``payload == key`` / ``_last_password == "..."`` / dict
+    equality assertions are unchanged — but its ``repr`` (what tracebacks / ``-l``
+    locals dumps print) is masked. Only the debug REPRESENTATION is redacted.
+
+    The mask is carried as a class attribute set by the factory helpers below so a
+    key shows ``'lic_***'`` and a password shows ``'***'``.
+    """
+
+    __slots__ = ()
+    _MASK = "'***'"
+
+    def __repr__(self) -> str:  # noqa: D401 — masks the value in tracebacks
+        return type(self)._MASK
+
+
+class _RedactedKey(_Redacted):
+    __slots__ = ()
+    _MASK = "'lic_***'"
+
+
+class _RedactedPassword(_Redacted):
+    __slots__ = ()
+    _MASK = "'***'"
 
 
 def _classify_state(
@@ -48,6 +105,7 @@ def _classify_state(
     tier: str,
     is_active: bool,
     validated: bool,
+    current_period_end: "str | None" = None,
 ) -> str:
     """Map the local seed factory's parameters to a canonical staging STATE.
 
@@ -59,8 +117,15 @@ def _classify_state(
       1. ``is_active is False``  -> LAPSED        (tier preserved but subscription lapsed)
       2. ``validated is False``  -> NOT_ACTIVATED (never-validated key)
       3. ``tier == "free"``      -> FREE
-      4. ``tier == "pro"``       -> ACTIVE_PRO
-      5. otherwise               -> ACTIVE_INDIE
+      4. ``tier == "pro"`` + ``current_period_end is not None`` -> ACTIVE_PRO_RENEWAL
+      5. ``tier == "pro"``       -> ACTIVE_PRO   (NULL period_end variant)
+      6. otherwise               -> ACTIVE_INDIE
+
+    The ACTIVE_PRO split (REVUE-409): a pro+active+validated seed that carries a
+    ``current_period_end`` routes to the RENEWAL account (whose synthetic webhook
+    stamps a fixed renewal date the page asserts), closing the old AC7 skip. The
+    other ``current_period_end``-bearing seeds are ``is_active=False`` so they hit
+    LAPSED at step 1 first and are unaffected by this split.
     """
     if is_active is False:
         return STATE_LAPSED
@@ -69,37 +134,63 @@ def _classify_state(
     if tier == "free":
         return STATE_FREE
     if tier == "pro":
+        if current_period_end is not None:
+            return STATE_ACTIVE_PRO_RENEWAL
         return STATE_ACTIVE_PRO
     return STATE_ACTIVE_INDIE
 
 
-def _staging_account(state: str) -> dict:
-    """Resolve a STATE to its pre-provisioned staging account from env secrets.
+# Session-level memo of resolved staging accounts, keyed by STATE. Resolving an
+# account logs in and reads its licence key over HTTP; the suite is
+# function-scoped, so without this cache the 4 states would re-resolve once per
+# test. The provision step makes the accounts stable for the whole run, so a
+# single resolve per state is correct. Cleared between unit-test cases by the
+# autouse fixture in test_staging_seeding_fixtures.py.
+_STAGING_ACCOUNT_CACHE: "dict[str, dict]" = {}
 
-    Reads ``STAGING_E2E_<STATE>_EMAIL`` / ``_PASSWORD`` / ``_LICENCE_KEY``. Raises
-    a clear, actionable error naming the exact missing secret so a provisioning
-    gap surfaces explicitly in the failing run (AC7: gaps are logged, not hidden)
-    rather than as an opaque login timeout.
+
+def _staging_account(state: str) -> dict:
+    """Resolve a STATE to its ensure-exists staging account.
+
+    The e-mail is DERIVED (``e2e-<state>@<domain>``); the password is the ONE
+    shared ``STAGING_E2E_PASSWORD`` secret; the licence KEY is read back at
+    RUNTIME by logging in (``resolve_account_key``) — no per-state secrets.
+
+    Raises a clear, actionable error naming ``STAGING_E2E_PASSWORD`` if it is
+    unset, so a provisioning/config gap surfaces explicitly (AC7: gaps are
+    logged, not hidden) rather than as an opaque login timeout. The resolved
+    account is memoised per state for the session.
     """
-    email = os.environ.get(f"STAGING_E2E_{state}_EMAIL")
-    password = os.environ.get(f"STAGING_E2E_{state}_PASSWORD")
-    licence_key = os.environ.get(f"STAGING_E2E_{state}_LICENCE_KEY")
-    missing = [
-        name
-        for name, value in (
-            (f"STAGING_E2E_{state}_EMAIL", email),
-            (f"STAGING_E2E_{state}_PASSWORD", password),
-            (f"STAGING_E2E_{state}_LICENCE_KEY", licence_key),
-        )
-        if not value
-    ]
-    if missing:
+    if state in _STAGING_ACCOUNT_CACHE:
+        return _STAGING_ACCOUNT_CACHE[state]
+
+    raw_password = os.environ.get("STAGING_E2E_PASSWORD")
+    if not raw_password:
         raise RuntimeError(
-            f"Staging E2E account for state {state!r} is not provisioned — "
-            f"missing repository secret(s): {', '.join(missing)}. "
-            f"See docs/runbooks/staging-e2e-account.md."
+            "Staging E2E password is not configured — set the shared "
+            "STAGING_E2E_PASSWORD repository secret. "
+            "See docs/runbooks/staging-e2e-account.md."
         )
-    return {"email": email, "password": password, "key": licence_key}
+    # Redact the shared password the same way as the key: it is a real secret that
+    # would otherwise print verbatim in a locals/repr dump. Still a str subclass,
+    # so login form-fills and equality assertions keep working on the real value.
+    password = _RedactedPassword(raw_password)
+    base_url = (os.environ.get("E2E_BASE_URL") or "").rstrip("/")
+    if not base_url:
+        raise RuntimeError(
+            "Staging E2E requires E2E_BASE_URL to be set to resolve account "
+            "licence keys at runtime. See docs/runbooks/staging-e2e-account.md."
+        )
+    domain = os.environ.get("STAGING_E2E_EMAIL_DOMAIN") or DEFAULT_EMAIL_DOMAIN
+    email = email_for(state, domain)
+    # Wrap the real key in a repr-masked str subclass BEFORE it enters the memo
+    # cache or any fixture return — so a pytest failure dumping locals shows
+    # ``'lic_***'`` instead of the real staging key in the CI log. The value still
+    # compares/str()s as the real key, so logins and key assertions are unchanged.
+    key = _RedactedKey(resolve_account_key(base_url, email, password))
+    account = {"email": email, "password": password, "key": key}
+    _STAGING_ACCOUNT_CACHE[state] = account
+    return account
 
 
 def _staging_enabled() -> bool:
@@ -117,8 +208,22 @@ def pytest_configure(config):
     a fixture is too late: the module may already be cached with the default
     key. The uvicorn child inherits this value via os.environ, ensuring the
     test process and the server sign/verify cookies with the same key.
+
+    REVUE-409: also set the Stripe WEBHOOK signing secret + the price ids the
+    synthetic-webhook provisioning path relies on, via the SAME setdefault-here
+    mechanism — the out-of-process uvicorn child inherits ``os.environ`` AT SPAWN,
+    so setting them inside a test would be too late (the server is already up).
+    ``construct_webhook_event`` reads ``STRIPE_WEBHOOK_SECRET`` and
+    ``tier_from_price_id`` reads ``STRIPE_PRICE_*`` from the SERVER process env at
+    request time; the local hard-gate test signs/builds events using these exact
+    values so the bytes + price ids match. These are test-only literals — NOT real
+    secrets — and are ignored on staging (E2E_BASE_URL targets the deployed app,
+    whose own deployed values apply).
     """
     os.environ.setdefault("SECRET_KEY", "test-secret")
+    os.environ.setdefault("STRIPE_WEBHOOK_SECRET", "whsec_e2e_local_test_secret")
+    os.environ.setdefault("STRIPE_PRICE_PRO_MONTHLY", "price_e2e_pro")
+    os.environ.setdefault("STRIPE_PRICE_INDIE_MONTHLY", "price_e2e_indie")
 
 
 @pytest.fixture(scope="session")
@@ -178,6 +283,19 @@ def _terminate(proc: subprocess.Popen) -> None:
             continue
 
 
+def _staging_base_url_or_none() -> "str | None":
+    """Return the deployed base URL (E2E_BASE_URL, trailing slash stripped) when
+    set, else None.
+
+    Extracted so the staging-vs-local short-circuit can be unit-tested DIRECTLY
+    (Edge F9) rather than reaching through the ``base_url`` fixture's
+    ``__wrapped__`` generator: ``not None`` → the fixture yields it without
+    spawning a server; ``None`` → the local subprocess path runs.
+    """
+    staging_url = os.environ.get("E2E_BASE_URL")
+    return staging_url.rstrip("/") if staging_url else None
+
+
 @pytest.fixture(scope="session")
 def base_url(_e2e_db):
     """Start the FastAPI app in a SEPARATE PROCESS for the whole session.
@@ -198,9 +316,9 @@ def base_url(_e2e_db):
     local subprocess. This keeps the same E2E suite usable for post-merge staging
     validation without duplicating fixtures.
     """
-    staging_url = os.environ.get("E2E_BASE_URL")
+    staging_url = _staging_base_url_or_none()
     if staging_url:
-        yield staging_url.rstrip("/")
+        yield staging_url
         return
 
     web_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -287,8 +405,9 @@ def seed_active_licence(_e2e_db):
 
     REVUE-409 staging branch: when ``E2E_BASE_URL`` is set there is no DB to seed
     into, so instead of writing a row the factory classifies the requested state
-    from its params and resolves the matching PRE-PROVISIONED staging account. It
-    sets ``_last_email`` / ``_last_password`` to that account's credentials and
+    from its params and resolves the matching ensure-exists staging account
+    (derived e-mail + shared ``STAGING_E2E_PASSWORD`` + runtime-read licence key).
+    It sets ``_last_email`` / ``_last_password`` to that account's credentials and
     returns its real licence key — so the test bodies (which read those exact
     attributes and then log in via the UI) run unchanged.
     """
@@ -302,7 +421,12 @@ def seed_active_licence(_e2e_db):
             validated: bool = True,
             password: str = "testpass123",  # noqa: ARG001 — overridden by the real account
         ) -> str:
-            state = _classify_state(tier=tier, is_active=is_active, validated=validated)
+            state = _classify_state(
+                tier=tier,
+                is_active=is_active,
+                validated=validated,
+                current_period_end=current_period_end,
+            )
             account = _staging_account(state)
             _seed_staging._last_email = account["email"]  # type: ignore[attr-defined]
             _seed_staging._last_password = account["password"]  # type: ignore[attr-defined]
@@ -409,10 +533,10 @@ def seed_user_with_licence(_e2e_db):
     why the cookie is minted directly in ``auth_cookie``).
 
     REVUE-409 staging branch: when ``E2E_BASE_URL`` is set, return the matching
-    pre-provisioned account's identity — ``email`` / ``password`` / ``tier`` /
-    ``key`` (real licence key). The ``password`` is added (absent from the local
-    return) because the staging ``auth_cookie`` logs in through the UI rather than
-    minting a cookie. No test body reads ``user_id`` (a local DB int with no
+    ensure-exists account's identity — ``email`` / ``password`` / ``tier`` /
+    ``key`` (runtime-read licence key). The ``password`` is added (absent from the
+    local return) because the staging ``auth_cookie`` logs in through the UI rather
+    than minting a cookie. No test body reads ``user_id`` (a local DB int with no
     staging meaning), so omitting it does not change any test.
     """
     if _staging_enabled():

@@ -2,6 +2,12 @@
 {% from "partials/command_box.html" import command_box %}
 {% block title %}Get started — Revue{% endblock %}
 {% block body %}
+<!-- Stable, layout-neutral marker exposing the authenticated user id. Consumed by
+     the staging-E2E provisioner (scripts/provision_staging_e2e.py:_resolve_user_id)
+     to stamp metadata.user_id onto the test-mode Stripe customer/subscription, which
+     is the load-bearing customer→user linkage the webhook uses (src/web/billing.py).
+     `hidden` keeps it out of the visual flow. -->
+<span data-user-id="{{ session.user_id }}" hidden></span>
 <div class="min-h-full">
     <!-- Nav -->
     <nav class="border-b border-gray-800">
