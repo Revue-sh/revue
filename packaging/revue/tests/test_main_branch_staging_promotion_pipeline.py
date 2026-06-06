@@ -66,6 +66,7 @@ def test_main_branch_pipeline_promotes_single_image_from_staging_to_prod() -> No
         "Build Web Image → Fly Registry",
         "Deploy Web → Staging",
         "Smoke Test → Staging",
+        "Provision → Staging E2E accounts",  # REVUE-409: ensure-exists accounts before E2E
         "E2E → Staging",  # REVUE-409: post-merge Playwright E2E gates prod promotion
         "Deploy Web → Production",
         "Smoke Test → Production",
@@ -257,10 +258,11 @@ def test_e2e_staging_step_runs_full_suite_against_staging_headless() -> None:
     assert "--browser chromium" in script
 
 
-def test_e2e_staging_step_guards_required_per_state_secrets() -> None:
-    """AC2/AC7: the step fails fast naming any missing STAGING_E2E_<STATE>_*
-    secret rather than as an opaque login timeout — so a provisioning gap is
-    logged explicitly. The four required states are guarded."""
+def test_e2e_staging_step_guards_required_shared_secret() -> None:
+    """AC2: the step fails fast if the shared password secret is missing — the
+    E2E suite needs it to log in to each provisioned account. The per-state
+    EMAIL/PASSWORD/LICENCE_KEY secrets were replaced by the shared-secret model
+    in the REVUE-409 synthetic-webhook rework."""
     # Arrange
     step = _step_named("E2E → Staging")
 
@@ -268,16 +270,15 @@ def test_e2e_staging_step_guards_required_per_state_secrets() -> None:
     script = _script_text(step)
 
     # Assert
-    for state in ("ACTIVE_PRO", "ACTIVE_INDIE", "FREE", "LAPSED"):
-        assert state in script, f"guard must check the {state} account secrets"
-    assert "STAGING_E2E_" in script
+    assert "STAGING_E2E_PASSWORD" in script, "guard must check the shared password secret"
     assert "Missing required staging-E2E repository secret" in script
 
 
 def test_e2e_staging_step_contains_no_secret_values_only_refs() -> None:
     """No secret VALUES live in the YAML — only env/secret-name references. The
-    guard composes variable NAMES (STAGING_E2E_<STATE>_<FIELD>); it must never
-    embed an email, password, or licence key literal."""
+    guard references the shared secret NAME; it must never embed an email,
+    password, or licence key literal. Licence keys are read at runtime by the
+    E2E suite, so no LICENCE_KEY token appears in the step script."""
     # Arrange
     step = _step_named("E2E → Staging")
 
@@ -285,9 +286,6 @@ def test_e2e_staging_step_contains_no_secret_values_only_refs() -> None:
     script = _script_text(step)
 
     # Assert
-    assert "lic_" not in script  # no licence-key literal
-    assert "@" not in script  # no email literal
-    # The NAME tokens are referenced/composed, never a value. The guard builds
-    # STAGING_E2E_<STATE>_<FIELD> from a FIELD loop, so the field names appear.
-    assert "LICENCE_KEY" in script
-    assert "STAGING_E2E_" in script
+    assert "lic_" not in script   # no licence-key literal
+    assert "@" not in script      # no email literal
+    assert "STAGING_E2E_PASSWORD" in script  # the shared secret name is referenced
