@@ -31,15 +31,74 @@ def _tmp_db(tmp_path, monkeypatch):
     import auth
     auth.reset_serializer()
 
+    import csrf
+    csrf.reset_serializer()
+
     yield db_path
+
+
+class _CSRFAwareClient(AsyncClient):
+    """Test client that transparently satisfies CSRF for protected form posts.
+
+    REVUE-418 added systemic CSRF protection: every cookie-session form POST
+    now requires a double-submit token. Rather than rewrite ~90 existing call
+    sites, this wrapper injects the token automatically — but ONLY for requests
+    that pass form data (``data=``). That single discriminator does the right
+    thing without any path knowledge:
+
+      - Protected routes are all HTML form posts (``data=``) → token injected.
+      - Exempt routes (Stripe webhook, ``/api`` + ``/v2`` JWT/body APIs) post
+        ``json=`` / ``content=`` → never touched, bodies never corrupted.
+
+    Faithfulness: the injected value is the REAL cookie the production CSRF
+    middleware set (lazily seeded via one GET /login if the jar is empty), never
+    a fabricated token — so a broken cookie-setting path would still fail.
+
+    Tests that must exercise the raw enforcement path (e.g. "no token → 403")
+    use a separate raw client, or pass ``_csrf=False`` to opt out here.
+    """
+
+    async def _ensure_csrf_cookie(self) -> str:
+        from csrf import CSRF_COOKIE_BASE
+        token = self.cookies.get(CSRF_COOKIE_BASE)
+        if not token:
+            # One unauthenticated GET mints the cookie via the middleware.
+            await self.get("/login")
+            token = self.cookies.get(CSRF_COOKIE_BASE)
+        return token or ""
+
+    async def request(self, method, url, *args, **kwargs):  # type: ignore[override]
+        from csrf import CSRF_FORM_FIELD
+        inject = kwargs.pop("_csrf", True)
+        data = kwargs.get("data")
+        # A request is "form-shaped" when it passes a dict ``data=`` OR carries
+        # no body at all (no json/content/files). Both cases map to a protected
+        # cookie-session form POST in this app; JSON/content bodies (the exempt
+        # API + webhook surface) are left untouched so their bodies never get a
+        # spurious form field.
+        has_other_body = any(
+            kwargs.get(k) is not None for k in ("json", "content", "files")
+        )
+        is_form_shaped = isinstance(data, dict) or (data is None and not has_other_body)
+        if (
+            inject
+            and is_form_shaped
+            and method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+            and not (isinstance(data, dict) and CSRF_FORM_FIELD in data)
+        ):
+            token = await self._ensure_csrf_cookie()
+            if token:
+                base = data if isinstance(data, dict) else {}
+                kwargs["data"] = {**base, CSRF_FORM_FIELD: token}
+        return await super().request(method, url, *args, **kwargs)
 
 
 @pytest_asyncio.fixture
 async def client(_tmp_db) -> AsyncGenerator[AsyncClient, None]:
-    """Async test client for the FastAPI app."""
+    """Async test client for the FastAPI app (CSRF-aware — see _CSRFAwareClient)."""
     from main import app
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with _CSRFAwareClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
 

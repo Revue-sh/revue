@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from starlette.routing import Match
 
+from csrf import CSRFMiddleware
 from database import init_db
 from metrics import MetricsRegistry
 from routes.auth_routes import router as auth_router
@@ -40,6 +41,37 @@ API_SUBDOMAIN_PASSTHROUGH_PATHS = {"/health", METRICS_PATH}
 # error-rate alert still sees unmatched traffic without exploding cardinality
 # on attacker-chosen raw paths.
 _UNMATCHED_ROUTE = "__unmatched__"
+
+# ---------------------------------------------------------------------------
+# CSRF policy (REVUE-418)
+# ---------------------------------------------------------------------------
+# CSRF is enforced on cookie-session HTML form requests ONLY. Exemption is
+# PATH-BASED, not cookie-presence-based, so it never depends on whether a
+# browser happened to attach the session cookie:
+#
+#   - ``/api/*`` (and the bare-path variants the api-subdomain rewrite produces)
+#     authenticate via a request-body licence key or JWT, not the session
+#     cookie. A same-origin ``fetch()`` to ``/api/v2/licence/activate`` (see
+#     activate.html) WILL carry ``revue_session`` if the user is logged in, yet
+#     carries no CSRF token — a cookie-presence rule would wrongly 403 it.
+#   - The Stripe webhook is signature-verified, server-to-server, and has no
+#     browser session; it can never present a CSRF token.
+#
+# Everything else with an unsafe method is PROTECTED. New form routes are
+# protected automatically (fails-upward), matching the project's posture.
+CSRF_EXEMPT_PATHS = {"/webhooks/stripe", "/api/webhooks/stripe"}
+
+
+def _is_csrf_exempt_path(path: str) -> bool:
+    """Return True for paths that authenticate by token/signature, not session
+    cookie, and so must skip CSRF (API surface + Stripe webhook)."""
+    if path in CSRF_EXEMPT_PATHS:
+        return True
+    # ``/api/...`` is the canonical body/JWT-authenticated surface. The check
+    # runs AFTER the api-subdomain path rewrite (CSRFMiddleware is registered
+    # FIRST → innermost → runs after the rewrite), so api-subdomain calls have
+    # already had ``/api`` added and are matched here.
+    return path.startswith("/api/")
 
 
 def _resolve_route_template(application: FastAPI, request: Request) -> str:
@@ -81,6 +113,20 @@ def create_app() -> FastAPI:
     # middleware below and read by GET /metrics (REVUE-362).
     metrics = MetricsRegistry()
     application.state.metrics = metrics
+
+    # LOAD-BEARING ORDER (REVUE-418): CSRFMiddleware is registered FIRST so it is
+    # the INNERMOST middleware — it therefore runs AFTER api_subdomain_path_rewrite
+    # (Starlette executes middlewares in reverse-registration order: last
+    # registered = outermost = runs first). Running after the rewrite means CSRF's
+    # ``/api/`` exemption check sees the CANONICAL post-rewrite path, so an
+    # ``api.revue.sh/v2/...`` call (rewritten to ``/api/v2/...``) is correctly
+    # exempted. Registered later (outer to the rewrite), it would see the bare
+    # pre-rewrite ``/v2/...`` path, miss the exempt match, and wrongly 403 it.
+    # Being inner to the metrics middleware is intentional: a CSRF 403 is still
+    # recorded by the metrics layer (which is outer to CSRF). NOTE: the test
+    # suite uses base_url=http://test, so the subdomain rewrite never fires there
+    # — this ordering is correctness-by-construction, not test-covered.
+    application.add_middleware(CSRFMiddleware, is_exempt=_is_csrf_exempt_path)
 
     # LOAD-BEARING ORDER: record_request_metrics MUST be registered before
     # api_subdomain_path_rewrite. The metrics self-exclusion guard for /metrics

@@ -106,6 +106,7 @@
       <!-- Primary CTA: Re-subscribe (AC6) -->
       <div class="flex flex-col sm:flex-row gap-3">
         <form method="POST" action="/billing/checkout">
+          <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
           <input type="hidden" name="tier" value="{{ any_license.tier }}">
           <input type="hidden" name="interval" value="month">
           <button type="submit"

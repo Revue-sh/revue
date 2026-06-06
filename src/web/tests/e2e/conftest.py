@@ -344,7 +344,7 @@ def auth_cookie(base_url):
         page.context.add_cookies(
             [
                 {
-                    "name": auth.SESSION_COOKIE,
+                    "name": auth.session_cookie_name(),
                     "value": token,
                     "domain": host,
                     "path": "/",
