@@ -61,7 +61,7 @@ The post-purchase **"now what?"** gap: today `/billing/success` shows no key or 
 - **REVUE-398** — run install suite on macOS Bitbucket runner for dscl/AC2 CI coverage (relates 395)
 - **REVUE-399** — consolidate install-wizard stub fixtures into a shared factory (INFO; relates 395)
 - **REVUE-373** — `install.sh` calls non-existent `revue --version` (Low; in-flight fix)
-- **REVUE-419** — API-triggerable `custom: deploy-production` pipeline **merged** to main; stays in Code Review (label `do-not-run-automation-after-merge`) until the first real API-triggered prod deploy validates it. **Pending before first use:** CI-token split — add `pullrequest:write` to the no-`pipeline:write` token and set it as the Bitbucket CI `BITBUCKET_API_TOKEN` var.
+- **REVUE-419** — API-triggerable `custom: deploy-production` pipeline **merged** to main; stays in Code Review (label `do-not-run-automation-after-merge`) until the first real API-triggered prod deploy validates it. CI-token split **done + verified** (new no-`pipeline:write` CI token confirmed to post review comments via throwaway PR #236). **Remaining before Done:** the first real API-triggered prod deploy.
 
 ---
 
