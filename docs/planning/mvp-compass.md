@@ -1,6 +1,6 @@
 # MVP Compass — /revue-local public launch
 
-**Last updated:** 2026-06-06 (REVUE-413/361 merged — activation-UX cluster: Lane 1 done, 2 blockers remain). Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
+**Last updated:** 2026-06-06 (REVUE-382 merged — Account → Plan licence-status page; activation-UX cluster: 2 blockers remain). Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
 **Source of truth for "next pick."** Jira's priority field ≠ launch-path order; *this doc* is the launch-path order.
 
 ---
@@ -13,15 +13,15 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**~55 done · 2 hard launch blockers (activation-UX cluster, below) · run `/epic-progress REVUE-269` for the live tally.**
-The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. Lane 1 of the activation-UX cluster (361 + 413) is now done. The remaining gate is **408 + 409** (site-wide two-mode messaging + staging E2E).
+**~56 done · 2 hard launch blockers (activation-UX cluster, below) · run `/epic-progress REVUE-269` for the live tally.**
+The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The full activation-UX cluster Lane 1 (361 + 413 + 382) is now done. The remaining gate is **408 + 409** (site-wide two-mode messaging + staging E2E).
 
 **Recently shipped (last 5):**
+- **REVUE-382** — Account → Plan licence-status page
 - **REVUE-413** — persist subscription `current_period_end` + real lapsed transition
 - **REVUE-361** — CLI-first post-purchase activation handoff (`/billing/success` + `/onboarding`)
 - **REVUE-386** — drop redundant /revue command-file shim — skill is sole source of /revue
 - **REVUE-407** — dedicated /docs/ci-setup page consolidating all-platform CI instructions
-- **REVUE-384** — demote /activate to CLI-first paste-key fallback + reusable Command-Box
 
 ---
 
@@ -31,12 +31,11 @@ The narrative critical path (REVUE-275 → 280 → 281) and the launch spine —
 
 The post-purchase **"now what?"** gap: today `/billing/success` shows no key or command, and `/onboarding` is CI-first — a just-paid user has no on-screen path to `revue activate`. The licence-key **email was rejected** (REVUE-383); activation is fully CLI + authenticated-web. This cluster closes the gap. Design spec: `docs/planning/ux-activation-flow-spec.md`.
 
-**Build order: `382 → 408 → 409`.**
+**Build order: `408 → 409`.**
 
 | Jira | Story | Role in the chain |
 |------|-------|-------------------|
-| REVUE-382 | Account → Plan licence-status page | Consumes 384 (done), 413 (done); data deps REVUE-389 + usage source |
-| REVUE-408 | Site-wide two-mode (CLI/CI) messaging | `landing.html` is CI-only today; shared partial |
+| REVUE-408 | Site-wide two-mode (CLI/CI) messaging | Next pick — `landing.html` is CI-only today; shared partial |
 | REVUE-409 | Post-merge Playwright E2E vs staging | Reuses 361/382/384 tests via `E2E_BASE_URL`; per-state staging accounts |
 
 ### 🟡 Important pre-launch polish — ship before public launch, not a hard technical gate
@@ -54,14 +53,7 @@ The post-purchase **"now what?"** gap: today `/billing/success` shows no key or 
 
 | Jira | Story | Why deferred |
 |------|-------|--------------|
-| REVUE-316 | Refactor cmd_consolidate duplication in scripts/local_run.py | Code quality, no user impact |
-| REVUE-317 | Make anthropic + openai optional deps in revue_core | Install-footprint reduction; nice-to-have |
-| REVUE-330 | Detect non-POSIX filesystem for licence file and warn | Edge case |
-| REVUE-336 | Unique tmp file names + cleanup for concurrent revue activate | Edge case |
-| REVUE-342 | Heartbeat / progress signal during long reviews | Tagged `[BACKLOG]` |
 | REVUE-378 | Verify wheel sha256 + Sigstore signature against signed per-platform manifest | The *real* supply-chain control; ticket states not MVP-gating. Prereq: per-platform manifest first. Blocked-by REVUE-374 |
-| REVUE-379 | Manifest endpoint cache lock — coalesce concurrent cold-cache PyPI fetches | Idempotent / low-severity at current traffic |
-| REVUE-380 | Manifest must skip yanked PyPI releases for `current_version` | Low likelihood under single-maintainer release flow |
 | REVUE-385 | support/legal mailbox backup + retention automation | Operational hygiene; non-gating |
 | REVUE-389 | Go live with Stripe — live key, live prices, customer portal | ⚠️ **Deferred — now UNBLOCKED (REVUE-381 entity registration is Done), pending the go-live decision.** REVUE-315 (config) is done + staging-verified in test mode. Not needed for the pre-revenue /revue-local free launch; pick up when paid revenue is imminent. **Go-live remit now also covers cancel-at-period-end (webhook persist + "won't renew" UI) and revisiting the 413 webhook edge cases — folded in from rejected REVUE-415/414 to avoid deferral tickets.** |
 
@@ -69,8 +61,7 @@ The post-purchase **"now what?"** gap: today `/billing/success` shows no key or 
 
 - **REVUE-398** — run install suite on macOS Bitbucket runner for dscl/AC2 CI coverage (relates 395)
 - **REVUE-399** — consolidate install-wizard stub fixtures into a shared factory (INFO; relates 395)
-- **REVUE-373** — `install.sh` calls non-existent `revue --version` (Low; non-gating)
-- **REVUE-387** — Tailwind Typography plugin for prose pages (Low; cosmetic)
+- **REVUE-373** — `install.sh` calls non-existent `revue --version` (Low; in-flight fix)
 
 ---
 
@@ -84,7 +75,7 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 
 **Concurrency lanes — activation-UX cluster:**
 - **Lane 0 (landed):** REVUE-332 (E2E infra), REVUE-384 (`/activate` + shared Command-Box), REVUE-407 (CI setup page) — all done.
-- **Lane 1 (landed):** REVUE-361 (`/billing/success` + `/onboarding` activation handoff) and REVUE-413 (persist subscription `current_period_end` + real lapsed transition) — both merged 2026-06-06. **REVUE-382** (Account → Plan) is now unblocked — clean MEDIUM UI build; no revenue decision gates it.
+- **Lane 1 (landed):** REVUE-361 (`/billing/success` + `/onboarding` activation handoff), REVUE-413 (persist subscription `current_period_end` + real lapsed transition), and REVUE-382 (Account → Plan licence-status page) — all merged.
 - **Lane 2 (now open):** REVUE-408 (site-wide two-mode links — serialize vs REVUE-365 + REVUE-366 on `landing.html`) **and** REVUE-409 (staging-E2E gate) run in parallel — no file collision (408=`landing.html`, 409=`bitbucket-pipelines.yml` + reuses existing `src/web/tests/e2e/`). REVUE-409 is gated on Lane 1 (361/382) + staging-deploy infra (347/348), **not** on 408; it reuses 361/382/384/407 tests via `E2E_BASE_URL` and adds no assertions. Its pipeline step gates prod promotion at *runtime*, but that's pipeline ordering, not a dev dependency on 408.
 
 **Hard serial points:** none — REVUE-409 depends on Lane 1's tests + staging deploy, not on 408. Everything else parallelizes.
