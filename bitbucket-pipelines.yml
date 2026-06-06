@@ -50,6 +50,8 @@ definitions:
     # non-privileged build path works inside Bitbucket Pipelines.
     - step: &build-web-image-fly
         name: "Build Web Image → Fly Registry"
+        clone:
+          depth: 5
         image: docker:24.0.7-cli
         services:
           - docker
