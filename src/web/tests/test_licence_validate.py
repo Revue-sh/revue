@@ -15,6 +15,7 @@ and tracks server-side usage), this endpoint:
 from __future__ import annotations
 
 import base64
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -181,11 +182,14 @@ async def test_validate_free_tier_same_24h_window(client, _patch_jwt_keys):
     # Arrange
     from jwt_signing import sign_licence_jwt
 
-    now = datetime.now(timezone.utc)
-
     # Test both free and a paid tier
     for tier in ["free", "indie", "pro", "enterprise_starter"]:
         wsid = await _create_active_workspace(client, email=f"tier-{tier}@test.com")
+        # Capture ``now`` per-iteration: each _create_active_workspace runs a
+        # bcrypt signup (deliberately slow), so a single pre-loop ``now`` lets
+        # cumulative hashing eat the 5s assertion budget by the 4th tier — a
+        # pre-existing timing flake. Per-request horizon is what the AC means.
+        now = datetime.now(timezone.utc)
         token = sign_licence_jwt(
             workspace_id=wsid,
             tier=tier,
@@ -646,3 +650,122 @@ async def test_validate_uses_reviews_limit_by_tier_for_free_cap(
         f"a hardcoded literal"
     )
     assert body["paywall_state"] is None
+
+
+# ---------------------------------------------------------------------------
+# REVUE-382 — successful validation persists last_validated_at
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_validate_persists_last_validated_at(client, _patch_jwt_keys):
+    """REVUE-382 AC2 source: a SUCCESSFUL validation stamps last_validated_at
+    on the workspace's licence row (UTC, naive-isoformat to match the other
+    timestamp columns). This is the server-side validation-cache state the
+    Account → Plan page renders as 'Last verified Nh ago'."""
+    from datetime import datetime, timezone
+    from jwt_signing import sign_licence_jwt
+    from database import get_db
+    from models import get_active_license_for_workspace
+
+    wsid = await _create_active_workspace(client, email="lastval@test.com")
+
+    # Pre-condition: never validated yet.
+    with get_db() as conn:
+        before = get_active_license_for_workspace(conn, wsid)
+    assert before is not None
+    assert before.last_validated_at is None
+
+    token = sign_licence_jwt(
+        workspace_id=wsid,
+        tier="indie",
+        machine_fingerprint="lastval-machine",
+        now=datetime.now(timezone.utc),
+    )
+
+    resp = await client.post("/api/v2/licence/validate", json={"jwt": token})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["valid"] is True
+
+    # Post-condition: last_validated_at is now set and parseable as a recent
+    # naive-UTC isoformat timestamp.
+    with get_db() as conn:
+        after = get_active_license_for_workspace(conn, wsid)
+    assert after is not None
+    assert after.last_validated_at is not None
+    stamped = datetime.fromisoformat(after.last_validated_at)
+    # Naive (no tzinfo) to match period_reset_at representation.
+    assert stamped.tzinfo is None
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    assert abs((now_naive - stamped).total_seconds()) < 30
+
+
+@pytest.mark.asyncio
+async def test_validate_failure_does_not_stamp_last_validated_at(client, _patch_jwt_keys):
+    """A FAILED validation (revoked / unknown workspace) must NOT stamp
+    last_validated_at — only successful validations update the cache state."""
+    from datetime import datetime, timezone
+    from jwt_signing import sign_licence_jwt
+    from database import get_db
+    from models import get_active_license_for_workspace
+
+    wsid = await _create_active_workspace(client, email="nostamp@test.com")
+
+    # Revoke the licence so validation fails the is_active gate.
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE license_keys SET is_active = 0 WHERE workspace_id = ?", (wsid,)
+        )
+
+    token = sign_licence_jwt(
+        workspace_id=wsid,
+        tier="indie",
+        machine_fingerprint="nostamp-machine",
+        now=datetime.now(timezone.utc),
+    )
+    resp = await client.post("/api/v2/licence/validate", json={"jwt": token})
+    assert resp.status_code == 200
+    assert resp.json()["valid"] is False
+
+    # The (now-inactive) row must still have NULL last_validated_at. Read it
+    # back directly since get_active_license_for_workspace filters is_active.
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT last_validated_at FROM license_keys WHERE workspace_id = ?",
+            (wsid,),
+        ).fetchone()
+    assert row["last_validated_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_validate_stamp_failure_still_returns_valid(client, _patch_jwt_keys, monkeypatch):
+    """REVUE-382 availability: the last_validated_at stamp is a NON-critical
+    cache write. If it raises (transient DB lock/disk), the CRITICAL validate
+    path must still return 200 / valid:True — the cache write must never break
+    the CLI's licence check."""
+    from datetime import datetime, timezone
+    from jwt_signing import sign_licence_jwt
+    import routes.api_routes as api_routes
+
+    wsid = await _create_active_workspace(client, email="stampfail@test.com")
+
+    # Force the best-effort stamp to raise a transient-style DB error.
+    def _boom(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(api_routes, "touch_license_validated", _boom)
+
+    token = sign_licence_jwt(
+        workspace_id=wsid,
+        tier="indie",
+        machine_fingerprint="stampfail-machine",
+        now=datetime.now(timezone.utc),
+    )
+
+    resp = await client.post("/api/v2/licence/validate", json={"jwt": token})
+
+    # The stamp failed, but validation must still succeed.
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["valid"] is True
+    assert body["tier"] == "indie"
+    assert "refresh_after_ts" in body

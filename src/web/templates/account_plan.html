@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% from "partials/command_box.html" import command_box %}
+{% block title %}Account — Plan — Revue{% endblock %}
+{% block body %}
+<div class="min-h-full">
+  <!-- Nav -->
+  <nav class="border-b border-gray-800">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+      <a href="/dashboard" class="text-2xl font-bold text-brand-400">Revue</a>
+      <div class="flex items-center gap-4">
+        <span class="text-gray-400 text-sm">{{ session.email }}</span>
+        <a href="/logout" class="text-gray-400 hover:text-white text-sm">Log out</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="max-w-3xl mx-auto px-6 py-10">
+    <!-- Breadcrumb -->
+    <nav class="text-sm text-gray-500 mb-6">
+      <a href="/dashboard" class="hover:text-white">Dashboard</a>
+      <span class="mx-2">/</span>
+      <a href="/account/plan" class="text-gray-300">Plan</a>
+    </nav>
+
+    <h1 class="text-2xl font-bold mb-8">Account — Plan</h1>
+
+    {# ------------------------------------------------------------------ #}
+    {# ACTIVE state (paid tier, is_active=True)                            #}
+    {# ------------------------------------------------------------------ #}
+    {% if state == "active" %}
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+      <div class="flex items-center gap-3 mb-4">
+        <span class="inline-block bg-brand-600/20 text-brand-400 text-xs font-semibold px-3 py-1 rounded-full uppercase">{{ tier_label }}</span>
+        <span class="text-green-400 font-semibold text-sm">Licence active ✓</span>
+      </div>
+
+      <!-- Masked key with handoff copy (AC2, AC3) -->
+      <div class="mb-4">
+        <p class="text-xs text-gray-500 mb-2 uppercase tracking-wide">Licence key</p>
+        {{ command_box(
+             dom_id="plan-key-box",
+             command=masked_display,
+             copy_payload=any_license.key,
+             caption="Copy key to share with your developer",
+             masked=True,
+             masked_display=masked_display
+           ) }}
+      </div>
+
+      <!-- Validity / renewal line (AC2, AC4) -->
+      <div class="mt-4 text-sm text-gray-400">
+        {% if renewal_date %}
+        <p class="flex items-center gap-2">
+          Renews on
+          <span class="text-gray-200 font-medium">{{ renewal_date }}</span>
+          <span id="offline-cache-tooltip-trigger"
+                class="inline-block cursor-help underline decoration-dotted text-brand-400 text-xs"
+                title="Revue caches your licence validation locally for up to 24 hours. You can review code offline within that window without re-contacting the server.">
+            (24 h offline cache ?)
+          </span>
+        </p>
+        {% else %}
+        <p class="flex items-center gap-2 text-gray-500">
+          No renewal date on record yet
+          <span id="offline-cache-tooltip-trigger"
+                class="inline-block cursor-help underline decoration-dotted text-brand-400 text-xs"
+                title="Revue caches your licence validation locally for up to 24 hours. You can review code offline within that window without re-contacting the server.">
+            (24 h offline cache ?)
+          </span>
+        </p>
+        {% endif %}
+        <!-- Last verified Nh ago (AC2) — validation-cache state, NOT Stripe -->
+        <p id="last-verified" class="mt-2 text-xs text-gray-500">{{ last_verified }}</p>
+      </div>
+    </div>
+
+    <!-- Usage meter (shared partial via HTMX — live; also server-rendered for initial load) -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6"
+         hx-get="/partials/usage_bar" hx-trigger="every 60s" hx-swap="innerHTML">
+      {% include "partials/usage_bar.html" with context %}
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# LAPSED state (is_active=False; subscription ended)                  #}
+    {# Copy NEVER uses "invalid" (AC6)                                     #}
+    {# ------------------------------------------------------------------ #}
+    {% elif state == "lapsed" %}
+    <div class="bg-red-950 border border-red-800 rounded-xl p-6 mb-6">
+      <div class="flex items-center gap-3 mb-3">
+        <span class="inline-block bg-red-900/40 text-red-400 text-xs font-semibold px-3 py-1 rounded-full uppercase">{{ tier_label }}</span>
+        <span class="text-red-400 font-semibold text-sm">Subscription ended</span>
+      </div>
+      <p class="text-gray-300 mb-5">
+        Your {{ tier_label }} plan ended
+        {% if renewal_date %} on {{ renewal_date }}{% endif %}.
+        Re-subscribe to restore access, or downgrade to the Free tier to keep reviewing at 25/month.
+      </p>
+
+      <!-- Primary CTA: Re-subscribe (AC6) -->
+      <div class="flex flex-col sm:flex-row gap-3">
+        <form method="POST" action="/billing/checkout">
+          <input type="hidden" name="tier" value="{{ any_license.tier }}">
+          <input type="hidden" name="interval" value="month">
+          <button type="submit"
+                  class="bg-brand-600 hover:bg-brand-700 text-white font-semibold px-6 py-2.5 rounded-lg text-sm">
+            Re-subscribe to {{ tier_label }} →
+          </button>
+        </form>
+
+        <!-- Secondary CTA: downgrade to Free (AC6) -->
+        <a href="/billing"
+           class="inline-flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium px-5 py-2.5 rounded-lg text-sm">
+          Downgrade to Free
+        </a>
+      </div>
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# FREE state (tier=free, is_active=True)                              #}
+    {# Upgrade CTA; NO Activation Command-Box (AC7)                       #}
+    {# ------------------------------------------------------------------ #}
+    {% elif state == "free" %}
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+      <div class="flex items-center gap-3 mb-4">
+        <span class="inline-block bg-gray-700 text-gray-300 text-xs font-semibold px-3 py-1 rounded-full uppercase">Free</span>
+        <span class="text-green-400 font-semibold text-sm">Licence active ✓</span>
+      </div>
+      <p class="text-gray-400 text-sm mb-2">25 reviews/month · 1 agent</p>
+
+      <!-- Usage meter (AC2 for Free) -->
+      <div class="mb-5"
+           hx-get="/partials/usage_bar" hx-trigger="every 60s" hx-swap="innerHTML">
+        {% include "partials/usage_bar.html" with context %}
+      </div>
+    </div>
+
+    <!-- Upgrade CTA (AC7) -->
+    <div class="bg-brand-950 border border-brand-800 rounded-xl p-6 mb-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="font-semibold text-brand-300">Upgrade to Indie</h3>
+          <p class="text-gray-400 text-sm mt-1">100 reviews/month + all 6 agents for {{ currency_symbol }}9/mo</p>
+        </div>
+        <a href="/billing"
+           class="bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+          Upgrade →
+        </a>
+      </div>
+    </div>
+    {# No Activation Command-Box for Free (AC7) #}
+
+    {# ------------------------------------------------------------------ #}
+    {# NOT ACTIVATED state (no licence row found)                          #}
+    {# Activation Command-Box pre-filled; "Prefer a browser?" link (AC5)  #}
+    {# ------------------------------------------------------------------ #}
+    {% elif state == "not_activated" %}
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+      <div class="flex items-center gap-3 mb-4">
+        <span class="inline-block bg-yellow-900/40 text-yellow-400 text-xs font-semibold px-3 py-1 rounded-full uppercase">Not activated</span>
+      </div>
+      <p class="text-gray-300 mb-5">
+        Your licence key has not been activated yet. Run the command below in your terminal to activate:
+      </p>
+
+      {# AC5: Command-Box pre-filled with the AUTHENTICATED USER'S OWN key.
+         When a licence row exists (the normal post-signup case) the box shows a
+         masked key and the Copy payload is the FULL `revue activate <key>`
+         command — server-side, the user's own key only. The full key never
+         appears as visible text (masked mode); it lives only in data-copy-payload.
+         The `<your-key>` placeholder is the fallback ONLY when no row exists. #}
+      {% if any_license %}
+      {{ command_box(
+           dom_id="activation-command-box",
+           command="revue activate " ~ masked_display,
+           copy_payload=activate_command,
+           caption="Pre-filled with your licence key — copy and run to activate",
+           masked=True,
+           masked_display="revue activate " ~ masked_display
+         ) }}
+      {% else %}
+      {{ command_box(
+           dom_id="activation-command-box",
+           command="revue activate <your-key>",
+           copy_payload="revue activate <your-key>",
+           caption=""
+         ) }}
+      {% endif %}
+
+      <p class="text-sm text-gray-500 mt-4">
+        Prefer a browser?
+        <a href="/activate" class="text-brand-400 hover:underline">Paste your key here →</a>
+      </p>
+    </div>
+    {% endif %}
+
+    <!-- Back link -->
+    <p class="text-sm text-gray-500 mt-4">
+      <a href="/dashboard" class="text-brand-400 hover:underline">← Back to Dashboard</a>
+    </p>
+  </div>
+</div>
+{% endblock %}

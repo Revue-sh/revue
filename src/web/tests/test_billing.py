@@ -1198,10 +1198,14 @@ def test_license_keys_migration_safe_on_existing_rows(_tmp_db, tmp_path):
     cols = {row[1] for row in conn.execute("PRAGMA table_info(license_keys)").fetchall()}
     assert "current_period_end" in cols
     assert "subscription_status" in cols
+    # REVUE-382: last_validated_at added by the same idempotent migration path.
+    assert "last_validated_at" in cols
     row = conn.execute(
-        "SELECT tier, current_period_end, subscription_status FROM license_keys WHERE key = 'legacy_key'"
+        "SELECT tier, current_period_end, subscription_status, last_validated_at "
+        "FROM license_keys WHERE key = 'legacy_key'"
     ).fetchone()
     conn.close()
     assert row["tier"] == "indie"                  # existing data intact
     assert row["current_period_end"] is None       # safe default
     assert row["subscription_status"] is None
+    assert row["last_validated_at"] is None         # safe default — never validated

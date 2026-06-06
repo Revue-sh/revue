@@ -174,7 +174,7 @@ def base_url(_e2e_db):
 
 @pytest.fixture(scope="function")
 def seed_active_licence(_e2e_db):
-    """SQL factory: create a user + workspace + active licence, return the key.
+    """SQL factory: create a user + workspace + licence row, return (key, email, password).
 
     REVUE-384: the e2e server runs out-of-process against the same SQLite file
     (``DATABASE_PATH`` == ``_e2e_db``), so a row written here from the test
@@ -183,30 +183,94 @@ def seed_active_licence(_e2e_db):
     raw SQL so the seed stays in lock-step with the schema. The returned key
     matches ``generate_license_key()`` (``lic_`` + 32 hex), which is exactly the
     shape ``/activate`` validates client-side.
+
+    REVUE-382: extended with ``is_active`` and ``current_period_end`` /
+    ``subscription_status`` params to cover the full state matrix
+    (active/lapsed/free/not_activated, including the REVUE-413 NULL-columns
+    variant). The old positional call ``seed_active_licence(tier="indie")``
+    continues to work unchanged (``is_active`` defaults to True).
+
+    Returns a namedtuple-like dict with ``key``, ``email``, ``password``.
+    For backward compat, the factory is also directly callable with just
+    ``tier`` and returns the key string (matching the original contract).
     """
     import sqlite3
     import uuid
 
+    from auth import hash_password
     from license import generate_license_key
-    from models import create_license_key, create_user, create_workspace
+    from models import (
+        create_license_key,
+        create_user,
+        create_workspace,
+        get_any_license_for_user,
+        set_license_subscription_state,
+        touch_license_validated,
+        update_user_tier,
+    )
 
-    def _seed(*, tier: str = "indie") -> str:
+    def _seed(
+        *,
+        tier: str = "indie",
+        is_active: bool = True,
+        current_period_end: "str | None" = None,
+        subscription_status: "str | None" = None,
+        validated: bool = True,
+        password: str = "testpass123",
+    ) -> str:
+        """Create a user+workspace+licence row and return the licence key string.
+
+        Args:
+            tier: Plan tier (free / indie / pro).
+            is_active: When False the row is lapsed (is_active=0, tier preserved).
+            current_period_end: ISO-8601 UTC renewal date.  Pass None to leave
+                it NULL — tests the REVUE-413 migration-reality NULL-columns case.
+            subscription_status: Raw Stripe status string.  Pass None for NULL.
+            validated: When True (default) stamp last_validated_at so the row
+                resolves to active/free.  Pass False to model a never-validated
+                key — the REVUE-382 not_activated state (AC5).
+            password: Login password for the created user (used by e2e login).
+
+        Returns:
+            The generated licence key string (``lic_`` + 32 hex chars).
+        """
         key = generate_license_key()
         conn = sqlite3.connect(_e2e_db)
         conn.row_factory = sqlite3.Row
         try:
+            email = f"seed-{uuid.uuid4().hex[:8]}@test.com"
             user_id = create_user(
                 conn,
-                email=f"seed-{uuid.uuid4().hex[:8]}@test.com",
-                password_hash="x",
+                email=email,
+                password_hash=hash_password(password),
             )
             ws_id = create_workspace(conn, user_id, "seed-ws")
             create_license_key(conn, ws_id, key, tier=tier)
+            if tier != "free":
+                update_user_tier(conn, user_id, tier)
+            if not is_active or current_period_end is not None or subscription_status is not None:
+                set_license_subscription_state(
+                    conn,
+                    user_id,
+                    is_active=is_active,
+                    current_period_end=current_period_end,
+                    subscription_status=subscription_status,
+                )
+            if validated:
+                lic = get_any_license_for_user(conn, user_id)
+                if lic is not None:
+                    touch_license_validated(conn, lic.id)
             conn.commit()
         finally:
             conn.close()
+        # Store email/password on the callable so E2E tests can log in.
+        _seed._last_email = email  # type: ignore[attr-defined]
+        _seed._last_password = password  # type: ignore[attr-defined]
         return key
 
+    # Expose last-seed credentials via attributes set by _seed().
+    _seed._last_email = ""  # type: ignore[attr-defined]
+    _seed._last_password = ""  # type: ignore[attr-defined]
     return _seed
 
 

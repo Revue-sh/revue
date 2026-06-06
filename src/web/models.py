@@ -45,6 +45,9 @@ class LicenseKey:
     # migration rows and until the first subscription event arrives.
     current_period_end: Optional[str] = None
     subscription_status: Optional[str] = None
+    # REVUE-382: UTC naive-isoformat timestamp of the last SUCCESSFUL licence
+    # validation. NULL until the first /v2/licence/validate succeeds.
+    last_validated_at: Optional[str] = None
 
 
 @dataclass
@@ -105,6 +108,7 @@ def row_to_license_key(row: sqlite3.Row) -> LicenseKey:
         # would raise on the missing column. REVUE-413.
         current_period_end=row["current_period_end"] if "current_period_end" in keys else None,
         subscription_status=row["subscription_status"] if "subscription_status" in keys else None,
+        last_validated_at=row["last_validated_at"] if "last_validated_at" in keys else None,
     )
 
 
@@ -217,15 +221,51 @@ def get_active_license_for_workspace(
     return row_to_license_key(row) if row else None
 
 
-def get_license_for_user(conn: sqlite3.Connection, user_id: int) -> Optional[LicenseKey]:
+def _get_license_for_user(
+    conn: sqlite3.Connection, user_id: int, *, include_inactive: bool
+) -> Optional[LicenseKey]:
+    """Shared query for the user's most recent licence row.
+
+    The only difference between the active-only and unfiltered reads is the
+    ``is_active = 1`` predicate, so both public accessors delegate here with the
+    flag toggled rather than duplicating the SELECT (DRY).
+
+    Args:
+        include_inactive: When False (default for ``get_license_for_user``),
+            restrict to ``is_active = 1`` rows — lapsed/revoked rows are hidden.
+            When True, return the most recent row regardless of ``is_active``,
+            so the Lapsed state (REVUE-382) is reachable.
+    """
+    active_filter = "" if include_inactive else " AND lk.is_active = 1"
+    # REVUE-413 updates the licence row IN PLACE (one row per user via
+    # set_license_subscription_state / update_user_tier), so a user normally has
+    # a single licence row. The ORDER BY is defensive against historical/multi-row
+    # data: ``is_active DESC`` makes an active row win over a lapsed one before
+    # falling back to most-recent, so the unfiltered read never prefers a stale
+    # lapsed row when an active one also exists.
     row = conn.execute(
-        """SELECT lk.* FROM license_keys lk
+        f"""SELECT lk.* FROM license_keys lk
            JOIN workspaces w ON lk.workspace_id = w.id
-           WHERE w.user_id = ? AND lk.is_active = 1
-           ORDER BY lk.created_at DESC LIMIT 1""",
+           WHERE w.user_id = ?{active_filter}
+           ORDER BY lk.is_active DESC, lk.created_at DESC LIMIT 1""",
         (user_id,),
     ).fetchone()
     return row_to_license_key(row) if row else None
+
+
+def get_license_for_user(conn: sqlite3.Connection, user_id: int) -> Optional[LicenseKey]:
+    return _get_license_for_user(conn, user_id, include_inactive=False)
+
+
+def get_any_license_for_user(conn: sqlite3.Connection, user_id: int) -> Optional[LicenseKey]:
+    """Return the most recent licence row for a user WITHOUT filtering on is_active.
+
+    REVUE-382: the Account→Plan page needs to see lapsed rows (is_active=0,
+    tier preserved) to render the Lapsed state. ``get_license_for_user`` hides
+    them intentionally for all other surfaces (dashboard, billing, validation).
+    Do NOT use this function on those paths.
+    """
+    return _get_license_for_user(conn, user_id, include_inactive=True)
 
 
 def increment_usage(conn: sqlite3.Connection, license_key_id: int) -> None:
@@ -239,6 +279,22 @@ def reset_monthly_counter(conn: sqlite3.Connection, license_key_id: int) -> None
     now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     conn.execute(
         "UPDATE license_keys SET reviews_used_this_month = 0, period_reset_at = ? WHERE id = ?",
+        (now, license_key_id),
+    )
+
+
+def touch_license_validated(conn: sqlite3.Connection, license_key_id: int) -> None:
+    """Stamp ``last_validated_at = now`` (UTC, naive isoformat) on a licence row.
+
+    REVUE-382: called on each SUCCESSFUL ``/v2/licence/validate`` so the Account
+    → Plan page can render "Last verified Nh ago" and distinguish the
+    not-activated state (never validated) from the active state. The naive-UTC
+    isoformat matches ``period_reset_at`` so all licence timestamps share one
+    representation (no tz-aware/naive split when diffing).
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    conn.execute(
+        "UPDATE license_keys SET last_validated_at = ? WHERE id = ?",
         (now, license_key_id),
     )
 

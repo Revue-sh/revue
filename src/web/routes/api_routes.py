@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -21,8 +22,10 @@ from database import REVIEWS_LIMIT_BY_TIER, get_db
 from auth import get_session
 from jwt_signing import JWTSigningKeyMissing, sign_licence_jwt
 from jwt_verify import decode_licence_jwt
-from models import get_license_by_key, get_active_license_for_workspace, increment_usage, reset_monthly_counter, create_review_run, get_all_runs_for_user, get_analytics, record_usage_event, count_usage_events_since_month_start
+from models import get_license_by_key, get_active_license_for_workspace, increment_usage, reset_monthly_counter, create_review_run, get_all_runs_for_user, get_analytics, record_usage_event, count_usage_events_since_month_start, touch_license_validated
 import jwt as pyjwt
+
+_LOG = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -474,11 +477,13 @@ async def validate_licence(body: LicenceValidateRequest) -> JSONResponse:
     # two checks would create a TOCTOU gap.
     reviews_remaining = None
     paywall_state = None
+    validated_licence_id: int | None = None
     if isinstance(workspace_id, int):
         with get_db() as conn:
             # Revocation gate. Done after JWT decode (cheap, no DB hit) so
             # signature / expiry failures still short-circuit before the lookup.
-            if get_active_license_for_workspace(conn, workspace_id) is None:
+            licence = get_active_license_for_workspace(conn, workspace_id)
+            if licence is None:
                 return JSONResponse({
                     "valid": False,
                     "tier": None,
@@ -487,6 +492,15 @@ async def validate_licence(body: LicenceValidateRequest) -> JSONResponse:
                     "refresh_after_ts": None,
                     "refreshed_jwt": None,
                 })
+
+            # REVUE-382: a successful validation (decode passed + licence still
+            # active) means we should stamp last_validated_at so the Account →
+            # Plan page can render "Last verified Nh ago" and distinguish
+            # never-validated keys (not-activated) from active ones. Defer the
+            # actual write to its OWN transaction after this block (see below) —
+            # capture only the id here. Only successful validations reach this
+            # point; the decode-fail and revoked early-returns do not.
+            validated_licence_id = licence.id
 
             # Calculate reviews_remaining for free tier by counting events this
             # month (under the same connection so licence + counter are
@@ -503,6 +517,23 @@ async def validate_licence(body: LicenceValidateRequest) -> JSONResponse:
                 reviews_remaining = max(0, free_cap - count)
                 if reviews_remaining <= 0:
                     paywall_state = "exhausted"
+
+    # REVUE-382 BEST-EFFORT stamp — in its OWN transaction, AFTER the main block
+    # has committed and closed. The stamp is a NON-critical cache write feeding a
+    # cosmetic UI field; the validate path is CRITICAL for the CLI. Isolating it
+    # in a separate connection guarantees a transient DB error (lock/disk) on the
+    # stamp can NEVER poison the main transaction's commit or turn a valid licence
+    # into an HTTP 500 / valid:false. The second connection opens only after the
+    # first has closed, so there is no lock contention with it.
+    if validated_licence_id is not None:
+        try:
+            with get_db() as stamp_conn:
+                touch_license_validated(stamp_conn, validated_licence_id)
+        except Exception as exc:  # noqa: BLE001 — cache write must not break validate
+            _LOG.warning(
+                "last_validated_at stamp failed for licence %s (validation still "
+                "returns 200/valid): %s", validated_licence_id, exc,
+            )
 
     # AC1 / decision #4: refresh_after_ts is server-issued and canonical.
     # Compute from server clock — do NOT derive from the JWT's

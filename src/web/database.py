@@ -55,7 +55,11 @@ CREATE TABLE IF NOT EXISTS license_keys (
     -- is the raw Stripe status (active/past_due/unpaid/canceled/...) that drives
     -- the lapsed-vs-free state. Both NULL until the first subscription webhook.
     current_period_end TIMESTAMP,
-    subscription_status TEXT
+    subscription_status TEXT,
+    -- REVUE-382: validation-cache state — UTC naive-isoformat timestamp of the
+    -- last SUCCESSFUL /v2/licence/validate. NULL = never validated (drives the
+    -- Account → Plan not-activated state + "Last verified Nh ago").
+    last_validated_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS review_runs (
@@ -198,6 +202,12 @@ _LICENSE_KEYS_MIGRATIONS = [
     # default NULL until the next subscription.created/updated event populates them.
     ("current_period_end", "ALTER TABLE license_keys ADD COLUMN current_period_end TIMESTAMP"),
     ("subscription_status", "ALTER TABLE license_keys ADD COLUMN subscription_status TEXT"),
+    # REVUE-382: server-side validation-cache state. Stamped (UTC, naive
+    # isoformat) on each SUCCESSFUL POST /v2/licence/validate. NULL means the
+    # key has never been validated (the Account → Plan not-activated state, and
+    # the "Not verified yet" fallback for "Last verified Nh ago"). Safe/idempotent
+    # on existing rows — defaults NULL until the first successful validation.
+    ("last_validated_at", "ALTER TABLE license_keys ADD COLUMN last_validated_at TIMESTAMP"),
 ]
 
 
