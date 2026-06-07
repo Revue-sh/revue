@@ -65,14 +65,25 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 
 | Pair / group | Shared file(s) |
 |---|---|
+| REVUE-328 + REVUE-364 | `packaging/revue/src/revue_skill/skill/emit_usage.py` (shared licence-path helper + activation telemetry) |
 | REVUE-365 + REVUE-366 | `src/web/templates/landing.html` (pricing copy + hero disclaimer) |
 
-**Concurrency lanes — activation-UX cluster:**
-- **Lane 0 (landed):** REVUE-332 (E2E infra), REVUE-384 (`/activate` + shared Command-Box), REVUE-407 (CI setup page) — all done.
-- **Lane 1 (landed):** REVUE-361 (`/billing/success` + `/onboarding` activation handoff), REVUE-413 (persist subscription `current_period_end` + real lapsed transition), and REVUE-382 (Account → Plan licence-status page) — all merged.
-- **Lane 2 (landed):** REVUE-408 and REVUE-409 both **Done**. REVUE-409's staging-E2E pipeline step gates prod promotion at *runtime* — validated green on #1122 (full state matrix converged), with TC-7 red-blocks-promotion reproduced in Docker.
+**Pre-launch polish execution lanes:**
 
-**Hard serial points:** none — all activation-UX cluster tickets are Done. Everything parallelizes.
+| Lane | Tickets | Execution rule |
+|---|---|---|
+| **A — licence paths** | REVUE-328 | Can start independently. Scope must cover every licence-path reader/writer, including activation, validation refresh, the local-run gate, and usage emission. |
+| **B — timeout defaults** | REVUE-341 | Can run parallel with A/C/D after surface detection is corrected: `APP_ENV=staging` is already used by CI and dogfood, so it cannot uniquely identify `/revue-local`. |
+| **C — website copy** | REVUE-365 → REVUE-366 | Serialise because both edit `landing.html`. Land pricing truth first, then add the Claude-Code-only hero/install disclaimer against the final copy. |
+| **D — launch comms** | REVUE-363 | Draft channel variants in parallel with A/B/C; final copy review waits for Lane C so pricing, supported-client, and agent-count claims match the shipped site. |
+| **Hold — activation telemetry** | REVUE-364 | Do not start implementation yet. It is blocked by REVUE-127 and must follow REVUE-328 to consume the shared licence-path helper instead of creating another path contract. Reconcile `/usage/track` vs `/api/v2/usage/emit` and the telemetry opt-out contract before coding. |
+
+**Hard serial points:**
+- REVUE-328 → REVUE-364.
+- REVUE-365 → REVUE-366.
+- Lane C final copy → REVUE-363 publication-ready sign-off.
+
+**Maximum useful concurrency:** four lanes, but only A/B/C plus REVUE-363 drafting should be active initially; REVUE-364 remains held.
 
 ---
 
