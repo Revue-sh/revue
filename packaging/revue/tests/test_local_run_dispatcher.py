@@ -36,81 +36,66 @@ def test_local_run_main_accepts_argv_kwarg():
     )
 
 
-def test_dispatch_local_run_returns_zero_on_systemexit_none():
+def test_dispatch_local_run_returns_zero_on_systemexit_none(monkeypatch):
     # Arrange
+    import revue_skill.skill as skill_pkg
+    from unittest.mock import MagicMock
+
     from revue_skill.skill.local_run_dispatcher import dispatch_local_run
 
-    # Set up a fake local_run module that raises SystemExit() (clean exit)
-    import types
+    fake_main = MagicMock(side_effect=SystemExit())
+    fake_mod = MagicMock(main=fake_main)
 
-    fake_mod = types.ModuleType("revue_skill.skill.local_run")
+    # Patch the package attribute — `from revue_skill.skill import local_run`
+    # resolves via attribute lookup, not sys.modules, so we patch here.
+    monkeypatch.setattr(skill_pkg, "local_run", fake_mod, raising=False)
+    code = dispatch_local_run("position", ["--all"])
 
-    def fake_main(argv=None):
-        raise SystemExit()  # equivalent to sys.exit() — success
-
-    fake_mod.main = fake_main
-    sys.modules["revue_skill.skill.local_run"] = fake_mod
-
-    try:
-        # Act
-        code = dispatch_local_run("position", ["--all"])
-
-        # Assert — SystemExit() means success, dispatcher must return 0
-        assert code == 0, "SystemExit() means clean exit and must map to return 0"
-    finally:
-        del sys.modules["revue_skill.skill.local_run"]
+    # SystemExit() means success, dispatcher must return 0
+    assert code == 0, "SystemExit() means clean exit and must map to return 0"
 
 
-def test_dispatch_local_run_returns_exit_code_on_systemexit_int():
+def test_dispatch_local_run_returns_exit_code_on_systemexit_int(monkeypatch):
     # Arrange
+    import revue_skill.skill as skill_pkg
+    from unittest.mock import MagicMock
+
     from revue_skill.skill.local_run_dispatcher import dispatch_local_run
 
-    import types
+    fake_main = MagicMock(side_effect=SystemExit(2))
+    fake_mod = MagicMock(main=fake_main)
 
-    fake_mod = types.ModuleType("revue_skill.skill.local_run")
+    # Patch the package attribute — see note in test above
+    monkeypatch.setattr(skill_pkg, "local_run", fake_mod, raising=False)
+    code = dispatch_local_run("position", [])
 
-    def fake_main(argv=None):
-        raise SystemExit(2)  # argparse parse error
-
-    fake_mod.main = fake_main
-    sys.modules["revue_skill.skill.local_run"] = fake_mod
-
-    try:
-        # Act
-        code = dispatch_local_run("position", [])
-
-        # Assert
-        assert code == 2, "SystemExit(2) must propagate through dispatcher"
-    finally:
-        del sys.modules["revue_skill.skill.local_run"]
+    # SystemExit(2) must propagate through dispatcher
+    assert code == 2, "SystemExit(2) must propagate through dispatcher"
 
 
-def test_dispatch_local_run_forwards_argv_to_main():
+def test_dispatch_local_run_forwards_argv_to_main(monkeypatch):
     # Arrange — capture argv as it's passed into fake main
+    import revue_skill.skill as skill_pkg
+    from unittest.mock import MagicMock
+
     from revue_skill.skill.local_run_dispatcher import dispatch_local_run
 
-    import types
-
-    fake_mod = types.ModuleType("revue_skill.skill.local_run")
     captured_argv = []
 
     def fake_main(argv=None):
         captured_argv.append(argv)
         return 0
 
-    fake_mod.main = fake_main
-    sys.modules["revue_skill.skill.local_run"] = fake_mod
+    fake_mod = MagicMock(main=fake_main)
 
-    try:
-        # Act
-        dispatch_local_run("position", ["--all", "--platform", "github"])
+    # Patch the package attribute — see note in test_dispatch_local_run_returns_zero_on_systemexit_none
+    monkeypatch.setattr(skill_pkg, "local_run", fake_mod, raising=False)
+    dispatch_local_run("position", ["--all", "--platform", "github"])
 
-        # Assert — dispatcher forwards subcommand + args as argv to local_run.main
-        assert captured_argv == [["position", "--all", "--platform", "github"]], (
-            f"argv must be subcommand + args, got: {captured_argv}"
-        )
-    finally:
-        del sys.modules["revue_skill.skill.local_run"]
+    # Assert — dispatcher forwards subcommand + args as argv to local_run.main
+    assert captured_argv == [["position", "--all", "--platform", "github"]], (
+        f"argv must be subcommand + args, got: {captured_argv}"
+    )
 
 
 def test_cli_local_run_shows_help_when_no_args(capsys):
@@ -138,33 +123,28 @@ def test_cli_local_run_shows_help_for_dash_h_via_main(capsys):
     assert "prepare" in captured.out
 
 
-def test_cli_cmd_local_run_strips_argparse_separator():
+def test_cli_cmd_local_run_strips_argparse_separator(monkeypatch):
     # Arrange — sub_args starts with "--" (argparse separator)
     import argparse
-    import types
-    from unittest.mock import patch
+    import revue_skill.skill as skill_pkg
+    from unittest.mock import MagicMock
 
     from revue_skill.cli import cmd_local_run
 
-    fake_mod = types.ModuleType("revue_skill.skill.local_run")
     captured_argv = []
 
     def fake_main(argv=None):
         captured_argv.append(argv)
         return 0
 
-    fake_mod.main = fake_main
-    sys.modules["revue_skill.skill.local_run"] = fake_mod
+    fake_mod = MagicMock(main=fake_main)
+    args = argparse.Namespace(sub_args=["--", "position", "--all"])
 
-    try:
-        args = argparse.Namespace(sub_args=["--", "position", "--all"])
+    # Patch the package attribute — see note in test_dispatch_local_run_returns_zero_on_systemexit_none
+    monkeypatch.setattr(skill_pkg, "local_run", fake_mod, raising=False)
+    cmd_local_run(args)
 
-        # Act
-        cmd_local_run(args)
-
-        # Assert — leading "--" is stripped before dispatch
-        assert captured_argv == [["position", "--all"]], (
-            f"Leading '--' must be stripped, got argv: {captured_argv}"
-        )
-    finally:
-        del sys.modules["revue_skill.skill.local_run"]
+    # Assert — leading "--" is stripped before dispatch
+    assert captured_argv == [["position", "--all"]], (
+        f"Leading '--' must be stripped, got argv: {captured_argv}"
+    )
