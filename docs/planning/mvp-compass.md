@@ -1,6 +1,6 @@
 # MVP Compass — /revue-local public launch
 
-**Last updated:** 2026-06-07 (REVUE-409 **DONE** — post-merge staging E2E gate live + validated on green main #1122; TC-7 red-blocks-promotion reproduced in Docker; v0.25.2 released to PyPI. **0 hard launch blockers.**) Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
+**Last updated:** 2026-06-07 (REVUE-423 **DONE** — test-order contamination in test_local_run_dispatcher fixed; full suite green. **0 hard launch blockers.**) Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
 **Source of truth for "next pick."** Jira's priority field ≠ launch-path order; *this doc* is the launch-path order.
 
 ---
@@ -13,15 +13,15 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**~61 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
+**~62 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
 The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The full activation-UX cluster Lane 1 (361 + 413 + 382) and Lane 2 (408 + 409) are done. REVUE-409 (staging E2E gate) is **Done** — validated on a green main run (#1122) with the full state matrix (active/lapsed/free/not-activated) converged and the suite green against staging; the gate now blocks prod promotion at runtime. Launch is gated only on the pre-launch polish items below.
 
 **Recently shipped (last 5):**
+- **REVUE-423** — fix test-order contamination in test_local_run_dispatcher; full suite green *(Done)*
 - **REVUE-409** — post-merge staging E2E gate via signed synthetic-webhook provisioning *(Done — live + validated on green main #1122; TC-7 reproduced)*
 - **REVUE-418** — systemic CSRF protection on all session-cookie form POSTs
 - **REVUE-408** — site-wide two-mode (CLI/CI) messaging + new review-quality landing hero
 - **REVUE-382** — Account → Plan licence-status page
-- **REVUE-413** — persist subscription `current_period_end` + real lapsed transition
 
 ---
 
@@ -35,7 +35,7 @@ The narrative critical path (REVUE-275 → 280 → 281) and the launch spine —
 
 | Jira | Story | Why it's not a hard blocker |
 |------|-------|-----------------|
-| REVUE-328 | Honour XDG_CONFIG_HOME for licence file location | Most users have default config home; minority first-week feedback |
+| REVUE-328 | Remove unsupported licence-path override | Prevent activation and telemetry from disagreeing with the fixed runtime path |
 | REVUE-341 | Per-surface default agent_timeout_seconds (/revue-local=1200s, CI=600s, CLI=600s) | UX consistency; current defaults work. Can now run solo (collision partner 339 is done). |
 | REVUE-363 | Launch comms (HN/PH/Reddit/Twitter/blog) | Time-locked; the post (REVUE-281) is shipped but undelivered. Plan pre-launch, fire on launch day |
 | REVUE-364 | Install → first-review activation telemetry | Conversion-funnel measurement; blocked by REVUE-127 (`/usage/track`). Backfillable from week-2 cohort |
@@ -72,7 +72,7 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 
 | Lane | Tickets | Execution rule |
 |---|---|---|
-| **A — licence paths** | REVUE-328 | Can start independently. Scope must cover every licence-path reader/writer, including activation, validation refresh, the local-run gate, and usage emission. |
+| **A — licence paths** | REVUE-328 | Can start independently. Remove the unsupported override from activation and usage emission; verify validation refresh and the local-run gate remain on the fixed path. |
 | **B — timeout defaults** | REVUE-341 | Can run parallel with A/C/D after surface detection is corrected: `APP_ENV=staging` is already used by CI and dogfood, so it cannot uniquely identify `/revue-local`. |
 | **C — website copy** | REVUE-365 → REVUE-366 | Serialise because both edit `landing.html`. Land pricing truth first, then add the Claude-Code-only hero/install disclaimer against the final copy. |
 | **D — launch comms** | REVUE-363 | Draft channel variants in parallel with A/B/C; final copy review waits for Lane C so pricing, supported-client, and agent-count claims match the shipped site. |
