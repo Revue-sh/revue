@@ -71,20 +71,20 @@ def test_tier_from_price_id_maps_correctly(monkeypatch):
     assert tier_from_price_id("price_unknown") is None
 
 
-def test_tier_display_has_all_tiers():
+def test_tier_display_has_self_serve_tiers_only():
+    """REVUE-389: billing page shows only self-serve tiers; Enterprise is hidden
+    until a sales process and pricing are ready."""
     from billing import TIER_DISPLAY
     assert "indie" in TIER_DISPLAY
     assert "pro" in TIER_DISPLAY
-    assert "enterprise_starter" in TIER_DISPLAY
-    assert "enterprise_growth" in TIER_DISPLAY
+    assert "enterprise_starter" not in TIER_DISPLAY
+    assert "enterprise_growth" not in TIER_DISPLAY
 
 
 def test_tier_display_prices():
     from billing import TIER_DISPLAY
     assert TIER_DISPLAY["indie"]["price_monthly"] == 9
     assert TIER_DISPLAY["pro"]["price_monthly"] == 29
-    assert TIER_DISPLAY["enterprise_starter"]["price_monthly"] == 59
-    assert TIER_DISPLAY["enterprise_growth"]["price_monthly"] == 149
 
 
 def test_create_checkout_session_raises_without_key(monkeypatch):
@@ -397,8 +397,9 @@ async def test_billing_page_renders(client: AsyncClient):
     assert b"Upgrade your plan" in resp.content
     assert b"Indie" in resp.content
     assert b"Pro" in resp.content
-    assert b"Enterprise Starter" in resp.content
-    assert b"Enterprise Growth" in resp.content
+    # Enterprise is hidden until a sales process is ready (REVUE-389).
+    assert b"Enterprise Starter" not in resp.content
+    assert b"Enterprise Growth" not in resp.content
 
 
 @pytest.mark.asyncio
@@ -417,8 +418,9 @@ async def test_billing_page_shows_prices(client: AsyncClient):
     # Symbol comes from the single config.CURRENCY_SYMBOL source (DRY).
     assert "$9" in resp.text
     assert "$29" in resp.text
-    assert "$59" in resp.text
-    assert "$149" in resp.text
+    # Enterprise prices are not on the self-serve billing page (REVUE-389).
+    assert "$59" not in resp.text
+    assert "$149" not in resp.text
     # No stray pound-denominated plan prices remain on the billing page.
     assert "£9" not in resp.text
     assert "£29" not in resp.text

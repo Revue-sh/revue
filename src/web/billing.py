@@ -14,8 +14,6 @@ Required environment variables:
     STRIPE_WEBHOOK_SECRET       whsec_...  (from Stripe dashboard)
     STRIPE_PRICE_INDIE_MONTHLY  price_...
     STRIPE_PRICE_PRO_MONTHLY    price_...
-    STRIPE_PRICE_ENT_STARTER    price_...
-    STRIPE_PRICE_ENT_GROWTH     price_...
 
 Optional:
     STRIPE_PRICE_INDIE_YEARLY   price_...
@@ -107,18 +105,6 @@ TIER_DISPLAY: dict[str, dict] = {
         "reviews_limit": None,  # unlimited
         "description": "Startups, agencies. Unlimited reviews, all 6 agents.",
     },
-    "enterprise_starter": {
-        "label": "Enterprise Starter",
-        "price_monthly": 59,
-        "reviews_limit": None,
-        "description": "Small enterprises. 1–10 seats, self-serve.",
-    },
-    "enterprise_growth": {
-        "label": "Enterprise Growth",
-        "price_monthly": 149,
-        "reviews_limit": None,
-        "description": "Mid-size enterprises. 11–50 seats.",
-    },
 }
 
 TIER_REVIEWS_LIMIT: dict[str, Optional[int]] = {
@@ -185,7 +171,7 @@ def create_checkout_session(
 
     Args:
         customer_email: Pre-fill the email field in Checkout.
-        tier:           Target tier (indie, pro, enterprise_starter, enterprise_growth).
+        tier:           Target tier (indie, pro).
         interval:       Billing interval — "month" or "year".
         customer_id:    Existing Stripe customer ID (avoids duplicate customers).
         metadata:       Extra metadata attached to the session (e.g. user_id).
