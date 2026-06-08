@@ -86,36 +86,15 @@ jobs:
           python3 -m pytest packaging/revue/tests/e2e -q --rootdir=packaging/revue
 
   # -----------------------------------------------------------------------
-  # Web image build + staging deploy chain — main only.
+  # Staging deploy chain — main only.
+  # flyctl --remote-only: Fly builds the image on their infra from source.
+  # No local Docker build or registry push needed.
   # -----------------------------------------------------------------------
-  build-web-image:
-    name: Build Web Image → Fly Registry
+  deploy-staging:
+    name: Deploy Web → Staging
     needs: [unit-tests, web-tests, activate-e2e]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 5
-
-      - name: Install flyctl
-        run: |
-          curl -fsSL https://fly.io/install.sh -o /tmp/fly-install.sh && sh /tmp/fly-install.sh
-          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
-
-      - name: Build and push image
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          export WEB_IMAGE="registry.fly.io/revue-staging:${{ github.sha }}"
-          flyctl auth docker
-          docker build -t "$WEB_IMAGE" src/web
-          docker push "$WEB_IMAGE"
-
-  deploy-staging:
-    name: Deploy Web → Staging
-    needs: build-web-image
-    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -128,8 +107,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          export WEB_IMAGE="registry.fly.io/revue-staging:${{ github.sha }}"
-          cd src/web && flyctl deploy --app revue-staging --config fly.staging.toml --image "$WEB_IMAGE" --remote-only
+          cd src/web && flyctl deploy --app revue-staging --config fly.staging.toml --remote-only
 
   smoke-staging:
     name: Smoke Test → Staging

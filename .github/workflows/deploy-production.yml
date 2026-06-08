@@ -48,8 +48,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          export WEB_IMAGE="registry.fly.io/revue-staging:${{ github.sha }}"
-          cd src/web && flyctl deploy --app revue-io --config fly.toml --image "$WEB_IMAGE" --remote-only
+          cd src/web && flyctl deploy --app revue-io --config fly.toml --remote-only
 
   smoke-production:
     name: Smoke Test → Production
