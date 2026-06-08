@@ -9,8 +9,8 @@
 # Post-MVP distributes via https://revue.sh/install.sh with signed releases.
 #
 # Design (REVUE-276 / E-P2A-S2, extended by REVUE-354):
-# 1. Prefers `uv tool install --force revue` (modern pip replacement)
-# 2. Falls back to `pipx install --force revue` if uv absent
+# 1. Prefers `uv tool install --python 3.12 --force revue` (pins cp312 ABI to match Nuitka wheels)
+# 2. Falls back to `pipx install --force --python python3.12 revue` if uv absent
 # 3. Auto-detects Claude Code (~/.claude) and installs the bundled skill (which
 #    is the sole source of /revue); removes any stale command-file shim
 # 4. Auto-detects .revue.yml in workspace and reuses it
@@ -155,15 +155,19 @@ ensure_writable_dir() {
 }
 
 # Install revue via uv tool install --force
+# --python 3.12: the published Nuitka wheels are cp312-only; uv will download
+# Python 3.12 automatically if it is not already present on the system.
 install_via_uv() {
-  info "Found uv — installing revue via 'uv tool install --force revue'"
-  uv tool install --force revue
+  info "Found uv — installing revue via 'uv tool install --python 3.12 --force revue'"
+  uv tool install --python 3.12 --force revue
 }
 
 # Install revue via pipx install --force
+# --python python3.12: the published Nuitka wheels are cp312-only; python3.12
+# must be available on PATH (install via https://docs.astral.sh/uv/ if missing).
 install_via_pipx() {
-  info "uv not found — falling back to pipx (install --force revue)"
-  pipx install --force revue
+  info "uv not found — falling back to pipx (install --force --python python3.12 revue)"
+  pipx install --force --python python3.12 revue
 }
 
 # Run revue install-skill to copy the bundled skill into the scope-appropriate
