@@ -306,6 +306,16 @@ This is **transitional behaviour**. Once agent prompts are tightened to require 
 
 - [Positioning Architecture](positioning.md) — full data flow diagram from diff ingestion through agents to platform API call; per-platform PositionAdapter design; AC7 gap
 - [Nova Consolidation Architecture](consolidation.md) — implementation detail of `NovaSingleShotStrategy`; Nova's TOML/JSON batch prompt format
+- [Configurable Comment Vocabulary](configurable-comment-labels.md) — proposed display-only overrides for the deterministic `Action` / `Suggest` / `Note` labels
 - [Agentic Review Loop](agentic-review-loop.md) — Track 2 plug-in shape; `LangGraphConversationalStrategy` integration point
 - [Comment Posting Refactor Plan](../planning/comment-posting-refactor-plan.md) — PR sequence and Jira ticket structure for Track 1 delivery
 - [Pipeline Metrics ADR](pipeline-metrics.md) — `REVUE_METRICS_ENABLED` flag; `JsonlMetricsCollector` format
+
+### Reconciled UX rationale
+
+The earlier UX proposal used a separate `code_suggestion` field and formatter in
+`cli.py`. The implemented contract is `code_replacement` on typed findings, rendered by
+`BodyBuilder` through the platform formatter registry. The product rationale remains:
+GitHub and GitLab should expose a native one-click suggestion when a complete replacement
+is available, while Bitbucket must degrade to readable code without broken suggestion
+syntax. A missing or rejected replacement always leaves the prose finding intact.

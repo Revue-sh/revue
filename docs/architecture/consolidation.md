@@ -26,6 +26,12 @@ When multiple agents review the same PR, they frequently flag the same code loca
 
 Without synthesis, the developer sees two comments and must mentally merge them. With synthesis, they see one: "Module-level `TRACK_URL` creates DIP violation and SSRF exposure. Accept `track_url` as optional param (DI). Validate HTTPS before use."
 
+The synthesis is responsible for producing one coherent fix, not summarising each agent
+in sequence. Attribution remains explicit so the author can see which review domains
+contributed, and severity/confidence remain deterministic. This carries forward the
+useful UX rationale from the superseded April 2026 `nova-synthesis-mode` proposal without
+restoring its obsolete `cli.py` rendering or legacy model shapes.
+
 ---
 
 ## Design Decision
