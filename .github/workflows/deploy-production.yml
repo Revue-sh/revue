@@ -1,0 +1,93 @@
+name: Deploy Production (API-triggered)
+
+# Equivalent of Bitbucket's custom: deploy-production pipeline.
+# Trigger via the GitHub Actions API or the "Run workflow" button in the UI.
+#
+# ANTI-DOWNGRADE GUARD: the guard job verifies that the selected ref's SHA
+# equals the current origin/main HEAD, refusing any stale/off-branch trigger.
+#
+# STAGING-GREEN PRECONDITION (operator responsibility): confirm the latest
+# main pipeline's smoke-staging for this SHA passed before triggering here.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  guard:
+    name: Guard → refuse non-main-HEAD trigger
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify commit is current main HEAD
+        run: |
+          set -eu
+          git fetch --depth=1 origin main
+          MAIN_HEAD="$(git rev-parse FETCH_HEAD)"
+          if [ "$MAIN_HEAD" != "${{ github.sha }}" ]; then
+            echo "REFUSING prod deploy: ${{ github.sha }} is not current origin/main HEAD $MAIN_HEAD (off-branch or stale trigger)" >&2
+            exit 1
+          fi
+
+  deploy-production:
+    name: Deploy Web → Production
+    needs: guard
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install flyctl
+        run: |
+          curl -fsSL https://fly.io/install.sh -o /tmp/fly-install.sh && sh /tmp/fly-install.sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Deploy to production
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          export WEB_IMAGE="registry.fly.io/revue-staging:${{ github.sha }}"
+          cd src/web && flyctl deploy --app revue-io --config fly.toml --image "$WEB_IMAGE" --remote-only
+
+  smoke-production:
+    name: Smoke Test → Production
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Smoke tests
+        run: |
+          set -eu
+          CURL_RETRY_FLAGS="--retry 12 --retry-all-errors --connect-timeout 5 --max-time 20"
+
+          assert_json_health() {
+            out="$(mktemp)"
+            code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" "$1")"
+            if [ "$code" != "200" ]; then
+              echo "Expected 200 from $1, got $code" >&2; cat "$out" >&2; exit 1
+            fi
+            python3 -c 'import json, sys; raise SystemExit(json.load(open(sys.argv[1], encoding="utf-8")) != {"status": "ok"})' "$out" \
+              || { echo "Unexpected health body from $1" >&2; cat "$out" >&2; exit 1; }
+          }
+
+          assert_200() {
+            out="$(mktemp)"
+            code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" "$1")"
+            if [ "$code" != "200" ]; then
+              echo "Expected 200 from $1, got $code" >&2; cat "$out" >&2; exit 1
+            fi
+          }
+
+          assert_422() {
+            out="$(mktemp)"
+            code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" -X POST "$1" -H 'content-type: application/json' -d '{}')"
+            if [ "$code" != "422" ]; then
+              echo "Expected 422 from $1, got $code" >&2; cat "$out" >&2; exit 1
+            fi
+          }
+
+          assert_json_health "https://revue.sh/health"
+          assert_200 "https://api.revue.sh/health"
+          assert_422 "https://api.revue.sh/license/validate"
+          assert_422 "https://revue.sh/api/license/validate"

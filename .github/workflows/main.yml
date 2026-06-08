@@ -1,0 +1,312 @@
+name: Main
+
+on:
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: main-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Test gate — runs on both main and develop.
+  # -----------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache CI venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ci-venv-linux-${{ hashFiles('requirements-ci.txt', 'packaging/revue_core/pyproject.toml', 'packaging/revue-ci/pyproject.toml', 'packaging/revue/pyproject.toml') }}
+
+      - name: Run tests
+        run: |
+          apt-get update -qq && apt-get install -y --no-install-recommends git
+          test -x .venv/bin/python || python3 -m venv .venv
+          export PATH="$PWD/.venv/bin:$PATH"
+          python3 -c "import pytest, jsonschema, yaml" 2>/dev/null || pip install --quiet -r requirements-ci.txt
+          pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/ -e packaging/revue/
+          python3 -m pytest packaging/revue_core/tests/ -q --rootdir=packaging/revue_core
+          python3 -m pytest packaging/revue-ci/tests/ -q --rootdir=packaging/revue-ci
+          python3 -m pytest packaging/revue/tests/ --ignore=packaging/revue/tests/e2e -q --rootdir=packaging/revue
+          python3 -m pytest tests/ --ignore=tests/integration --ignore=tests/test_activation_rate_limit.py -q
+          python3 -m pytest scripts/tests/ -q
+          python3 -m pytest tests/integration/ -m slow -q
+
+  web-tests:
+    name: Web Tests
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache web venv
+        uses: actions/cache@v4
+        with:
+          path: .venv-web
+          key: web-venv-linux-${{ hashFiles('src/web/requirements.txt') }}
+
+      - name: Run web tests
+        run: |
+          test -x .venv-web/bin/python || python3 -m venv .venv-web
+          export PATH="$PWD/.venv-web/bin:$PATH"
+          python3 -c "import fastapi, uvicorn" 2>/dev/null || pip install --quiet -r src/web/requirements.txt
+          python3 -m pytest src/web/tests/ --ignore=src/web/tests/e2e -q
+          python3 -m pytest tests/test_activation_rate_limit.py -q
+
+  # Activate E2E only on main (develop skips the heavier venv + playwright).
+  activate-e2e:
+    name: Activate E2E
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache E2E venv
+        uses: actions/cache@v4
+        with:
+          path: .venv-e2e
+          key: e2e-venv-linux-${{ hashFiles('src/web/requirements.txt', 'packaging/revue_core/pyproject.toml', 'packaging/revue-ci/pyproject.toml', 'packaging/revue/pyproject.toml') }}
+
+      - name: Run activate E2E
+        run: |
+          test -x .venv-e2e/bin/python || python3 -m venv .venv-e2e
+          export PATH="$PWD/.venv-e2e/bin:$PATH"
+          python3 -c "import fastapi, uvicorn" 2>/dev/null || pip install --quiet -r src/web/requirements.txt
+          pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/ -e packaging/revue/
+          python3 -c "import pytest_playwright" 2>/dev/null || pip install --quiet pytest-playwright
+          python3 -m playwright install --with-deps chromium
+          python3 -m pytest packaging/revue/tests/e2e -q --rootdir=packaging/revue
+
+  # -----------------------------------------------------------------------
+  # Web image build + staging deploy chain — main only.
+  # -----------------------------------------------------------------------
+  build-web-image:
+    name: Build Web Image → Fly Registry
+    needs: [unit-tests, web-tests, activate-e2e]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 5
+
+      - name: Install flyctl
+        run: |
+          curl -fsSL https://fly.io/install.sh -o /tmp/fly-install.sh && sh /tmp/fly-install.sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Build and push image
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          export WEB_IMAGE="registry.fly.io/revue-staging:${{ github.sha }}"
+          flyctl auth docker
+          docker build -t "$WEB_IMAGE" src/web
+          docker push "$WEB_IMAGE"
+
+  deploy-staging:
+    name: Deploy Web → Staging
+    needs: build-web-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install flyctl
+        run: |
+          curl -fsSL https://fly.io/install.sh -o /tmp/fly-install.sh && sh /tmp/fly-install.sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Deploy to staging
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          export WEB_IMAGE="registry.fly.io/revue-staging:${{ github.sha }}"
+          cd src/web && flyctl deploy --app revue-staging --config fly.staging.toml --image "$WEB_IMAGE" --remote-only
+
+  smoke-staging:
+    name: Smoke Test → Staging
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    steps:
+      - name: Smoke tests
+        run: |
+          set -eu
+          CURL_RETRY_FLAGS="--retry 12 --retry-all-errors --connect-timeout 5 --max-time 20"
+
+          assert_json_health() {
+            out="$(mktemp)"
+            code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" "$1")"
+            if [ "$code" != "200" ]; then
+              echo "Expected 200 from $1, got $code" >&2; cat "$out" >&2; exit 1
+            fi
+            python3 -c 'import json, sys; raise SystemExit(json.load(open(sys.argv[1], encoding="utf-8")) != {"status": "ok"})' "$out" \
+              || { echo "Unexpected health body from $1" >&2; cat "$out" >&2; exit 1; }
+          }
+
+          assert_200() {
+            out="$(mktemp)"
+            code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" "$1")"
+            if [ "$code" != "200" ]; then
+              echo "Expected 200 from $1, got $code" >&2; cat "$out" >&2; exit 1
+            fi
+          }
+
+          assert_422() {
+            out="$(mktemp)"
+            code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" -X POST "$1" -H 'content-type: application/json' -d '{}')"
+            if [ "$code" != "422" ]; then
+              echo "Expected 422 from $1, got $code" >&2; cat "$out" >&2; exit 1
+            fi
+          }
+
+          assert_manifest() {
+            out="$(mktemp)"
+            code="$(curl -sS $CURL_RETRY_FLAGS -o "$out" -w "%{http_code}" "$1")"
+            if [ "$code" != "200" ]; then
+              echo "Expected 200 from $1, got $code" >&2; cat "$out" >&2; exit 1
+            fi
+            python3 -c 'import json,re,sys; m=json.load(open(sys.argv[1],encoding="utf-8")); w=m["artefacts"]["wheel"]; raise SystemExit(not (m.get("schema_version")==1 and bool(re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", m.get("current_version") or "")) and bool(re.fullmatch(r"[0-9a-f]{64}", w.get("sha256") or "")) and str(w.get("url","")).startswith("https://") and "T" in (m.get("released_at") or "")))' "$out" \
+              || { echo "Manifest from $1 failed structural validation" >&2; cat "$out" >&2; exit 1; }
+          }
+
+          assert_json_health "https://staging.revue.sh/health"
+          assert_200 "https://api.staging.revue.sh/health"
+          assert_422 "https://api.staging.revue.sh/license/validate"
+          assert_422 "https://staging.revue.sh/api/license/validate"
+          assert_manifest "https://staging.revue.sh/skills/manifest.json"
+
+  provision-staging-e2e:
+    name: Provision → Staging E2E accounts
+    needs: smoke-staging
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    env:
+      STAGING_BASE_URL: https://staging.revue.sh
+      STAGING_E2E_PASSWORD: ${{ secrets.STAGING_E2E_PASSWORD }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+      STRIPE_PRICE_INDIE_MONTHLY: ${{ secrets.STRIPE_PRICE_INDIE_MONTHLY }}
+      STRIPE_PRICE_PRO_MONTHLY: ${{ secrets.STRIPE_PRICE_PRO_MONTHLY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision accounts
+        run: |
+          set -eu
+          missing=""
+          for var in STAGING_E2E_PASSWORD STRIPE_WEBHOOK_SECRET STRIPE_PRICE_INDIE_MONTHLY STRIPE_PRICE_PRO_MONTHLY; do
+            eval "val=\${$var:-}"
+            if [ -z "$val" ]; then missing="$missing $var"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "Missing required staging-E2E secret(s):$missing" >&2
+            echo "Set them in GitHub repo secrets before merging." >&2
+            exit 1
+          fi
+          pip install --quiet httpx
+          python3 scripts/provision_staging_e2e.py
+
+  e2e-staging:
+    name: E2E → Staging
+    needs: provision-staging-e2e
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    env:
+      E2E_BASE_URL: https://staging.revue.sh
+      STAGING_E2E_PASSWORD: ${{ secrets.STAGING_E2E_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache E2E venv
+        uses: actions/cache@v4
+        with:
+          path: .venv-e2e
+          key: e2e-venv-linux-${{ hashFiles('src/web/requirements.txt', 'packaging/revue_core/pyproject.toml', 'packaging/revue-ci/pyproject.toml', 'packaging/revue/pyproject.toml') }}
+
+      - name: Run staging E2E
+        run: |
+          set -eu
+          if [ -z "${STAGING_E2E_PASSWORD:-}" ]; then
+            echo "Missing STAGING_E2E_PASSWORD secret" >&2; exit 1
+          fi
+          test -x .venv-e2e/bin/python || python3 -m venv .venv-e2e
+          export PATH="$PWD/.venv-e2e/bin:$PATH"
+          python3 -c "import fastapi, uvicorn" 2>/dev/null || pip install --quiet -r src/web/requirements.txt
+          python3 -c "import pytest_playwright" 2>/dev/null || pip install --quiet pytest-playwright
+          python3 -m playwright install --with-deps chromium
+          cd src/web && python3 -m pytest tests/e2e -q --browser chromium
+
+  # -----------------------------------------------------------------------
+  # Tag release — runs after staging E2E passes.
+  # Production deploy is manual-only via deploy-production.yml (workflow_dispatch).
+  # Skipped on the version-bump commit itself to avoid loops.
+  # -----------------------------------------------------------------------
+  tag-release:
+    name: Tag Release (if warranted)
+    needs: e2e-staging
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Determine and push release tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          apt-get update -qq && apt-get install -y --no-install-recommends git
+          BUMP=$(python3 build/determine_release.py "$(git log -1 --format='%s' HEAD)")
+          echo "Commit type → bump: $BUMP"
+          if [ "$BUMP" = "none" ]; then
+            echo "No release for this commit type — skipping tag"
+            exit 0
+          fi
+          case "$BUMP" in
+            major|minor|patch) ;;
+            *) echo "Error: unexpected bump value: $BUMP" >&2; exit 1 ;;
+          esac
+          LATEST_TAG=$(git ls-remote --tags origin 'refs/tags/v*' \
+            | awk '{print $2}' | grep -v '\^{}' | sed 's|refs/tags/||' \
+            | sort -V | tail -1)
+          CURRENT_VERSION="${LATEST_TAG#v}"
+          CURRENT_VERSION="${CURRENT_VERSION:-0.0.0}"
+          echo "Latest tag: ${LATEST_TAG:-none}, bumping from ${CURRENT_VERSION}"
+          NEXT_VERSION=$(python3 -c '
+          import sys
+          major, minor, patch_n = map(int, sys.argv[1].split("."))
+          b = sys.argv[2]
+          if b == "major": major += 1; minor = 0; patch_n = 0
+          elif b == "minor": minor += 1; patch_n = 0
+          elif b == "patch": patch_n += 1
+          print(f"{major}.{minor}.{patch_n}")
+          ' "$CURRENT_VERSION" "$BUMP")
+          echo "Next version: v${NEXT_VERSION}"
+          if git ls-remote --tags origin "refs/tags/v${NEXT_VERSION}" | grep -q "v${NEXT_VERSION}"; then
+            echo "Tag v${NEXT_VERSION} already exists — skipping"
+            exit 0
+          fi
+          git config user.name "Revue CI"
+          git config user.email "ci@revue.sh"
+          git remote set-url origin "https://x-token-auth:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
+          sed -i "s/^version = \"[^\"]*\"/version = \"${NEXT_VERSION}\"/" packaging/revue_core/pyproject.toml
+          sed -i "s/^version = \"[^\"]*\"/version = \"${NEXT_VERSION}\"/" packaging/revue-ci/pyproject.toml
+          sed -i "s/^version = \"[^\"]*\"/version = \"${NEXT_VERSION}\"/" packaging/revue/pyproject.toml
+          sed -i "s/\"revue_core~=[^\"]*\"/\"revue_core~=${NEXT_VERSION}\"/" packaging/revue-ci/pyproject.toml
+          sed -i "s/\"revue_core~=[^\"]*\"/\"revue_core~=${NEXT_VERSION}\"/" packaging/revue/pyproject.toml
+          sed -i "s/^__version__ = \"[^\"]*\"/__version__ = \"${NEXT_VERSION}\"/" packaging/revue/src/revue_skill/__init__.py
+          git add packaging/revue_core/pyproject.toml packaging/revue-ci/pyproject.toml packaging/revue/pyproject.toml packaging/revue/src/revue_skill/__init__.py
+          git commit -m "chore(release): v${NEXT_VERSION}"
+          git tag "v${NEXT_VERSION}"
+          git push origin "v${NEXT_VERSION}"
+          echo "Released v${NEXT_VERSION}"

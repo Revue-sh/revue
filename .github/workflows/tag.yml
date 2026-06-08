@@ -1,0 +1,292 @@
+name: Tag Release — Build & Publish
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Test gate — same as main branch; must pass before any wheel is built.
+  # -----------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache CI venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ci-venv-linux-${{ hashFiles('requirements-ci.txt', 'packaging/revue_core/pyproject.toml', 'packaging/revue-ci/pyproject.toml', 'packaging/revue/pyproject.toml') }}
+
+      - name: Run tests
+        run: |
+          apt-get update -qq && apt-get install -y --no-install-recommends git
+          test -x .venv/bin/python || python3 -m venv .venv
+          export PATH="$PWD/.venv/bin:$PATH"
+          python3 -c "import pytest, jsonschema, yaml" 2>/dev/null || pip install --quiet -r requirements-ci.txt
+          pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/ -e packaging/revue/
+          python3 -m pytest packaging/revue_core/tests/ -q --rootdir=packaging/revue_core
+          python3 -m pytest packaging/revue-ci/tests/ -q --rootdir=packaging/revue-ci
+          python3 -m pytest packaging/revue/tests/ --ignore=packaging/revue/tests/e2e -q --rootdir=packaging/revue
+          python3 -m pytest tests/ --ignore=tests/integration --ignore=tests/test_activation_rate_limit.py -q
+          python3 -m pytest scripts/tests/ -q
+          python3 -m pytest tests/integration/ -m slow -q
+
+  web-tests:
+    name: Web Tests
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache web venv
+        uses: actions/cache@v4
+        with:
+          path: .venv-web
+          key: web-venv-linux-${{ hashFiles('src/web/requirements.txt') }}
+
+      - name: Run web tests
+        run: |
+          test -x .venv-web/bin/python || python3 -m venv .venv-web
+          export PATH="$PWD/.venv-web/bin:$PATH"
+          python3 -c "import fastapi, uvicorn" 2>/dev/null || pip install --quiet -r src/web/requirements.txt
+          python3 -m pytest src/web/tests/ --ignore=src/web/tests/e2e -q
+          python3 -m pytest tests/test_activation_rate_limit.py -q
+
+  # -----------------------------------------------------------------------
+  # Nuitka builds — all 6 run in parallel once tests pass.
+  # macOS uses the self-hosted runner; Linux uses GitHub-hosted ubuntu-latest.
+  # Each job uploads its wheel(s) as an artifact for the publish jobs below.
+  # -----------------------------------------------------------------------
+  build-revue-core-linux:
+    name: Build Linux x86_64 — revue_core
+    needs: [unit-tests, web-tests]
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Nuitka wheel
+        run: |
+          apt-get update -qq && apt-get install -y --no-install-recommends gcc patchelf libc6-dev
+          pip install nuitka ordered-set zstandard
+          python -u packaging/revue_core/build/build_nuitka.py
+          python -u packaging/revue_core/build/build_wheel.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revue-core-linux
+          path: packaging/revue_core/dist/wheels/*.whl
+          if-no-files-found: error
+
+  build-revue-core-macos:
+    name: Build macOS ARM64 — revue_core
+    needs: [unit-tests, web-tests]
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Nuitka wheel
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          python3.12 -m venv .revue-core-build-venv
+          .revue-core-build-venv/bin/pip install nuitka ordered-set zstandard
+          .revue-core-build-venv/bin/python -u packaging/revue_core/build/build_nuitka.py
+          .revue-core-build-venv/bin/python -u packaging/revue_core/build/build_wheel.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revue-core-macos
+          path: packaging/revue_core/dist/wheels/*.whl
+          if-no-files-found: error
+
+      - name: Clean build venv
+        if: always()
+        run: rm -rf .revue-core-build-venv
+
+  build-revue-ci-linux:
+    name: Build Linux x86_64 — revue-ci
+    needs: [unit-tests, web-tests]
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Nuitka wheel
+        run: |
+          apt-get update -qq && apt-get install -y --no-install-recommends gcc patchelf libc6-dev
+          pip install nuitka ordered-set zstandard
+          pip install -e packaging/revue_core/
+          python -u packaging/revue-ci/build/build_nuitka.py
+          python -u packaging/revue-ci/build/build_wheel.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revue-ci-linux
+          path: packaging/revue-ci/dist/wheels/*.whl
+          if-no-files-found: error
+
+  build-revue-ci-macos:
+    name: Build macOS ARM64 — revue-ci
+    needs: [unit-tests, web-tests]
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Nuitka wheel
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          python3.12 -m venv .revue-ci-build-venv
+          .revue-ci-build-venv/bin/pip install nuitka ordered-set zstandard
+          .revue-ci-build-venv/bin/pip install -e packaging/revue_core/
+          .revue-ci-build-venv/bin/python -u packaging/revue-ci/build/build_nuitka.py
+          .revue-ci-build-venv/bin/python -u packaging/revue-ci/build/build_wheel.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revue-ci-macos
+          path: packaging/revue-ci/dist/wheels/*.whl
+          if-no-files-found: error
+
+      - name: Clean build venv
+        if: always()
+        run: rm -rf .revue-ci-build-venv
+
+  build-skill-linux:
+    name: Build Linux x86_64 — revue skill
+    needs: [unit-tests, web-tests]
+    runs-on: ubuntu-latest
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Nuitka wheel
+        run: |
+          apt-get update -qq && apt-get install -y --no-install-recommends gcc git patchelf libc6-dev
+          pip install nuitka ordered-set zstandard pyyaml jsonschema
+          python packaging/revue/tools/vendor_sources.py --clean
+          python -u packaging/revue/build/build_nuitka.py
+          python -u packaging/revue/build/build_wheel.py
+          python -u packaging/revue/tools/verify_wheel_licence_gate.py packaging/revue/dist/wheels/*.whl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skill-linux
+          path: packaging/revue/dist/wheels/*.whl
+          if-no-files-found: error
+
+  build-skill-macos:
+    name: Build macOS ARM64 — revue skill
+    needs: [unit-tests, web-tests]
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Nuitka wheel
+        run: |
+          export PATH="/opt/homebrew/bin:$PATH"
+          python3.12 -m venv .skill-build-venv
+          .skill-build-venv/bin/pip install nuitka ordered-set zstandard pyyaml jsonschema
+          python3.12 packaging/revue/tools/vendor_sources.py --clean
+          .skill-build-venv/bin/python -u packaging/revue/build/build_nuitka.py
+          .skill-build-venv/bin/python -u packaging/revue/build/build_wheel.py
+          .skill-build-venv/bin/python -u packaging/revue/tools/verify_wheel_licence_gate.py packaging/revue/dist/wheels/*.whl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skill-macos
+          path: packaging/revue/dist/wheels/*.whl
+          if-no-files-found: error
+
+      - name: Clean build venv
+        if: always()
+        run: rm -rf .skill-build-venv
+
+  # -----------------------------------------------------------------------
+  # Atomic publish chain — revue_core first, then revue-ci, then skill.
+  # If revue_core publish fails the downstream jobs never run, preventing
+  # a published revue-ci pinning a phantom revue_core version.
+  # -----------------------------------------------------------------------
+  publish-revue-core:
+    name: Publish revue_core → PyPI
+    needs: [build-revue-core-linux, build-revue-core-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: revue-core-linux
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: revue-core-macos
+          path: dist/
+
+      - name: Publish
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          pip install --quiet twine
+          if ls dist/*.whl 2>/dev/null; then
+            python -m twine upload --non-interactive --skip-existing dist/*.whl
+          else
+            echo "No revue_core wheels found — aborting" >&2; exit 1
+          fi
+
+  publish-revue-ci:
+    name: Publish revue-ci → PyPI
+    needs: [publish-revue-core, build-revue-ci-linux, build-revue-ci-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: revue-ci-linux
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: revue-ci-macos
+          path: dist/
+
+      - name: Publish
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          pip install --quiet twine
+          if ls dist/*.whl 2>/dev/null; then
+            python -m twine upload --non-interactive --skip-existing dist/*.whl
+          else
+            echo "No revue-ci wheels found — aborting" >&2; exit 1
+          fi
+
+  publish-skill:
+    name: Publish revue skill → PyPI
+    needs: [publish-revue-ci, build-skill-linux, build-skill-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: skill-linux
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: skill-macos
+          path: dist/
+
+      - name: Publish
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          pip install --quiet twine
+          if ls dist/*.whl 2>/dev/null; then
+            python -m twine upload --non-interactive --skip-existing dist/*.whl
+          else
+            echo "No skill wheels found — aborting" >&2; exit 1
+          fi
