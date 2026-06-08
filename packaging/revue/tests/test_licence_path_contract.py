@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 
@@ -30,26 +29,17 @@ def test_no_shipped_source_advertises_revue_licence_path():
     assert matches == []
 
 
-def _get_tracked_docs() -> list[str]:
-    return subprocess.run(
-        ["git", "ls-files", "docs/*.md", "docs/**/*.md"],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-
-
 def test_tracked_docs_do_not_advertise_revue_licence_path():
-    """Tracked documentation contains no REVUE_LICENCE_PATH override contract."""
-    # Arrange
-    tracked_docs = _get_tracked_docs()
+    """Documentation under docs/ contains no REVUE_LICENCE_PATH override contract."""
+    # Arrange — glob directly; avoids git subprocess which fails in container CI
+    # (bind-mount filesystem boundary prevents git ls-files from working)
+    doc_files = sorted((REPO_ROOT / "docs").rglob("*.md"))
 
     # Act
     matches = [
-        relative_path
-        for relative_path in tracked_docs
-        if "REVUE_LICENCE_PATH" in (REPO_ROOT / relative_path).read_text()
+        str(p.relative_to(REPO_ROOT))
+        for p in doc_files
+        if "REVUE_LICENCE_PATH" in p.read_text()
     ]
 
     # Assert
