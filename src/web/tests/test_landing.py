@@ -156,6 +156,13 @@ async def test_pricing_comparison_table_values_correct(client: AsyncClient):
     assert "Priority" in html           # Pro support
     assert "Email" in html              # Indie support
     assert "Docs" in html               # Free support
+    # Fix suggestions row: Free must show ✗, Indie/Pro must show ✓.
+    # Extract the Fix suggestions row and verify the ✗ entity appears before the ✓ entities.
+    fix_start = html.index("Fix suggestions")
+    fix_row = html[fix_start:fix_start + 600]
+    cross_pos = fix_row.index("&#10007;")   # ✗ — Free column
+    check_pos = fix_row.index("&#10003;")   # ✓ — Indie column (first ✓ after the ✗)
+    assert cross_pos < check_pos, "Free Fix suggestions must show ✗ before the ✓ for paid tiers"
 
 
 @pytest.mark.asyncio
@@ -178,3 +185,26 @@ async def test_pricing_tooltips_on_four_ambiguous_rows(client: AsyncClient):
     assert "copy-paste fix snippets alongside each finding" in html
     assert "Revue never marks up inference costs" in html
     assert "Define project-specific rules in .revue.yml" in html
+
+
+# ---------------------------------------------------------------------------
+# REVUE-366 — "Claude Code only at launch" disclaimer on hero
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_hero_claude_code_only_disclaimer_present(client: AsyncClient):
+    """REVUE-366 AC1/TC1: hero shows the Claude-Code-only sub-line.
+    Cursor and Windsurf are mentioned in the disclaimer (coming-soon context)
+    but must not be presented as selectable/interactive options."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    html = resp.content.decode()
+    assert "Claude Code" in html
+    assert "Cursor" in html          # present as "coming soon" mention
+    assert "Windsurf" in html        # present as "coming soon" mention
+    assert "coming soon" in html.lower()
+    # Guard: they must not become interactive options on the landing page.
+    assert 'href="#cursor"' not in html
+    assert 'href="#windsurf"' not in html
+    assert 'data-client="cursor"' not in html
+    assert 'data-client="windsurf"' not in html

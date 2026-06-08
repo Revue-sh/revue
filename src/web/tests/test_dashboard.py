@@ -95,6 +95,27 @@ async def test_onboarding_requires_auth(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_onboarding_claude_code_only_disclaimer_present(client: AsyncClient):
+    """REVUE-366 AC2/TC2: install page explicitly names Claude Code as the only
+    supported AI client; Cursor/Windsurf are not presented as selectable options."""
+    await _signup_and_get_cookies(client)
+    resp = await client.get("/onboarding")
+    assert resp.status_code == 200
+    html = resp.content.decode()
+    # Claude Code is named as the supported client.
+    assert "Claude Code" in html
+    # Cursor and Windsurf must not be presented as selectable/clickable options
+    # (they may appear in a "coming soon" disclaimer, but not in a button, link,
+    # or form element that would prompt a Cursor/Windsurf user to install).
+    assert 'href="#cursor"' not in html
+    assert 'href="#windsurf"' not in html
+    assert 'data-client="cursor"' not in html
+    assert 'data-client="windsurf"' not in html
+    # The disclaimer must clarify what IS supported.
+    assert "supported" in html.lower()
+
+
+@pytest.mark.asyncio
 async def test_usage_bar_partial(client: AsyncClient):
     await _signup_and_get_cookies(client)
     resp = await client.get("/partials/usage_bar")
