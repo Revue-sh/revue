@@ -624,7 +624,7 @@ main() {
   if [[ -n "$licence_key" ]]; then
     info "Activating licence..."
     if revue activate "$licence_key"; then
-      info "Licence activated — Revue is ready to use offline"
+      info "Licence activated"
     else
       # Activation failure is non-fatal: the package and skill are installed.
       # The user can run `revue activate <key>` manually at any time.
