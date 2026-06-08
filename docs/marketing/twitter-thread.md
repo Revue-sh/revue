@@ -95,7 +95,7 @@ At $9/month you're saving $600–$1,000/month if you're currently running Sonnet
 
 **Tweet 9 — CTA**
 
-Revue is live at [CONFIRM: revue.io].
+Revue is live at https://revue.sh.
 
 Install the Claude Code skill:
 `claude skill install revue`

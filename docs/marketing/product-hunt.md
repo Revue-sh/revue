@@ -56,7 +56,7 @@ The insight: most teams pay for the same code review twice. AI writes code and m
 
 I can walk through the multi-agent architecture, the DeepSeek choice, BYOK setup, or how the synthesis layer deduplicates findings. Questions?
 
-[CONFIRM: revue.io URL]
+https://revue.sh
 
 ## Launch Logistics
 
@@ -75,7 +75,7 @@ I can walk through the multi-agent architecture, the DeepSeek choice, BYOK setup
 - [ ] Maker profile completed
 - [ ] Hunter confirmed and briefed
 - [ ] Gallery assets designed and uploaded
-- [ ] revue.io live and load-tested before launch
+- [ ] revue.sh live and load-tested before launch
 - [ ] Pricing page matches launch post numbers
 - [ ] Free trial sign-up flow tested end-to-end
 - [ ] Support email / Discord ready to receive inbound

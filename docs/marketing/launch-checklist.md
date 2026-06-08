@@ -11,7 +11,7 @@ All gates must be GREEN before any channel goes live. A single RED gate blocks t
 
 | Gate | Owner | Status |
 |------|-------|--------|
-| revue.io is live and SSL-valid | Engineering | [ ] |
+| revue.sh is live and SSL-valid | Engineering | [ ] |
 | Free tier sign-up flow tested end-to-end (no CC required) | Engineering | [ ] |
 | `/revue` skill published to Claude Code registry | Engineering | [ ] |
 | Pricing page numbers match all channel drafts | Marketing | [ ] |
@@ -19,7 +19,7 @@ All gates must be GREEN before any channel goes live. A single RED gate blocks t
 | DeepSeek default model operational (OpenRouter key active) | Engineering | [ ] |
 | Support channel live (email / Discord / GitHub issues) | Operations | [ ] |
 | Legal: BYOK terms of service reviewed | Legal | [ ] |
-| Legal: data handling / diff privacy statement live on revue.io | Legal | [ ] |
+| Legal: data handling / diff privacy statement live on revue.sh | Legal | [ ] |
 | Product Hunt hunter confirmed and launch page approved | Marketing | [ ] |
 
 ---
@@ -42,7 +42,7 @@ All gates must be GREEN before any channel goes live. A single RED gate blocks t
 ## T-1 Day (Day Before Launch)
 
 - [ ] Go/No-Go gate review — all GREEN?
-- [ ] Run load test on revue.io sign-up and onboarding
+- [ ] Run load test on revue.sh sign-up and onboarding
 - [ ] Schedule tweets in tool (don't publish yet)
 - [ ] Confirm Product Hunt launch time: 00:01 PT
 - [ ] Confirm Show HN draft is saved (don't submit yet)
@@ -88,7 +88,7 @@ All times are UTC. Adjust for [CONFIRM: primary team timezone].
 
 | Scenario | Response |
 |----------|----------|
-| revue.io down at launch time | Roll back to previous deploy; delay channels by 2 hours; post status update |
+| revue.sh down at launch time | Roll back to previous deploy; delay channels by 2 hours; post status update |
 | OpenRouter / DeepSeek outage | Switch default model to Sonnet 4.5 temporarily; update pricing page note |
 | Claude Code registry publish failure | `/revue` install unavailable; update r/ClaudeAI post to remove install command; add waitlist CTA |
 | Product Hunt launch page rejected | Move to next available Tuesday; resubmit with amended gallery |

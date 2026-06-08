@@ -75,7 +75,7 @@ Revue is live. Free tier: 25 reviews/month, no credit card.
 claude skill install revue
 ```
 
-[CONFIRM: revue.io]
+https://revue.sh
 
 I've been the primary user since March. Happy to answer questions about the architecture, the false positive rate, or how the synthesis layer handles conflicting findings between agents.
 

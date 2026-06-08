@@ -48,7 +48,7 @@ GitHub, GitLab, Bitbucket. Free tier: 25 reviews/month, no credit card.
 claude skill install revue
 ```
 
-[CONFIRM: revue.io]
+https://revue.sh
 
 Happy to answer questions about the architecture or the DeepSeek model choice — I know that one comes up.
 
