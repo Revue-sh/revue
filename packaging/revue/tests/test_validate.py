@@ -548,7 +548,7 @@ def test_cache_written_by_validation_is_honoured_offline_with_same_jwt(
     )
 
 
-def test_refreshed_jwt_overwrites_licence_file(monkeypatch, tmp_path):
+def test_refreshed_jwt_still_writes_default_path(monkeypatch, tmp_path):
     """Decision #5: when server returns a properly signed refreshed_jwt,
     client overwrites ~/.config/revue/licence.jwt atomically. REVUE-371: must
     use a real signed JWT."""

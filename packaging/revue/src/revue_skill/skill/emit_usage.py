@@ -6,9 +6,6 @@ server) is logged but never blocks the review.
 """
 from __future__ import annotations
 
-import json
-import os
-import time
 from pathlib import Path
 
 try:
@@ -18,18 +15,12 @@ except ImportError:
 
 
 def _get_licence_path() -> Path:
-    """Return the path to the licence JWT file. Test-overridable via
-    REVUE_LICENCE_PATH env var; production uses ~/.config/revue/licence.jwt.
-
-    Mirrors the REVUE_LICENCE_CACHE_PATH override in validate.py."""
-    env_override = os.environ.get("REVUE_LICENCE_PATH")
-    if env_override:
-        return Path(env_override)
+    """Return the fixed path to the licence JWT file."""
     return Path.home() / ".config" / "revue" / "licence.jwt"
 
 
 def _get_licence_jwt() -> str | None:
-    """Read the licence JWT from the configured licence path.
+    """Read the licence JWT from the fixed licence path.
 
     Returns None if the file doesn't exist, can't be read, or contains
     non-UTF-8 bytes (UnicodeDecodeError is not an OSError subclass so it

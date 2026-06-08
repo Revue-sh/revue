@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import stat
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -170,14 +171,14 @@ def test_activate_prints_tier_on_success(
 
 
 # ---------------------------------------------------------------------------
-# AC2 / TC5 — JWT file permissions are 0600, parent dir 0700
+# AC6 — Activation uses fixed path with file mode 0600, dir mode 0700
 # ---------------------------------------------------------------------------
 
 
-def test_activate_writes_jwt_with_owner_only_perms(
+def test_activate_writes_default_path_with_secure_permissions(
     _patched_public_key, _licence_dir, _test_rsa_keypair
 ):
-    """AC2 / TC5: licence.jwt is mode 0600, parent dir is 0700."""
+    """The fixed licence path uses file mode 0600 and directory mode 0700."""
     from revue_skill import activate as activate_module
     priv_pem, _ = _test_rsa_keypair
     token = _sign_test_jwt(priv_pem)
@@ -193,6 +194,94 @@ def test_activate_writes_jwt_with_owner_only_perms(
     dir_mode = stat.S_IMODE(_licence_dir.stat().st_mode)
     assert file_mode == 0o600, f"licence.jwt mode is {oct(file_mode)}, expected 0o600"
     assert dir_mode == 0o700, f"~/.config/revue mode is {oct(dir_mode)}, expected 0o700"
+
+
+def test_activate_ignores_revue_licence_path(
+    _patched_public_key,
+    _licence_dir,
+    _test_rsa_keypair,
+    monkeypatch,
+    tmp_path,
+):
+    """Setting the unsupported override does not change activation output."""
+    # Arrange
+    from revue_skill import activate as activate_module
+
+    priv_pem, _ = _test_rsa_keypair
+    token = _sign_test_jwt(priv_pem)
+    unsupported_path = tmp_path / "unsupported" / "custom.jwt"
+    monkeypatch.setenv("REVUE_LICENCE_PATH", str(unsupported_path))
+
+    # Act
+    with patch.object(
+        activate_module,
+        "_build_http_client",
+        return_value=httpx.Client(
+            transport=_mock_transport(_success_handler(token))
+        ),
+    ):
+        rc = activate_module.activate("lic_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+
+    # Assert
+    default_path = _licence_dir / "licence.jwt"
+    assert rc == 0
+    assert default_path.read_text() == token
+    assert not unsupported_path.exists()
+
+
+def test_activation_and_runtime_gate_use_same_default_path(
+    _patched_public_key,
+    _licence_dir,
+    _test_rsa_keypair,
+    monkeypatch,
+):
+    """A token written by activation is read by the runtime licence gate."""
+    # Arrange
+    from revue_skill import activate as activate_module
+    from revue_skill import skill as skill_package
+
+    module_key = "revue_skill.skill.local_run"
+    missing = object()
+    previous_module = sys.modules.get(module_key, missing)
+    previous_attribute = getattr(skill_package, "local_run", missing)
+    from revue_skill.skill import local_run as local_run_module
+
+    priv_pem, _ = _test_rsa_keypair
+    token = _sign_test_jwt(priv_pem)
+    validated_tokens: list[str] = []
+    monkeypatch.setattr(
+        "revue_skill.validate.validate_licence",
+        lambda jwt_token: validated_tokens.append(jwt_token) or 0,
+    )
+
+    try:
+        # Act
+        with patch.object(
+            activate_module,
+            "_build_http_client",
+            return_value=httpx.Client(
+                transport=_mock_transport(_success_handler(token))
+            ),
+        ):
+            activation_rc = activate_module.activate(
+                "lic_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            )
+        gate_rc = local_run_module._gate_licence_validation("prepare")
+
+        # Assert
+        assert activation_rc == 0
+        assert gate_rc == 0
+        assert validated_tokens == [token]
+    finally:
+        if previous_module is missing:
+            sys.modules.pop(module_key, None)
+        else:
+            sys.modules[module_key] = previous_module
+        if previous_attribute is missing:
+            if getattr(skill_package, "local_run", None) is local_run_module:
+                delattr(skill_package, "local_run")
+        else:
+            setattr(skill_package, "local_run", previous_attribute)
 
 
 # ---------------------------------------------------------------------------

@@ -165,16 +165,8 @@ def _write_licence_file(token: str) -> Path:
 
     Returns the path of the written file.
     """
-    # Honour REVUE_LICENCE_PATH override (mirrors emit_usage.py and the
-    # REVUE_LICENCE_CACHE_PATH pattern in validate.py). Production paths
-    # are unchanged when the env var is unset.
-    env_override = os.environ.get("REVUE_LICENCE_PATH")
-    if env_override:
-        licence_file = Path(env_override)
-        licence_dir = licence_file.parent
-    else:
-        licence_dir = Path.home() / ".config" / "revue"
-        licence_file = licence_dir / _LICENCE_FILENAME
+    licence_dir = Path.home() / ".config" / "revue"
+    licence_file = licence_dir / _LICENCE_FILENAME
     licence_dir.mkdir(parents=True, exist_ok=True)
     # ``mkdir(mode=...)`` honours umask, so explicitly chmod the
     # directory after creation to guarantee 0700 regardless of umask.

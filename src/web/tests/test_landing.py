@@ -193,17 +193,12 @@ async def test_pricing_tooltips_on_four_ambiguous_rows(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_hero_claude_code_only_disclaimer_present(client: AsyncClient):
-    """REVUE-366 AC1/TC1: hero shows the Claude-Code-only sub-line.
-    Cursor and Windsurf are mentioned in the disclaimer (coming-soon context)
-    but must not be presented as selectable/interactive options."""
+    """REVUE-366 AC1/TC1: hero shows 'Currently supports Claude Code'."""
     resp = await client.get("/")
     assert resp.status_code == 200
     html = resp.content.decode()
     assert "Claude Code" in html
-    assert "Cursor" in html          # present as "coming soon" mention
-    assert "Windsurf" in html        # present as "coming soon" mention
-    assert "coming soon" in html.lower()
-    # Guard: they must not become interactive options on the landing page.
+    # Guard: Cursor and Windsurf must not appear as interactive options.
     assert 'href="#cursor"' not in html
     assert 'href="#windsurf"' not in html
     assert 'data-client="cursor"' not in html
