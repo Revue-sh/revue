@@ -736,3 +736,183 @@ def test_config_loader_primary_language_defaults_to_empty_when_unset(
     path = _write_yml(tmp_path, yml)
     config = load_config(config_path=path)
     assert config.primary_language == ""
+
+
+# ---------------------------------------------------------------------------
+# REVUE-341: Per-surface agent_timeout_seconds defaults
+# ---------------------------------------------------------------------------
+
+
+def test_no_yml_staging_env_ignored_applies_cli_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC1 (revised): APP_ENV=staging is ignored by surface detection — cli default (600s) applies.
+    APP_ENV is an internal licence-tier-override gate shared with the CI templates;
+    it cannot uniquely identify /revue-local and is intentionally excluded."""
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.delenv("BITBUCKET_BUILD_NUMBER", raising=False)
+    config = load_config(config_path=str(tmp_path / "no_such.yml"))
+    assert config.agent_timeout_seconds == 600
+
+
+def test_no_yml_ci_env_applies_ci_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC2: no .revue.yml + BITBUCKET_BUILD_NUMBER set → 600."""
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("BITBUCKET_BUILD_NUMBER", "99")
+    config = load_config(config_path=str(tmp_path / "no_such.yml"))
+    assert config.agent_timeout_seconds == 600
+
+
+def test_no_yml_no_env_applies_cli_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC3: no .revue.yml + no surface env vars → 600 (cli default)."""
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("BITBUCKET_BUILD_NUMBER", raising=False)
+    config = load_config(config_path=str(tmp_path / "no_such.yml"))
+    assert config.agent_timeout_seconds == 600
+
+
+def test_yml_explicit_timeout_overrides_surface_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC4: explicit review.agent_timeout_seconds beats surface default."""
+    monkeypatch.setenv("BITBUCKET_BUILD_NUMBER", "5")
+    monkeypatch.delenv("APP_ENV", raising=False)
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: openrouter\n"
+        "  model: deepseek/deepseek-v4-pro\n"
+        "review:\n"
+        "  agent_timeout_seconds: 300\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert config.agent_timeout_seconds == 300
+
+
+def test_overrides_dict_beats_surface_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC5: overrides dict passed to load_config() beats surface default (no-yml path)."""
+    monkeypatch.setenv("BITBUCKET_BUILD_NUMBER", "3")
+    monkeypatch.delenv("APP_ENV", raising=False)
+    config = load_config(
+        config_path=str(tmp_path / "no_such.yml"),
+        overrides={"agent_timeout_seconds": 120},
+    )
+    assert config.agent_timeout_seconds == 120
+
+
+def test_overrides_dict_beats_surface_default_with_yml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC5: overrides dict beats surface default when a .revue.yml file is present."""
+    monkeypatch.setenv("BITBUCKET_BUILD_NUMBER", "3")
+    monkeypatch.delenv("APP_ENV", raising=False)
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: openrouter\n"
+        "  model: deepseek/deepseek-v4-pro\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path, overrides={"agent_timeout_seconds": 120})
+    assert config.agent_timeout_seconds == 120
+
+
+def test_yml_surface_defaults_overrides_built_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC8: review.surface_defaults in .revue.yml overrides built-in per-surface defaults.
+    Uses BITBUCKET_BUILD_NUMBER to trigger the ci surface (300s override)."""
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.setenv("BITBUCKET_BUILD_NUMBER", "7")
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: openrouter\n"
+        "  model: deepseek/deepseek-v4-pro\n"
+        "review:\n"
+        "  surface_defaults:\n"
+        "    /revue-local: 900\n"
+        "    ci: 300\n"
+        "    cli: 180\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    assert config.agent_timeout_seconds == 300
+    assert config.surface_defaults == {"/revue-local": 900, "ci": 300, "cli": 180}
+
+
+def test_validate_config_rejects_surface_default_below_1(
+    tmp_path: Path,
+) -> None:
+    """AC7: surface_defaults value of 0 is rejected by validate_config()."""
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: openrouter\n"
+        "  model: deepseek/deepseek-v4-pro\n"
+        "review:\n"
+        "  surface_defaults:\n"
+        "    cli: 0\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    errors = validate_config(config)
+    assert any("surface_defaults.cli" in e for e in errors)
+
+
+def test_validate_config_rejects_surface_default_above_1800(
+    tmp_path: Path,
+) -> None:
+    """AC7: surface_defaults value of 1801 is rejected by validate_config()."""
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: openrouter\n"
+        "  model: deepseek/deepseek-v4-pro\n"
+        "review:\n"
+        "  surface_defaults:\n"
+        "    ci: 1801\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    errors = validate_config(config)
+    assert any("surface_defaults.ci" in e for e in errors)
+
+
+def test_validate_config_accepts_valid_surface_defaults(
+    tmp_path: Path,
+) -> None:
+    """AC7: surface_defaults within [1, 1800] produce no errors."""
+    yml = (
+        'version: "1"\n'
+        "ai:\n"
+        "  provider: openrouter\n"
+        "  model: deepseek/deepseek-v4-pro\n"
+        "review:\n"
+        "  surface_defaults:\n"
+        "    cli: 300\n"
+        "    ci: 600\n"
+        "    /revue-local: 1800\n"
+    )
+    path = _write_yml(tmp_path, yml)
+    config = load_config(config_path=path)
+    errors = validate_config(config)
+    surface_errors = [e for e in errors if "surface_defaults" in e]
+    assert surface_errors == []
+
+
+def test_default_revue_yml_contains_surface_defaults_schema() -> None:
+    """AC6: DEFAULT_REVUE_YML schema block documents review.surface_defaults with all
+    three canonical surface keys as commented examples."""
+    from revue_core.core.config_loader import DEFAULT_REVUE_YML
+    assert "surface_defaults" in DEFAULT_REVUE_YML
+    assert "/revue-local" in DEFAULT_REVUE_YML
+    assert "ci:" in DEFAULT_REVUE_YML
+    assert "cli:" in DEFAULT_REVUE_YML

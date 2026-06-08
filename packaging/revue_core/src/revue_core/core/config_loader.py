@@ -45,6 +45,7 @@ from pathlib import Path
 import yaml
 
 from .ai_config import AIConfig, FileTypeRule
+from .surface_defaults import detect_surface, resolve_surface_timeout
 from .models_registry import (
     load_builtin_registry,
     merge_user_overrides,
@@ -77,13 +78,20 @@ ai:
 review:
   max_diff_lines: 2000
   min_confidence: 70
-  agent_timeout_seconds: 90  # raise to 120 for slow VPN/corporate networks
+  # agent_timeout_seconds: 90  # explicit value overrides surface defaults below
   max_parallel_agents: 1     # 1 = sequential (safe default). Raise only if your API tier has high TPM limits.
   ignore_patterns:
     - "*.md"
     - "*.lock"
     - "package-lock.json"
     - "*.min.js"
+  # Per-surface timeout overrides (REVUE-341).
+  # Built-in defaults: /revue-local=1200s, ci=600s, cli=600s.
+  # Uncomment and adjust to tune per-surface behaviour without touching agent_timeout_seconds globally.
+  # surface_defaults:
+  #   /revue-local: 1200
+  #   ci: 600
+  #   cli: 600
 
 features:
   preserve_comment_threads: false  # Preserve conversation threads across commits (experimental)
@@ -134,6 +142,10 @@ def load_config(
         config = AIConfig.from_env()
         if overrides:
             _apply_overrides(config, overrides)
+        # Apply surface default when timeout was not set via overrides
+        if "agent_timeout_seconds" not in (overrides or {}):
+            surface = detect_surface()
+            config.agent_timeout_seconds = resolve_surface_timeout(config.surface_defaults, surface)
         return config
 
     with open(path) as f:
@@ -183,7 +195,8 @@ def load_config(
     if "min_confidence" in review:
         config.min_confidence = int(review["min_confidence"])  # type: ignore[arg-type]
         config.ai_confidence = config.min_confidence
-    if "agent_timeout_seconds" in review:
+    _explicit_yaml_timeout = "agent_timeout_seconds" in review
+    if _explicit_yaml_timeout:
         config.agent_timeout_seconds = int(review["agent_timeout_seconds"])  # type: ignore[arg-type]
     if "max_parallel_agents" in review:
         config.max_parallel_agents = int(review["max_parallel_agents"])  # type: ignore[arg-type]
@@ -192,6 +205,10 @@ def load_config(
     if "ignore_patterns" in review:
         patterns = review["ignore_patterns"]
         config.ignore_patterns = list(patterns) if patterns else []  # type: ignore[arg-type]
+    if "surface_defaults" in review:
+        sd = review["surface_defaults"]
+        if isinstance(sd, dict):
+            config.surface_defaults = {str(k): int(v) for k, v in sd.items()}  # type: ignore[union-attr]
 
     # --- noise_filters section ---
     nf: dict[str, object] = raw.get("noise_filters", {}) or {}  # type: ignore[assignment]
@@ -284,6 +301,11 @@ def load_config(
         config.comment_style = raw_style
     _set_if(config, "output_file", output, "file")
 
+    # --- surface default (applied when timeout was not set explicitly in YAML or overrides) ---
+    if not _explicit_yaml_timeout and "agent_timeout_seconds" not in (overrides or {}):
+        surface = detect_surface()
+        config.agent_timeout_seconds = resolve_surface_timeout(config.surface_defaults, surface)
+
     # --- overrides dict (CLI flags, etc.) ---
     if overrides:
         _apply_overrides(config, overrides)
@@ -371,6 +393,12 @@ def validate_config(config: AIConfig) -> list[str]:
         errors.append(
             f"agent_timeout_seconds must be between 1 and 1800, got {config.agent_timeout_seconds}."
         )
+
+    for surface, timeout in config.surface_defaults.items():
+        if timeout < 1 or timeout > 1800:
+            errors.append(
+                f"surface_defaults.{surface} must be between 1 and 1800, got {timeout}."
+            )
 
     if config.max_parallel_agents < 1 or config.max_parallel_agents > 10:
         errors.append(

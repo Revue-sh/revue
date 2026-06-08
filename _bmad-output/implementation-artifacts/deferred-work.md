@@ -4,6 +4,14 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 ---
 
+## Deferred from: code review of REVUE-341 (2026-06-08)
+
+- **DF1 — Only Bitbucket CI env var checked for surface detection** `surface_defaults.py:27` — `BITBUCKET_BUILD_NUMBER` is the only CI indicator; GitHub Actions (`GITHUB_ACTIONS`) and GitLab CI (`GITLAB_CI`) fall through to the `cli` surface. Current numerical value is the same (600s) but if CI and CLI defaults diverge in future, misclassification will be silent.
+- **DF2 — Unknown surface key names in `review.surface_defaults` not warned** `config_loader.py:208` — A user who writes `surface_defaults: { production: 300 }` will pass validation with no warning; the key is stored but never matched by `resolve_surface_timeout`. A validation pass over recognised surface names would improve UX.
+- **DF3 — `surface_defaults` YAML values parsed without TypeError guard** `config_loader.py:211` — `{str(k): int(v) for k, v in sd.items()}` raises an unhandled `TypeError` if a value is YAML `null`. Consistent with the project's existing `int(review["field"])` pattern but slightly worse in a dict comprehension context.
+
+---
+
 ## Deferred from: code review of revue-374-version-manifest-endpoint (2026-06-02)
 
 - **Multi-platform wheel selection** — `manifest_builder._map_pypi_to_manifest` picks an arbitrary first `.whl`; revue publishes one wheel per platform (macOS arm64 + Linux x86_64). The schema exposes a single `wheel` slot and "multi-platform artefact representation" is explicitly out of scope for REVUE-374; the MVP `install-skill` client does version-equality only and never downloads from the manifest URL, so installs are not broken today. Revisit when the client consumes the artefact URL. **Now owned by REVUE-378** (Option A — per-platform manifest is the hard prerequisite for sha256 verification). [src/web/services/manifest_builder.py:114]
