@@ -6,19 +6,19 @@ Show HN: Revue – AI code review skill for Claude Code that cuts your AI bill b
 
 ## Body
 
-I've been building Revue, an AI code reviewer that runs as a `/revue` skill inside Claude Code. It catches issues before you commit — using six specialised agents running in parallel — and by default it routes to DeepSeek-V4-Pro via OpenRouter, which is ~87% cheaper per token than Anthropic Sonnet 4.5.
+I've been building Revue, an AI code reviewer that runs as a `/revue` skill inside Claude Code. It catches issues before you commit using six specialised agents running in parallel, and by default routes to DeepSeek-V4-Pro via OpenRouter at 87% lower per-token cost than Anthropic Sonnet 4.5.
 
-The positioning is cost-first because that's the real unlock. A team of five engineers doing daily code reviews with Sonnet 4.5 typically spends $850–$1,200/month in raw API costs. With Revue's DeepSeek default, that drops to $100–$250. You can BYOK (OpenAI, Anthropic, Azure, or any OpenRouter model) if you'd rather use what you're already paying for.
+The real win is cost. A team of five engineers reviewing code daily with Sonnet 4.5 typically spends $850–$1,200/month in raw API costs. With Revue defaulting to DeepSeek, that drops to $100–$250. You can bring your own API key (OpenAI, Anthropic, Azure, or any OpenRouter model) if you prefer what you're already paying for.
 
-The architecture is six agents in parallel: Security (injection vectors, auth bypasses, supply-chain), Performance (O(n²) loops, memory, query plans), Architecture (coupling, error handling, design patterns), Code Quality (style, duplication, testability), Licensing (GPL/AGPL tree checks), and a Synthesis agent that deduplicates and formats findings into actionable review comments posted directly to your PR.
+The six agents are: Security (injection vectors, auth bypasses, supply-chain), Performance (O(n²) loops, memory, query plans), Architecture (coupling, error handling, design patterns), Code Quality (style, duplication, testability), Licensing (GPL/AGPL checks), and a Synthesis agent that merges findings and formats them as PR comments.
 
-The `/revue` skill runs inside your existing Claude Code session — no Docker, no CI change required to start. It reads your staged diff, runs the agent panel, and returns findings in your terminal. You can also configure it in CI (GitHub Actions, GitLab CI, Bitbucket Pipelines) as a sidecar for automated PR comments.
+The `/revue` skill runs inside Claude Code without Docker or CI changes. It reads your staged diff, runs the agents, and posts findings to your terminal or directly to your PR. You can also deploy it in CI (GitHub Actions, GitLab CI, Bitbucket Pipelines) as a sidecar for automated reviews.
 
 Supported platforms: GitHub, GitLab, Bitbucket.
 
 Pricing: Free (25 reviews/month, no credit card), Indie $9/month (100 reviews), Pro $29/month (unlimited).
 
-Happy to discuss the multi-agent architecture, the cost methodology, or why I picked DeepSeek as the default. I'll be around to answer questions.
+I'm available to answer questions about the multi-agent architecture, cost methodology, or the DeepSeek choice.
 
 [CONFIRM: launch date to include in submission]
 [CONFIRM: revue.io URL live and pointing to app]

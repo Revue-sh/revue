@@ -14,7 +14,7 @@ Revue is a multi-agent AI code reviewer that runs inside Claude Code before ever
 
 ## Gallery Captions
 
-1. **The /revue skill** — Run `revue` inside Claude Code on any staged diff. Six agents spin up in parallel; findings appear in your terminal before you push.
+1. **The /revue skill** — Run `revue` inside Claude Code on any staged diff. Six agents run in parallel; findings appear in your terminal before you push.
 2. **Six-agent architecture** — Security, Performance, Architecture, Code Quality, Licensing, and Synthesis agents run simultaneously. No single-model bottleneck.
 3. **Cost comparison** — DeepSeek-V4-Pro vs Anthropic Sonnet 4.5: ~87% per-token savings with equivalent code-review quality.
 4. **Platform integrations** — GitHub, GitLab, and Bitbucket. CI sidecar mode for automated PR comments in any pipeline.
@@ -22,19 +22,19 @@ Revue is a multi-agent AI code reviewer that runs inside Claude Code before ever
 
 ## Longer Description
 
-Revue is an AI-powered code reviewer built for teams that are already paying for AI development tools and don't want to pay again just to review their code.
+Revue is an AI code reviewer for teams already paying for AI development tools who don't want a separate bill just to review their code.
 
 **How it works**
 
-Install the `/revue` Claude Code skill. Before every commit, run it against your staged diff. Revue dispatches six specialised agents in parallel — Security, Performance, Architecture, Code Quality, Licensing, and Synthesis — and returns deduplicated, actionable findings directly in your editor session.
+Install the `/revue` Claude Code skill. Before every commit, run it against your staged diff. Revue dispatches six agents in parallel — Security, Performance, Architecture, Code Quality, Licensing, and Synthesis — and returns findings directly in your editor session, with duplicates merged.
 
-No Docker. No CI change required to get started. Just a skill install.
+No Docker. No CI setup required to get started. Just a skill install.
 
 **The cost story**
 
-By default, Revue routes to DeepSeek-V4-Pro via OpenRouter — approximately 87% cheaper per token than Anthropic Sonnet 4.5 with equivalent code-review performance.
+Revue routes to DeepSeek-V4-Pro via OpenRouter by default — 87% cheaper per token than Anthropic Sonnet 4.5 with equivalent code-review performance.
 
-A five-engineer team running daily reviews on Sonnet 4.5 typically spends $850–$1,200/month. With Revue's default configuration, that drops to $100–$250/month.
+A five-engineer team running daily reviews on Sonnet 4.5 spends roughly $850–$1,200/month. With Revue, that drops to $100–$250/month.
 
 You can bring your own key (OpenAI, Anthropic, Azure, any OpenRouter model). Your code stays on your machine; only the diff is sent to the API you configure.
 
@@ -52,9 +52,9 @@ GitHub, GitLab, and Bitbucket. Runs as a local Claude Code skill or as a CI side
 
 Hi PH 👋 — I'm [CONFIRM: maker name], and I built Revue after watching our AI API costs compound every sprint.
 
-The insight that drove the design: most teams pay for the same code review 2–3 times. AI writes code, misses something, human catches it, AI re-synthesises context to fix it. The loop is expensive. Running a specialist review *before* the commit breaks the loop.
+The insight: most teams pay for the same code review twice. AI writes code and misses something. A human catches it. Then AI reruns on the full context to fix it. That loop is expensive. Running specialist review before the commit stops it from happening.
 
-Happy to answer questions about the multi-agent architecture, the DeepSeek model choice, BYOK configuration, or how the synthesis layer deduplicates conflicting findings. AMA.
+I can walk through the multi-agent architecture, the DeepSeek choice, BYOK setup, or how the synthesis layer deduplicates findings. Questions?
 
 [CONFIRM: revue.io URL]
 
