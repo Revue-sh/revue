@@ -1,6 +1,6 @@
 # MVP Compass — /revue-local public launch
 
-**Last updated:** 2026-06-07 (REVUE-389 **DONE** — Stripe go-live: live keys, Indie + Pro prices created in live mode, Enterprise hidden. **0 hard launch blockers.**) Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
+**Last updated:** 2026-06-08 (REVUE-419 **Done** — API-triggered prod deploy validated. **0 hard launch blockers.**) Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
 **Source of truth for "next pick."** Jira's priority field ≠ launch-path order; *this doc* is the launch-path order.
 
 ---
@@ -13,15 +13,15 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**~63 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
+**~64 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
 The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The full activation-UX cluster Lane 1 (361 + 413 + 382) and Lane 2 (408 + 409) are done. REVUE-409 (staging E2E gate) is **Done** — validated on a green main run (#1122) with the full state matrix (active/lapsed/free/not-activated) converged and the suite green against staging; the gate now blocks prod promotion at runtime. Launch is gated only on the pre-launch polish items below.
 
 **Recently shipped (last 5):**
+- **REVUE-419** — API-triggerable deploy-production pipeline validated; prod deploy triggered via API *(Done)*
 - **REVUE-389** — Stripe go-live: live keys, Indie + Pro prices in live mode, Enterprise hidden *(Done)*
 - **REVUE-423** — fix test-order contamination in test_local_run_dispatcher; full suite green *(Done)*
 - **REVUE-409** — post-merge staging E2E gate via signed synthetic-webhook provisioning *(Done — live + validated on green main #1122; TC-7 reproduced)*
 - **REVUE-418** — systemic CSRF protection on all session-cookie form POSTs
-- **REVUE-408** — site-wide two-mode (CLI/CI) messaging + new review-quality landing hero
 
 ---
 
@@ -54,7 +54,6 @@ The narrative critical path (REVUE-275 → 280 → 281) and the launch spine —
 - **REVUE-398** — run install suite on macOS Bitbucket runner for dscl/AC2 CI coverage (relates 395)
 - **REVUE-399** — consolidate install-wizard stub fixtures into a shared factory (INFO; relates 395)
 - **REVUE-373** — `install.sh` calls non-existent `revue --version` (Low; in-flight fix)
-- **REVUE-419** — API-triggerable `custom: deploy-production` pipeline **merged** to main; stays in Code Review (label `do-not-run-automation-after-merge`) until the first real API-triggered prod deploy validates it. CI-token split **done + verified** (new no-`pipeline:write` CI token confirmed to post review comments via throwaway PR #236). **Remaining before Done:** the first real API-triggered prod deploy.
 
 ---
 
