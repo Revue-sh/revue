@@ -13,15 +13,15 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**~68 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
+**~69 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
 The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The full activation-UX cluster Lane 1 (361 + 413 + 382) and Lane 2 (408 + 409) are done. REVUE-409 (staging E2E gate) is **Done** — validated on a green main run (#1122) with the full state matrix (active/lapsed/free/not-activated) converged and the suite green against staging; the gate now blocks prod promotion at runtime. Launch is gated only on the pre-launch polish items below.
 
 **Recently shipped (last 5):**
+- **REVUE-426** — replace git ls-files with pathlib.rglob in licence_path_contract *(Done)*
 - **REVUE-425** — migrate CI to GitHub Actions (self-hosted macOS + GitHub-hosted Linux) *(Done)*
 - **REVUE-365** — clarify Pro tier features on /pricing; sets Free-vs-Pro expectations *(Done)*
 - **REVUE-419** — API-triggerable deploy-production pipeline validated; prod deploy triggered via API *(Done)*
 - **REVUE-389** — Stripe go-live: live keys, Indie + Pro prices in live mode, Enterprise hidden *(Done)*
-- **REVUE-423** — fix test-order contamination in test_local_run_dispatcher; full suite green *(Done)*
 
 ---
 
