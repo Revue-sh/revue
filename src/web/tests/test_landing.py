@@ -125,3 +125,56 @@ async def test_landing_cta_and_free_offer_intact(client: AsyncClient):
     assert "Get started free" in html
     assert "25 free reviews" in html
     assert "No credit card required" in html
+
+
+# ---------------------------------------------------------------------------
+# REVUE-365 — pricing feature comparison table
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pricing_comparison_table_all_rows_present(client: AsyncClient):
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    html = resp.content.decode()
+    # All 6 rows must appear (AC1: exactly these rows, in order)
+    assert "Reviews / month" in html
+    assert "Specialist agents" in html
+    assert "Fix suggestions" in html
+    assert "BYOK" in html
+    assert "Custom rules (YAML)" in html
+    assert "Support" in html
+
+
+@pytest.mark.asyncio
+async def test_pricing_comparison_table_values_correct(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # Spot-check key values to confirm the spec was followed
+    assert "1 (code quality)" in html   # Free specialist agents
+    assert "All 6" in html              # Indie/Pro specialist agents
+    assert "Unlimited" in html          # Pro reviews/month
+    assert "Priority" in html           # Pro support
+    assert "Email" in html              # Indie support
+    assert "Docs" in html               # Free support
+
+
+@pytest.mark.asyncio
+async def test_pricing_no_roadmap_hints(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # AC2: no roadmap, coming-soon, or future-feature hints
+    assert "Coming to Pro" not in html
+    assert "Coming soon" not in html
+    assert "Roadmap" not in html
+    assert "Future" not in html
+
+
+@pytest.mark.asyncio
+async def test_pricing_tooltips_on_four_ambiguous_rows(client: AsyncClient):
+    resp = await client.get("/")
+    html = resp.content.decode()
+    # AC3: each ambiguous row has a tooltip (title attribute with spec copy)
+    assert "Each specialist reviews your code from a different angle" in html
+    assert "copy-paste fix snippets alongside each finding" in html
+    assert "Revue never marks up inference costs" in html
+    assert "Define project-specific rules in .revue.yml" in html
