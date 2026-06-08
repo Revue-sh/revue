@@ -1,8 +1,13 @@
 """Dashboard and onboarding routes."""
 from __future__ import annotations
 
+import logging
+import re
 from datetime import datetime, timezone
 from typing import Literal, Optional
+
+_KEY_RE = re.compile(r"^lic_[0-9a-f]{32}$")
+_log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -194,6 +199,13 @@ async def onboarding(request: Request) -> HTMLResponse:
     user_id = session["user_id"]
     with get_db() as conn:
         license_key = get_license_for_user(conn, user_id)
+
+    # Guard: only embed the key in the shell command when it matches the known
+    # safe format (lic_ + 32 hex chars). A malformed key could contain shell
+    # metacharacters; fall back to the keyless branch rather than risk injection.
+    if license_key is not None and not _KEY_RE.match(license_key.key):
+        _log.warning("onboarding: licence key for user %s has unexpected format — suppressing from template", user_id)
+        license_key = None
 
     return templates.TemplateResponse(request, "onboarding.html", {
         "session": session,

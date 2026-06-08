@@ -23,7 +23,7 @@ from dataclasses import dataclass
 #: The install page. Pre-MVP this resolves to the GitHub copy of the guide;
 #: post-MVP it will redirect from ``https://revue.sh/install``. Kept here so
 #: the installer and docs reference one URL, never a hand-copied literal.
-INSTALL_PAGE_URL = "https://github.com/cbscd/revue/blob/main/docs/guides/install.md"
+INSTALL_PAGE_URL = "https://github.com/Revue-sh/revue/blob/main/docs/guides/install.md"
 
 #: The fallback offered to users on unsupported platforms: run Revue in CI.
 CI_WORKAROUND = (

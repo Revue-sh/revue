@@ -3,8 +3,8 @@
 # One-command installer for /revue Claude Code skill.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/cbscd/revue/main/scripts/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/cbscd/revue/main/scripts/install.sh | bash -s -- --yes
+#   curl -fsSL https://raw.githubusercontent.com/Revue-sh/revue/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Revue-sh/revue/main/scripts/install.sh | bash -s -- --yes
 #
 # Post-MVP distributes via https://revue.sh/install.sh with signed releases.
 #
@@ -59,7 +59,7 @@ readonly SUPPORTED_PLATFORMS=(
   "linux x86_64"   # Linux x86_64
 )
 # Mirrors revue_core.platform_support.INSTALL_PAGE_URL.
-readonly INSTALL_PAGE_URL="https://github.com/cbscd/revue/blob/main/docs/guides/install.md"
+readonly INSTALL_PAGE_URL="https://github.com/Revue-sh/revue/blob/main/docs/guides/install.md"
 
 # ANSI colour codes for output
 RED='\033[0;31m'
@@ -506,13 +506,30 @@ resolve_project_dir() {
 # Main flow
 main() {
   # Parse flags: --yes / -y forces global, skips prompts.
+  #              --key <licence-key> activates the licence after install.
   local yes_flag="0"
+  local licence_key=""
   local arg
-  for arg in "$@"; do
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
     case "$arg" in
       --yes|-y) yes_flag="1" ;;
+      --key)
+        shift
+        if [[ $# -eq 0 || -z "$1" || "$1" == --* ]]; then
+          error "--key requires a non-empty licence key value."
+        fi
+        licence_key="$1"
+        ;;
+      --key=*)
+        licence_key="${arg#--key=}"
+        if [[ -z "$licence_key" ]]; then
+          error "--key= requires a non-empty licence key value."
+        fi
+        ;;
       *) warn "Ignoring unrecognised argument: ${arg}" ;;
     esac
+    shift
   done
 
   # Step 0 (REVUE-360): supported-platform guard BEFORE anything else. We publish
@@ -599,7 +616,19 @@ main() {
   # Close the interactive tty fd (if it was opened).
   close_tty
 
-  # Step 8: Verify installation.
+  # Step 8: Activate licence if --key was supplied.
+  if [[ -n "$licence_key" ]]; then
+    info "Activating licence..."
+    if revue activate "$licence_key"; then
+      info "Licence activated — Revue is ready to use offline"
+    else
+      # Activation failure is non-fatal: the package and skill are installed.
+      # The user can run `revue activate <key>` manually at any time.
+      warn "Licence activation failed — run 'revue activate <your-key>' to retry"
+    fi
+  fi
+
+  # Step 9: Verify installation.
   # REVUE-373: use the `version` subcommand (supported on all published wheels).
   # Guard with `|| true` so a failure here (e.g. edge-platform import error in
   # revue_core) never aborts a successful install under `set -e` — the install

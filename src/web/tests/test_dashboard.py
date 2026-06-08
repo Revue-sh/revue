@@ -61,13 +61,14 @@ async def test_dashboard_renders_both_modes(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_onboarding_renders_cli_hero(client: AsyncClient):
-    """REVUE-361: onboarding leads with the Activation Command-Box hero
-    pre-filled with the signed-up (free-tier) user's key."""
+    """REVUE-428: onboarding Step 1 shows a single personalised curl command
+    that installs and activates in one step."""
     await _signup_and_get_cookies(client)
     resp = await client.get("/onboarding")
     assert resp.status_code == 200
-    assert b'id="activation-command-box"' in resp.content
-    assert b"revue activate lic_" in resp.content
+    assert b'id="install-command-box"' in resp.content
+    assert b"curl -fsSL" in resp.content
+    assert b"--key lic_" in resp.content
 
 
 @pytest.mark.asyncio
@@ -84,7 +85,7 @@ async def test_onboarding_demotes_ci_to_linkout_card(client: AsyncClient):
     assert b"switchTab" not in body
     # CI mode is a link-out to the consolidated CI-setup page.
     assert b"/docs/ci-setup" in body
-    assert b"Reviewing in CI" in body
+    assert b"In CI" in body
 
 
 @pytest.mark.asyncio

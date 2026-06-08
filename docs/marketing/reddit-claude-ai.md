@@ -1,69 +1,63 @@
 # r/ClaudeAI Post Draft
 
 ## Subreddit
-
 r/ClaudeAI
 
 ## Title
-
-I built a `/revue` skill for Claude Code that does a full AI code review before every commit — and it uses DeepSeek by default so it doesn't eat your Anthropic budget
+I built a `/revue` skill for Claude Code — multi-agent code review before you commit, using your subscription not your API wallet
 
 ## Body
 
-If you're using Claude Code for day-to-day development, you've probably noticed that asking Claude to "review this PR" burns a surprising amount of context and tokens. I ran the numbers for my team and we were spending more on re-review cycles than on the original implementation — Claude would write code, miss something, a human would catch it, Claude would re-synthesise the full context to fix it. The cost compounds.
+I've been building this since March, mostly as a tool for myself, and I'm launching it publicly today.
 
-So I built Revue as a Claude Code skill — it runs as `/revue` directly inside your Claude Code session.
+**The problem that pushed me to build it**
 
-**What it does**
+In April I got a £40.50 invoice from Anthropic — extra, on top of my Max subscription. I was testing my own tool intensively using Sonnet 4.5 through the API. About 1.5–2M tokens a day for two weeks. It added up to ~$79 in API costs before I noticed.
 
-When you run `/revue` before a commit, it spins up six specialised agents in parallel against your staged diff:
+The thing I got wrong: I was treating "ask Claude to review my code" as a free operation because I have Max. It's not free when it's going through the API. And when a review finds something and you iterate, you're paying for the re-synthesis too.
 
-- **Security** — injection vectors, auth bypasses, dependency risks
-- **Performance** — O(n²) loops, memory leaks, inefficient queries
-- **Architecture** — coupling violations, missing error handling, design pattern breaks
-- **Code Quality** — style, naming, duplication, testability
-- **Licensing** — GPL/AGPL incompatibility detection
-- **Synthesis** — deduplicates findings and formats them as review comments
+**How `/revue` fixes this**
 
-The key thing: it runs *before you commit*, not after. That's when it's cheapest to fix something.
+Run it inside your Claude Code session, before you commit. It reads your staged diff and runs six specialised agents in parallel:
 
-**The cost angle**
+- Security (injection, auth, supply-chain)
+- Performance (O(n²), memory, queries)  
+- Architecture (coupling, error handling)
+- Code Quality (naming, duplication, testability)
+- Licensing (GPL/AGPL in dependencies)
+- Synthesis (deduplicates across agents, formats findings)
 
-By default, Revue routes to **DeepSeek-V4-Pro via OpenRouter** — about 87% cheaper per token than Anthropic Sonnet 4.5. You can BYOK if you'd rather use Anthropic, OpenAI, or Azure. No code leaves your machine; Revue reads your local diff and sends only that to the model API you configure.
+Because it runs inside your Claude Code session, it uses your Max subscription. No API charge.
 
-For context: a five-person team doing daily reviews with Sonnet 4.5 typically spends $850–$1,200/month. With Revue's DeepSeek default, that drops to roughly $100–$250/month.
+**The CI cost angle (honest version)**
 
-**How to install**
+For CI pipelines there's a separate API cost, and the saving there comes from model choice, not from Revue itself. I switched to DeepSeek-V4-Pro via OpenRouter and tracked my numbers:
+
+- April on Sonnet: ~$79 in 13 days
+- May–June on DeepSeek: $27 over 22 days (same or heavier workload)
+- Heaviest single day: $4.30 DeepSeek vs ~$15 equivalent Sonnet — 72% cheaper
+
+DeepSeek is our default because it handles code review quality well at a much lower cost. But you can BYOK — any OpenAI, Anthropic, Azure, or OpenRouter model. Only your diff goes to the API.
+
+**Platforms + pricing**
+
+GitHub, GitLab, Bitbucket. Free tier: 25 reviews/month, no credit card.
 
 ```bash
-# Install the Claude Code skill
+# [CONFIRM: exact command once registry live]
 claude skill install revue
 ```
 
-Then invoke it from any Claude Code session with `/revue`.
+[CONFIRM: revue.io]
 
-[CONFIRM: exact install command once registry listing is live]
-
-**Platforms supported**
-
-GitHub, GitLab, and Bitbucket. `/revue` runs inside Claude Code.
-
-**Pricing**
-
-Free tier: 25 reviews/month, no credit card required.
-Indie: $9/month, 100 reviews.
-Pro: $29/month, unlimited.
-
-[CONFIRM: revue.io URL]
+Happy to answer questions about the architecture or the DeepSeek model choice — I know that one comes up.
 
 ---
 
-Happy to answer questions about the architecture, the model choice, or how the synthesis layer handles conflicting findings across agents.
-
-## Post Notes
-
-- Tone: conversational, first-person, genuine — not a product announcement
-- Lead with the `/revue` angle specifically because this is r/ClaudeAI — the community uses Claude Code daily
-- Anticipate questions about: BYOK config, false positive rate, large PR handling, privacy (does code leave machine?)
-- Upvote window: post 10:00–13:00 UTC on a Tuesday or Wednesday
-- Pin a maker comment immediately after posting with: install link, GitHub repo link [CONFIRM], and a brief FAQ
+**Post notes**
+- Tone is right: developer talking to developers, not a product launch
+- The "honest version" subheading for CI costs is intentional — r/ClaudeAI readers will probe the claims
+- Post 10:00–13:00 UTC, Tuesday or Wednesday for best visibility
+- First comment immediately after posting: pin install command + link
+- Likely questions to prepare for: BYOK setup, false positive rate, what happens with large PRs, privacy (does code leave machine?)
+- [CONFIRM install command and URL before posting]

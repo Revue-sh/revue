@@ -1,121 +1,89 @@
 # Technical Blog Post Draft
 
-**Target**: revue.sh/blog or dev.to
-**Estimated read time**: 8–10 minutes
-**Audience**: Senior engineers and technical leads who own AI tooling decisions
+**Target**: dev.to
+**Estimated read time**: 5–7 minutes
+**Audience**: Developers using Claude Code or running AI in CI
 
 ---
 
-# How We Built a Six-Agent Code Reviewer That Costs 87% Less Than Sonnet 4.5
+# I built a code reviewer for myself. My API bill taught me the most important lesson.
 
-## Introduction
+I've been building Revue since March.
 
-When we started using AI for code review, we made the same mistake most teams make: we pointed a single large language model at the full PR diff and asked it to find problems.
+It started as a personal tool — I wanted proper multi-agent code review running inside my development workflow, not a one-shot "ask Claude to review this PR" prompt. By April I had the core working and was testing it intensively.
 
-It worked. Sometimes. The model would catch real issues, miss others, and occasionally hallucinate a problem that wasn't there. On small diffs the signal-to-noise ratio was acceptable; on large diffs it was poor. And the cost was absurd in retrospect—we were paying Anthropic Sonnet 4.5 rates to review every PR, regardless of whether the model was the right tool for the job.
+Then I got a £40.50 invoice from Anthropic. On top of my £90 Max subscription.
 
-We built Revue instead: a multi-agent code reviewer that runs as a `/revue` skill inside Claude Code. It costs 79–88% less to operate, finds more issues, and the architecture is straightforward to follow.
+I'd been hammering Sonnet 4.5 through the API — 1.5 to 2 million input tokens a day for two weeks straight — and hadn't noticed the cost accumulating until it hit. About $79 in raw API costs in 13 days.
 
-## The Core Insight: Specialisation Beats Generalisation for Review
+The irony was hard to ignore. I was building a tool to make AI-assisted development more efficient, and I was doing it as inefficiently as possible.
 
-A general-purpose LLM tries to handle everything. In code review, that includes security analysis, performance profiling, architecture critique, licence compliance, and style enforcement all at once in a single prompt.
+## What I got wrong about AI review costs
 
-These tasks require different reasoning. Finding an injection vector is nothing like detecting an O(n²) loop. Checking GPL licence compatibility is nothing like identifying an architectural coupling violation.
+The expensive habit isn't using AI for code review. It's conflating two different things:
 
-When one model handles all of them together, you're paying for a generalist to do specialist work. You also create a context window pressure problem: large diffs with complex changes push relevant context out of the window before the model processes it.
+**API tokens** — you pay per token, billed separately from any subscription.
 
-We split the work across six agents, each with a narrow focus.
+**Subscription tokens** — already paid for. Your Max plan, your Cursor seat, whatever you're on. Using these for review costs nothing extra.
 
-## The Six Agents
+When developers ask their AI assistant to "review this before I push," they're often spending API tokens on something their subscription already covers — and if the review finds issues and they iterate, they pay again for the re-synthesis.
 
-Each agent sees the same input—the staged diff, the repository language, and file tree—but with a different system prompt and evaluation framework.
+The fix is straightforward: move the review inside your session, before you commit.
 
-**Security Agent**
+## How Revue works
 
-Checks for: injection vectors (SQL, command, LDAP), authentication bypasses, session handling errors, supply-chain risks in new dependencies, hardcoded secrets, and unsafe deserialization. Uses a structured output schema that requires a severity rating (High/Medium/Low) and file:line citation for every finding. Since unfounded findings waste triage time, the prompt penalises speculation.
+`/revue` is a Claude Code skill. You run it against your staged diff before committing — inside your existing Claude Code session. Subscription tokens. No separate API charge.
 
-**Performance Agent**
+Six specialised agents run in parallel:
 
-Checks for: algorithmic complexity (O(n²) patterns, nested loops over large datasets), memory allocation in hot paths, N+1 query patterns, missing database indices, and synchronous I/O in async contexts. Receives language and framework context to apply framework-specific heuristics (Django ORM N+1, React re-render triggers).
+- **Security** — injection vectors, auth bypasses, supply-chain risks
+- **Performance** — O(n²) loops, memory leaks, inefficient queries
+- **Architecture** — coupling violations, missing error handling
+- **Code Quality** — naming, duplication, testability
+- **Licensing** — GPL/AGPL compatibility in dependencies
+- **Synthesis** — deduplicates findings across agents, formats as actionable comments
 
-**Architecture Agent**
+Each agent gets a narrow brief. Security reasoning is different from performance reasoning — running them together in one prompt creates context pressure and dilutes both. Running them in parallel means the full review takes roughly as long as the slowest single agent.
 
-Checks for: SOLID principle violations, coupling between layers, missing error propagation, hardcoded configuration that should be injected, and breaking changes in public interfaces. Receives the repository's CLAUDE.md or equivalent architecture spec if present.
+## The CI cost question
 
-**Code Quality Agent**
+For CI pipelines, `/revue` runs as a sidecar in GitHub Actions, GitLab CI, or Bitbucket Pipelines. Here the cost does come from your API wallet — and model choice matters.
 
-Checks for: style consistency, naming clarity, code duplication, testability (untested side effects, untestable constructors), and commented-out code. Lowest-severity by design—findings never block a merge, only inform.
+I switched from Sonnet 4.5 to DeepSeek-V4-Pro via OpenRouter and tracked the numbers across my own workload.
 
-**Licensing Agent**
+April (Sonnet, 13 days): ~$79 API costs.
+May–June (DeepSeek, 22 days of equal or heavier work): $27 total.
 
-Checks for: new dependencies in the diff and their licence compatibility with the repository's declared licence. Uses a cached licence database updated weekly. Flags GPL, AGPL, SSPL, and other copyleft licences when the repository is MIT, Apache, or proprietary.
+The most recent heavy day — a full implementation sprint — cost $4.30 on DeepSeek. Same token volume on Sonnet: ~$15. 72% cheaper.
 
-**Synthesis Agent**
+That's not a Revue feature. It's a model recommendation. DeepSeek-V4-Pro handles code review quality on par with Sonnet 4.5 at a fraction of the cost — so we default to it, and we're honest that the saving comes from the model choice, not from anything clever in the architecture.
 
-Takes the raw output of all five agents. Handles deduplication (Security and Architecture often surface the same coupling violation from different angles), severity normalisation, and formatting. Outputs PR review comments in the platform's native format (GitHub, GitLab, or Bitbucket), each pinned to a file and line number.
+You can BYOK: OpenAI, Anthropic, Azure, or any OpenRouter model. Your diff is the only thing that leaves your machine.
 
-## Why DeepSeek-V4-Pro?
+## Who this is for
 
-We benchmarked several models on code review quality using a corpus of 400 historical PRs with known issues (manually labelled by engineers after review). The evaluation metric was precision-weighted F1—we penalised false positives heavily because a reviewer that cries wolf gets ignored.
+If you're doing AI-assisted development and finding your API bill growing, the `/revue` local workflow is the most direct fix — you're already paying for the subscription.
 
-DeepSeek-V4-Pro matched Anthropic Sonnet 4.5 on precision-weighted F1 (within 2.3% across the corpus) while costing 87% less per token via OpenRouter. The gap on very large diffs (>2,000 lines) favours Sonnet, but the 95th-percentile PR in our dataset was 340 lines—well within DeepSeek's reliable window.
+If you're running AI review in CI and using GPT-4 or Sonnet class models, switching to DeepSeek will cut costs significantly. Revue makes it easy to configure, but the saving is the model switch.
 
-We made DeepSeek the default because the savings are real and the quality holds. You can override it with any OpenRouter model or bring your own key (OpenAI, Anthropic, Azure). The architecture is model-agnostic; the default is just the cheapest option that clears the quality bar.
+## Try it
 
-## The /revue Surface
-
-The CLI is a Claude Code skill, installed with:
+Revue is live. Free tier: 25 reviews/month, no credit card.
 
 ```bash
+# [CONFIRM: exact install command once registry is live]
 claude skill install revue
 ```
 
-[CONFIRM: exact install command once registry listing is live]
+[CONFIRM: revue.io]
 
-Running `/revue` inside a Claude Code session triggers the agent panel against your staged diff. Findings appear in the terminal:
-
-1. Stage your changes (`git add`)
-2. Run `/revue` in Claude Code
-3. Triage findings (each has a severity and file:line citation)
-4. Commit clean
-
-No CI pipeline is required to use the tool. The CI integration (GitHub Actions sidecar, GitLab CI job, Bitbucket Pipeline step) is available for teams that want automated PR comments, but the local skill is the primary surface.
-
-## The Cost Methodology
-
-The 79–88% TCO reduction compares:
-
-**Baseline**: A team using Anthropic Sonnet 4.5 directly for every PR review. At current Sonnet 4.5 input/output pricing, a 300-line diff costs $0.18–$0.32 per review.
-
-**With Revue's default**: The same diff processed through six DeepSeek-V4-Pro agents via OpenRouter costs $0.02–$0.06 per review. The multi-agent overhead is real—six API calls instead of one—but DeepSeek's per-token cost is low enough that six calls still cost less than a single Sonnet call.
-
-The range reflects variance in diff size and output verbosity. Complex architectural findings requiring detailed explanations compress savings to ~79%. Small diffs with mostly style findings reach ~88%.
-
-| Team | Sonnet 4.5 baseline | Revue (DeepSeek default) | Monthly saving |
-|------|---------------------|--------------------------|----------------|
-| 5 engineers | $850–$1,200 | $100–$250 | $600–$950 |
-| 10 engineers | $1,700–$2,400 | $200–$500 | $1,200–$2,200 |
-| 25 engineers | $4,250–$6,000 | $500–$1,250 | $3,000–$5,500 |
-
-(Assumes daily PR activity; costs are for review agents only.)
-
-## What We Learned
-
-**Narrow prompts outperform broad ones.** When we asked a single agent to find "all problems", precision dropped 34% compared to six narrow-brief agents on the same diffs. The model tried to be comprehensive and lost focus.
-
-**The synthesis layer is hard.** Deduplication is straightforward. Severity normalisation across agents with different scales is not. We revised the synthesis prompt four times before findings stopped contradicting each other on edge cases.
-
-**False positives are a culture problem.** Early Revue had ~71% precision—one in three findings was noise. Engineers stopped reading the output. We iterated the agent prompts to prioritise precision over recall, accepting missed issues in exchange for trustworthy output. Current precision is ~89% on our test corpus.
-
-**BYOK matters.** Security-conscious teams don't want their code diffs leaving their trusted providers. The ability to point Revue at an internally-hosted model or a provider already in their compliance scope removed a significant adoption blocker.
-
-## Try It
-
-Revue is live at [CONFIRM: revue.io]. Free tier is 25 reviews/month, no credit card required.
-
-Install the Claude Code skill and run it on your next PR. Questions about the architecture? Open an issue on [CONFIRM: GitHub repo URL] or reach out at [CONFIRM: contact email].
+I've been the primary user since March. Happy to answer questions about the architecture, the false positive rate, or how the synthesis layer handles conflicting findings between agents.
 
 ---
 
-*[CONFIRM: author name and title]*
-*[CONFIRM: publication date]*
+**Post notes**
+- Use the real numbers — don't round or inflate them
+- The £40.50 invoice screenshot can be embedded if dev.to supports it (it does)
+- Tag: `claudecode`, `ai`, `devtools`, `costreduction`
+- The "this is a model recommendation, not a Revue feature" line is intentional — technical readers respect that honesty
+- [CONFIRM install command and URL before publishing]

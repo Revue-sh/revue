@@ -3,7 +3,7 @@
 The installer (REVUE-276 / E-P2A-S2) lives at the repo root under
 ``scripts/install.sh`` and is fetched by end users via:
 
-    curl -fsSL https://raw.githubusercontent.com/cbscd/revue/main/scripts/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/Revue-sh/revue/main/scripts/install.sh | bash
 
 These tests stub ``uv`` and ``pipx`` with bash scripts placed on ``PATH`` and
 point ``HOME`` at a temporary directory, so they never touch real PyPI or the
@@ -1095,7 +1095,7 @@ def test_dscl_home_with_spaces_is_not_truncated(installer_env, tmp_path):
 
 # The canonical install-page URL the guard must link. Mirrors
 # revue_core.platform_support.INSTALL_PAGE_URL (pinned by the consistency test).
-_INSTALL_PAGE_URL = "https://github.com/cbscd/revue/blob/main/docs/guides/install.md"
+_INSTALL_PAGE_URL = "https://github.com/Revue-sh/revue/blob/main/docs/guides/install.md"
 
 
 def test_guard_blocks_linux_arm64_with_actionable_message(installer_env):

@@ -14,7 +14,7 @@ platform and points back to this page rather than failing deep inside `pip`.
 
 **Workaround for unsupported platforms:** run Revue in your CI pipeline via the
 **`revue-ci`** integration (GitHub, GitLab, or Bitbucket) instead of installing
-locally. See the [canonical install page](https://github.com/cbscd/revue/blob/main/docs/guides/install.md)
+locally. See the [canonical install page](https://github.com/Revue-sh/revue/blob/main/docs/guides/install.md)
 for the authoritative supported-platform list.
 
 > **Raw `pip install revue` on an unsupported platform.** Because we publish no
@@ -30,7 +30,7 @@ for the authoritative supported-platform list.
 Revue offers a single curl-pipe-bash installer that sets up `/revue` in Claude Code and configures your workspace in under 5 minutes:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cbscd/revue/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Revue-sh/revue/main/scripts/install.sh | bash
 ```
 
 Pre-MVP: fetches from GitHub. Post-MVP: distributes from `https://revue.sh/install.sh` with signed releases.
@@ -54,7 +54,7 @@ If you want to verify the installer before running it, you can check the SHA256 
 
 ```bash
 # Fetch the installer
-curl -fsSL https://raw.githubusercontent.com/cbscd/revue/main/scripts/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/Revue-sh/revue/main/scripts/install.sh -o install.sh
 
 # Verify the checksum (check revue.sh or GitHub releases for the expected hash)
 shasum -a 256 -c <<< "<expected-hash>  install.sh"

@@ -139,5 +139,5 @@ Items surfaced during review but not caused by the current story. Collect here f
 
 - **DF1 — No rate limiting on `/usage/track`** `src/web/main.py` — Endpoint is CSRF-exempt and unauthenticated beyond key presence. A caller with a valid key can rotate `repo_id` values to bypass the 60-second idempotency window and inflate `reviews_used_this_month` or fill `review_runs` without bound. Explicitly deferred to post-MVP (out of scope per story spec).
 - **DF2 — Unbounded input fields** `src/web/routes/usage_routes.py` — `repo_id`, `agents_used` elements, and `duration_ms` have no length or value constraints. Arbitrary-length inputs reach the DB. Deferred to a future input-validation pass.
-- **DF3 — TOCTOU race on dedup check** `src/web/models.py:has_recent_track_event`, `src/web/routes/usage_routes.py:70` — Two concurrent requests with the same key+repo_id can both pass `has_recent_track_event` before either inserts, creating a double-count. Low probability for fire-and-forget CLI. Fix requires `BEGIN IMMEDIATE` transaction or a UNIQUE constraint. Broader DB concurrency concern beyond this endpoint.
-- **DF4 — `duration_ms` accepts negative values** `src/web/routes/usage_routes.py` — Negative durations propagate to analytics averages. Add a `ge=0` Pydantic constraint when input validation is addressed.
+- ~~**DF3 — TOCTOU race on dedup check**~~ **fixed** commit 1dded82 — `BEGIN IMMEDIATE` before `has_recent_track_event`.
+- ~~**DF4 — `duration_ms` accepts negative values**~~ **fixed** commit 1dded82 — `Field(ge=0)` constraint added.
