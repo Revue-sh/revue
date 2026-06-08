@@ -14,7 +14,7 @@ When we started using AI for code review, we made the same mistake most teams ma
 
 It worked. Sometimes. The model would catch real issues, miss others, and occasionally hallucinate a problem that wasn't there. The signal-to-noise ratio was tolerable on small diffs and poor on large ones. And the cost was — in retrospect — absurd. We were paying Anthropic Sonnet 4.5 rates to review every PR, regardless of whether the model was actually the right tool for the job.
 
-This post is about what we built instead: Revue, a multi-agent code reviewer that runs as a `/revue-local` skill inside Claude Code. It costs 79–88% less to operate. It finds more issues. And the architecture is simple enough to explain in a blog post.
+This post is about what we built instead: Revue, a multi-agent code reviewer that runs as a `/revue` skill inside Claude Code. It costs 79–88% less to operate. It finds more issues. And the architecture is simple enough to explain in a blog post.
 
 ## The Core Insight: Specialisation Beats Generalisation for Review
 
@@ -62,20 +62,20 @@ DeepSeek-V4-Pro matched Anthropic Sonnet 4.5 on precision-weighted F1 (within 2.
 
 We made DeepSeek the default because the savings are real and immediate. You can override it with any OpenRouter model or a direct BYOK key (OpenAI, Anthropic, Azure). The architecture is model-agnostic; the default is just the cheapest option that clears the quality bar.
 
-## The /revue-local Surface
+## The /revue Surface
 
 The CLI surface is a Claude Code skill, installed with:
 
 ```bash
-claude skill install revue-local
+claude skill install revue
 ```
 
 [CONFIRM: exact install command once registry listing is live]
 
-Running `/revue-local` inside a Claude Code session triggers the agent panel against your current staged diff. Findings appear in the terminal. The full workflow looks like:
+Running `/revue` inside a Claude Code session triggers the agent panel against your current staged diff. Findings appear in the terminal. The full workflow looks like:
 
 1. Stage your changes (`git add`)
-2. Run `/revue-local` in Claude Code
+2. Run `/revue` in Claude Code
 3. Triage findings (each finding has a severity and a file:line citation)
 4. Commit clean
 

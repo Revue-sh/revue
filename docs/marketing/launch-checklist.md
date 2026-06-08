@@ -13,7 +13,7 @@ All gates must be GREEN before any channel goes live. A single RED gate blocks t
 |------|-------|--------|
 | revue.io is live and SSL-valid | Engineering | [ ] |
 | Free tier sign-up flow tested end-to-end (no CC required) | Engineering | [ ] |
-| `/revue-local` skill published to Claude Code registry | Engineering | [ ] |
+| `/revue` skill published to Claude Code registry | Engineering | [ ] |
 | Pricing page numbers match all channel drafts | Marketing | [ ] |
 | CI integrations tested against GitHub, GitLab, and Bitbucket | Engineering | [ ] |
 | DeepSeek default model operational (OpenRouter key active) | Engineering | [ ] |
@@ -90,7 +90,7 @@ All times are UTC. Adjust for [CONFIRM: primary team timezone].
 |----------|----------|
 | revue.io down at launch time | Roll back to previous deploy; delay channels by 2 hours; post status update |
 | OpenRouter / DeepSeek outage | Switch default model to Sonnet 4.5 temporarily; update pricing page note |
-| Claude Code registry publish failure | `/revue-local` install unavailable; update r/ClaudeAI post to remove install command; add waitlist CTA |
+| Claude Code registry publish failure | `/revue` install unavailable; update r/ClaudeAI post to remove install command; add waitlist CTA |
 | Product Hunt launch page rejected | Move to next available Tuesday; re-submit with amended gallery |
 | Negative HN thread (privacy / security concerns) | Prepared response: BYOK architecture, diff-only API calls, no code storage, open-source diff sanitiser |
 

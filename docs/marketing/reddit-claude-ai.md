@@ -6,17 +6,17 @@ r/ClaudeAI
 
 ## Title
 
-I built a `/revue-local` skill for Claude Code that does a full AI code review before every commit — and it uses DeepSeek by default so it doesn't eat your Anthropic budget
+I built a `/revue` skill for Claude Code that does a full AI code review before every commit — and it uses DeepSeek by default so it doesn't eat your Anthropic budget
 
 ## Body
 
 If you're using Claude Code for day-to-day development, you've probably noticed that asking Claude to "review this PR" burns a surprising amount of context and tokens. I ran the numbers for my team and we were spending more on re-review cycles than on the original implementation — Claude would write code, miss something, a human would catch it, Claude would re-synthesise the full context to fix it. The cost compounds.
 
-So I built Revue as a Claude Code skill — it runs as `/revue-local` directly inside your Claude Code session.
+So I built Revue as a Claude Code skill — it runs as `/revue` directly inside your Claude Code session.
 
 **What it does**
 
-When you run `/revue-local` before a commit, it spins up six specialised agents in parallel against your staged diff:
+When you run `/revue` before a commit, it spins up six specialised agents in parallel against your staged diff:
 
 - **Security** — injection vectors, auth bypasses, dependency risks
 - **Performance** — O(n²) loops, memory leaks, inefficient queries
@@ -37,16 +37,16 @@ For context: a five-person team doing daily reviews with Sonnet 4.5 typically sp
 
 ```bash
 # Install the Claude Code skill
-claude skill install revue-local
+claude skill install revue
 ```
 
-Then invoke it from any Claude Code session with `/revue-local`.
+Then invoke it from any Claude Code session with `/revue`.
 
 [CONFIRM: exact install command once registry listing is live]
 
 **Platforms supported**
 
-GitHub, GitLab, and Bitbucket. Cursor and Windsurf support is in progress — `/revue-local` currently works inside Claude Code only.
+GitHub, GitLab, and Bitbucket. Cursor and Windsurf support is in progress — `/revue` currently works inside Claude Code only.
 
 **Pricing**
 
@@ -63,7 +63,7 @@ Happy to answer questions about the architecture, the model choice, or how the s
 ## Post Notes
 
 - Tone: conversational, first-person, genuine — not a product announcement
-- Lead with the `/revue-local` angle specifically because this is r/ClaudeAI — the community uses Claude Code daily
+- Lead with the `/revue` angle specifically because this is r/ClaudeAI — the community uses Claude Code daily
 - Anticipate questions about: BYOK config, false positive rate, large PR handling, privacy (does code leave machine?)
 - Upvote window: post 10:00–13:00 UTC on a Tuesday or Wednesday
 - Pin a maker comment immediately after posting with: install link, GitHub repo link [CONFIRM], and a brief FAQ

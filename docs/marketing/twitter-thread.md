@@ -25,11 +25,11 @@ Each cycle compounds cost. The bottleneck isn't the code — it's the loop.
 
 ---
 
-**Tweet 3 — The /revue-local insight**
+**Tweet 3 — The /revue insight**
 
 The fix: catch issues *before* the commit, not after.
 
-/revue-local is a Claude Code skill that runs a full review against your staged diff, right inside your editor session — before CI, before the PR, before any human sees it.
+/revue is a Claude Code skill that runs a full review against your staged diff, right inside your editor session — before CI, before the PR, before any human sees it.
 
 ---
 
@@ -76,7 +76,7 @@ DeepSeek is just the default because it's the cheapest good model for review.
 Works with GitHub, GitLab, and Bitbucket.
 
 Runs as:
-• `/revue-local` inside Claude Code (available now)
+• `/revue` inside Claude Code (available now)
 • CI sidecar in GitHub Actions / GitLab CI / Bitbucket Pipelines
 
 Cursor and Windsurf coming next.
@@ -100,7 +100,7 @@ At $9/month you're saving $600–$1,000/month if you're currently running Sonnet
 Revue is live at [CONFIRM: revue.io].
 
 Install the Claude Code skill:
-`claude skill install revue-local`
+`claude skill install revue`
 
 [CONFIRM: exact install command]
 

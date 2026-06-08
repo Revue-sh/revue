@@ -14,7 +14,7 @@ Revue is a multi-agent AI code reviewer that runs inside Claude Code before ever
 
 ## Gallery Captions
 
-1. **The /revue-local skill** — Run `revue-local` inside Claude Code on any staged diff. Six agents spin up in parallel; findings appear in your terminal before you push.
+1. **The /revue skill** — Run `revue` inside Claude Code on any staged diff. Six agents spin up in parallel; findings appear in your terminal before you push.
 2. **Six-agent architecture** — Security, Performance, Architecture, Code Quality, Licensing, and Synthesis agents run simultaneously. No single-model bottleneck.
 3. **Cost comparison** — DeepSeek-V4-Pro vs Anthropic Sonnet 4.5: ~87% per-token savings with equivalent code-review quality.
 4. **Platform integrations** — GitHub, GitLab, and Bitbucket. CI sidecar mode for automated PR comments in any pipeline.
@@ -26,7 +26,7 @@ Revue is an AI-powered code reviewer built for teams that are already paying for
 
 **How it works**
 
-Install the `/revue-local` Claude Code skill. Before every commit, run it against your staged diff. Revue dispatches six specialised agents in parallel — Security, Performance, Architecture, Code Quality, Licensing, and Synthesis — and returns deduplicated, actionable findings directly in your editor session.
+Install the `/revue` Claude Code skill. Before every commit, run it against your staged diff. Revue dispatches six specialised agents in parallel — Security, Performance, Architecture, Code Quality, Licensing, and Synthesis — and returns deduplicated, actionable findings directly in your editor session.
 
 No Docker. No CI change required to get started. Just a skill install.
 
@@ -67,7 +67,7 @@ Happy to answer questions about the multi-agent architecture, the DeepSeek model
 - **Launch time**: 00:01 PT (PH resets daily at midnight PT — first-mover advantage)
 - **Maker profile**: [CONFIRM: PH maker account created and linked]
 - **Gallery assets needed**: 5 screenshots or screen recordings [CONFIRM: designed]
-- **Promo video**: Optional but recommended — 60-second walkthrough of `/revue-local` in action [CONFIRM]
+- **Promo video**: Optional but recommended — 60-second walkthrough of `/revue` in action [CONFIRM]
 
 ## Pre-launch Checklist
 
