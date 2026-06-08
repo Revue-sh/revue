@@ -76,10 +76,8 @@ DeepSeek is just the default because it's the cheapest good model for review.
 Works with GitHub, GitLab, and Bitbucket.
 
 Runs as:
-• `/revue` inside Claude Code (available now)
+• `/revue` inside Claude Code
 • CI sidecar in GitHub Actions / GitLab CI / Bitbucket Pipelines
-
-Cursor and Windsurf coming next.
 
 ---
 

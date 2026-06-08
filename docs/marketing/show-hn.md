@@ -6,7 +6,7 @@ Show HN: Revue – AI code review skill for Claude Code that cuts your AI bill b
 
 ## Body
 
-I've been building Revue, an AI code reviewer that runs as a `/revue` skill inside Claude Code (Cursor and Windsurf support coming). It catches issues before you commit — using six specialised agents running in parallel — and by default it routes to DeepSeek-V4-Pro via OpenRouter, which is ~87% cheaper per token than Anthropic Sonnet 4.5.
+I've been building Revue, an AI code reviewer that runs as a `/revue` skill inside Claude Code. It catches issues before you commit — using six specialised agents running in parallel — and by default it routes to DeepSeek-V4-Pro via OpenRouter, which is ~87% cheaper per token than Anthropic Sonnet 4.5.
 
 The positioning is cost-first because that's the real unlock. A team of five engineers doing daily code reviews with Sonnet 4.5 typically spends $850–$1,200/month in raw API costs. With Revue's DeepSeek default, that drops to $100–$250. You can BYOK (OpenAI, Anthropic, Azure, or any OpenRouter model) if you'd rather use what you're already paying for.
 

@@ -81,8 +81,6 @@ Running `/revue` inside a Claude Code session triggers the agent panel against y
 
 No CI pipeline required to get value from the tool. The CI integration (GitHub Actions sidecar, GitLab CI job, Bitbucket Pipeline step) exists for teams that want automated PR comments, but the local skill is the primary surface.
 
-Cursor and Windsurf support is in progress.
-
 ## The Cost Methodology
 
 The 79–88% TCO reduction figure comes from comparing:

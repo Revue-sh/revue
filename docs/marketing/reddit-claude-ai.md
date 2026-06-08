@@ -46,7 +46,7 @@ Then invoke it from any Claude Code session with `/revue`.
 
 **Platforms supported**
 
-GitHub, GitLab, and Bitbucket. Cursor and Windsurf support is in progress — `/revue` currently works inside Claude Code only.
+GitHub, GitLab, and Bitbucket. `/revue` runs inside Claude Code.
 
 **Pricing**
 

@@ -40,7 +40,7 @@ You can bring your own key (OpenAI, Anthropic, Azure, any OpenRouter model). You
 
 **Platform support**
 
-GitHub, GitLab, and Bitbucket. Runs as a local Claude Code skill or as a CI sidecar (GitHub Actions, GitLab CI, Bitbucket Pipelines). Cursor and Windsurf support coming soon.
+GitHub, GitLab, and Bitbucket. Runs as a local Claude Code skill or as a CI sidecar (GitHub Actions, GitLab CI, Bitbucket Pipelines).
 
 **Pricing**
 
