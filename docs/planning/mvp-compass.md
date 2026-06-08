@@ -13,15 +13,15 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**~72 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
+**~73 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
 The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The full activation-UX cluster Lane 1 (361 + 413 + 382) and Lane 2 (408 + 409) are done. REVUE-409 (staging E2E gate) is **Done** — validated on a green main run (#1122) with the full state matrix (active/lapsed/free/not-activated) converged and the suite green against staging; the gate now blocks prod promotion at runtime. Launch is gated only on the pre-launch polish items below.
 
 **Recently shipped (last 5):**
+- **REVUE-127** — `/usage/track` activation telemetry endpoint *(Done)*
 - **REVUE-341** — per-surface default agent_timeout_seconds (/revue-local=1200s, CI=600s, CLI=600s) *(Done)*
 - **REVUE-405** — pin hatchling+editables; --no-build-isolation on editable installs *(Done)*
 - **REVUE-427** — switch Fly.io deploy to --remote-only, remove manual registry push *(Done)*
 - **REVUE-426** — replace git ls-files with pathlib.rglob in licence_path_contract *(Done)*
-- **REVUE-425** — migrate CI to GitHub Actions (self-hosted macOS + GitHub-hosted Linux) *(Done)*
 
 ---
 
@@ -36,7 +36,7 @@ The narrative critical path (REVUE-275 → 280 → 281) and the launch spine —
 | Jira | Story | Why it's not a hard blocker |
 |------|-------|-----------------|
 | REVUE-363 | Launch comms (HN/PH/Reddit/Twitter/blog) | Time-locked; the post (REVUE-281) is shipped but undelivered. Plan pre-launch, fire on launch day |
-| REVUE-364 | Install → first-review activation telemetry | Conversion-funnel measurement; blocked by REVUE-127 (`/usage/track`). Backfillable from week-2 cohort |
+| REVUE-364 | Install → first-review activation telemetry | Conversion-funnel measurement; REVUE-127 (`/usage/track`) now shipped — implementation can start. Backfillable from week-2 cohort |
 
 ### ⚪ Post-launch deferred
 
@@ -62,9 +62,9 @@ Jira `Blocks` links tell you *order*; same-file edits are the real parallel kill
 | Lane | Tickets | Execution rule |
 |---|---|---|
 | **D — launch comms** | REVUE-363 | Draft channel variants independently; final copy review confirms pricing and supported-client claims match the shipped site (REVUE-365 + REVUE-366 are both done). |
-| **Hold — activation telemetry** | REVUE-364 | Do not start implementation yet. Blocked by REVUE-127; must consume the shared licence-path helper (now fixed by REVUE-328). Reconcile `/usage/track` vs `/api/v2/usage/emit` and the telemetry opt-out contract before coding. |
+| **E — activation telemetry** | REVUE-364 | REVUE-127 (`/usage/track`) is now shipped — blocker lifted. Reconcile `/usage/track` vs `/api/v2/usage/emit` and the telemetry opt-out contract before coding. |
 
-**Maximum useful concurrency:** REVUE-363 drafting can start now; REVUE-364 remains held.
+**Maximum useful concurrency:** REVUE-363 and REVUE-364 can now run in parallel.
 
 ---
 
