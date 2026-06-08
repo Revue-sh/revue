@@ -59,12 +59,13 @@ jobs:
 
       - name: AI Code Review
         env:
-          # This mirror overrides .revue.yml's provider (openrouter) with the
-          # repo's AI_PROVIDER/AI_MODEL vars (anthropic) via the --provider/
-          # --model flags below. key_resolver resolves the provider's default
-          # env var (ANTHROPIC_API_KEY), so map the stored secret onto it.
+          # Provider/model are set via AI_PROVIDER/AI_MODEL repo variables so
+          # all mirrors use the same model as production (.revue.yml → openrouter
+          # + deepseek). Map all provider keys; only the active provider's key
+          # is consumed.
           ANTHROPIC_API_KEY: ${{ secrets.REVUE_ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           REVUE_TIER_OVERRIDE: ${{ vars.REVUE_TIER_OVERRIDE }}
           GITHUB_TOKEN: ${{ secrets.REVUE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}

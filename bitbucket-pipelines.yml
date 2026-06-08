@@ -312,7 +312,10 @@ definitions:
           - test -x .venv/bin/python || python3 -m venv .venv
           - export PATH="$PWD/.venv/bin:$PATH"
           - python3 -c "import pytest, jsonschema, yaml" 2>/dev/null || pip install --quiet -r requirements-ci.txt
-          - pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/ -e packaging/revue/
+          # REVUE-405: --no-build-isolation reuses the cached venv's hatchling
+          # (pinned in requirements-ci.txt) instead of a per-run PEP 517 build-
+          # isolation fetch from PyPI, which bricked #1026-1028 on a warm cache.
+          - pip install --quiet --no-build-isolation -e packaging/revue_core/ -e packaging/revue-ci/ -e packaging/revue/
           - python3 -m pytest packaging/revue_core/tests/ -q --rootdir=packaging/revue_core
           - python3 -m pytest packaging/revue-ci/tests/ -q --rootdir=packaging/revue-ci
           # REVUE-331: --ignore=packaging/revue/tests/e2e is LOAD-BEARING.
@@ -405,7 +408,11 @@ definitions:
           - test -x .venv-e2e/bin/python || python3 -m venv .venv-e2e
           - export PATH="$PWD/.venv-e2e/bin:$PATH"
           - python3 -c "import fastapi, uvicorn" 2>/dev/null || pip install --quiet -r src/web/requirements.txt
-          - pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/ -e packaging/revue/
+          # REVUE-405: .venv-e2e is keyed on the pyproject files, NOT
+          # requirements-ci.txt, so install the build backend explicitly before
+          # the --no-build-isolation editable install below.
+          - python3 -c "import hatchling, editables" 2>/dev/null || pip install --quiet "hatchling>=1.21" editables
+          - pip install --quiet --no-build-isolation -e packaging/revue_core/ -e packaging/revue-ci/ -e packaging/revue/
           - python3 -c "import pytest_playwright" 2>/dev/null || pip install --quiet pytest-playwright
           - python3 -m playwright install --with-deps chromium
           - python3 -m pytest packaging/revue/tests/e2e -q --rootdir=packaging/revue
@@ -422,7 +429,9 @@ definitions:
           - test -x .venv/bin/python || python3 -m venv .venv
           - export PATH="$PWD/.venv/bin:$PATH"
           - python3 -c "import pytest, jsonschema, yaml" 2>/dev/null || pip install --quiet -r requirements-ci.txt
-          - pip install --quiet -e packaging/revue_core/ -e packaging/revue-ci/
+          # REVUE-405: --no-build-isolation reuses the cached venv's hatchling
+          # instead of a per-run PEP 517 build-isolation fetch from PyPI.
+          - pip install --quiet --no-build-isolation -e packaging/revue_core/ -e packaging/revue-ci/
           - git diff origin/${BITBUCKET_PR_DESTINATION_BRANCH}...HEAD > /tmp/revue_pr.diff
           - echo "[revue] Diff size $(wc -l < /tmp/revue_pr.diff) lines"
           - echo "[revue] Fetching PR description for context filtering..."
