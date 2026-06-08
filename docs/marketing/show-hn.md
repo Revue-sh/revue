@@ -8,11 +8,11 @@ Show HN: Revue – AI code review skill for Claude Code that cuts your AI bill b
 
 AI coding tools have created a paradox: engineers are shipping code faster than ever, but code review hasn't scaled with them. DORA 2024 found that AI adoption correlates with larger batch sizes and lower delivery stability — more PRs, higher defect density, same number of reviewers. The quality gate has become the bottleneck.
 
-I've been building Revue, an AI code reviewer that runs as a `/revue` skill inside Claude Code. It catches issues before you commit using six specialised agents running in parallel, and by default routes to DeepSeek-V4-Pro via OpenRouter at 87% lower per-token cost than Anthropic Sonnet 4.5.
+I've been building Revue, an AI code reviewer that runs as a `/revue` skill inside Claude Code. It catches issues before you commit using six agents running in parallel, and by default routes to DeepSeek-V4-Pro via OpenRouter at 87% lower per-token cost than Anthropic Sonnet 4.5.
 
 The real win is cost. A team of five engineers reviewing code daily with Sonnet 4.5 typically spends $850–$1,200/month in raw API costs. With Revue defaulting to DeepSeek, that drops to $100–$250. You can bring your own API key (OpenAI, Anthropic, Azure, or any OpenRouter model) if you prefer what you're already paying for.
 
-The six agents are: Security (injection vectors, auth bypasses, supply-chain), Performance (O(n²) loops, memory, query plans), Architecture (coupling, error handling, design patterns), Code Quality (style, duplication, testability), Licensing (GPL/AGPL checks), and a Synthesis agent that merges findings and formats them as PR comments.
+The six agents are: Security (injection vectors, auth bypasses, supply-chain), Performance (O(n²) loops, memory, query plans), Architecture (coupling, error handling, design patterns), Code Quality (style, duplication, testability), Licensing (GPL/AGPL checks), and a Synthesis agent that merges and deduplicates findings and prints them to the terminal.
 
 The `/revue` skill runs inside Claude Code without Docker or CI changes. It reads your staged diff, runs the agents, and prints findings to the terminal. Your Claude session can see the output, validate each finding, and apply fixes on the spot — before you ever open a PR.
 

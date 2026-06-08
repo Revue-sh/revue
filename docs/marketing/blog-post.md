@@ -34,20 +34,20 @@ The fix is straightforward: move the review inside your session, before you comm
 
 `/revue` is a Claude Code skill. You run it against your staged diff before committing — inside your existing Claude Code session. Subscription tokens. No separate API charge.
 
-Six specialised agents run in parallel:
+Six agents run in parallel:
 
 - **Security** — injection vectors, auth bypasses, supply-chain risks
 - **Performance** — O(n²) loops, memory leaks, inefficient queries
 - **Architecture** — coupling violations, missing error handling
 - **Code Quality** — naming, duplication, testability
 - **Licensing** — GPL/AGPL compatibility in dependencies
-- **Synthesis** — deduplicates findings across agents, formats as actionable comments
+- **Synthesis** — deduplicates findings across agents, prints to the terminal
 
 Each agent gets a narrow brief. Security reasoning is different from performance reasoning — running them together in one prompt creates context pressure and dilutes both. Running them in parallel means the full review takes roughly as long as the slowest single agent.
 
 ## The CI cost question
 
-For CI pipelines, `/revue` runs as a sidecar in GitHub Actions, GitLab CI, or Bitbucket Pipelines. Here the cost does come from your API wallet — and model choice matters.
+For CI pipelines, Revue runs as a pipeline step in GitHub Actions, GitLab CI, or Bitbucket Pipelines. Here the cost does come from your API wallet — and model choice matters.
 
 I switched from Sonnet 4.5 to DeepSeek-V4-Pro via OpenRouter and tracked the numbers across my own workload.
 
@@ -77,7 +77,7 @@ claude skill install revue
 
 https://revue.sh
 
-I've been the primary user since March. Happy to answer questions about the architecture, the false positive rate, or how the synthesis layer handles conflicting findings between agents.
+I've been the primary user since March. Questions about the architecture, the false positive rate, or how the synthesis layer handles conflicting findings are welcome.
 
 ---
 

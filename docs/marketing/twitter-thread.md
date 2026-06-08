@@ -37,7 +37,7 @@ The fix: catch issues *before* the commit, not after.
 
 It's not "ask Claude to review this."
 
-Six specialised agents run in parallel:
+Six agents run in parallel:
 
 🔐 Security — injection, auth, supply chain
 ⚡ Performance — O(n²), memory, queries
@@ -102,13 +102,13 @@ Install the Claude Code skill:
 
 [CONFIRM: exact install command]
 
-Free tier, no CC. Try it on your next PR.
+Free tier, no CC. Try it before your next PR.
 
 ---
 
 **Tweet 10 — Reply bait**
 
-Happy to go deep on:
+Ask me about:
 — why six agents and not one
 — how the synthesis layer handles conflicting findings
 — what the false positive rate looks like across different codebases

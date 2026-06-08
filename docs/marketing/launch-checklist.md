@@ -18,7 +18,7 @@ All gates must be GREEN before any channel goes live. A single RED gate blocks t
 | CI integrations tested against GitHub, GitLab, and Bitbucket | Engineering | [ ] |
 | DeepSeek default model operational (OpenRouter key active) | Engineering | [ ] |
 | Support channel live (email / Discord / GitHub issues) | Operations | [ ] |
-| Legal: BYOK terms of service reviewed | Legal | [ ] |
+| Legal: BYOK terms of service live on revue.sh | Legal | [ ] |
 | Legal: data handling / diff privacy statement live on revue.sh | Legal | [ ] |
 | Product Hunt hunter confirmed and launch page approved | Marketing | [ ] |
 
@@ -89,7 +89,7 @@ All times are UTC. Adjust for [CONFIRM: primary team timezone].
 | Scenario | Response |
 |----------|----------|
 | revue.sh down at launch time | Roll back to previous deploy; delay channels by 2 hours; post status update |
-| OpenRouter / DeepSeek outage | Switch default model to Sonnet 4.5 temporarily; update pricing page note |
+| OpenRouter / DeepSeek outage | Switch default model to Sonnet 4.6 temporarily; update pricing page note |
 | Claude Code registry publish failure | `/revue` install unavailable; update r/ClaudeAI post to remove install command; add waitlist CTA |
 | Product Hunt launch page rejected | Move to next available Tuesday; resubmit with amended gallery |
 | Negative HN thread (privacy / security concerns) | Prepared response: BYOK architecture, diff-only API calls, no code storage, open-source diff sanitiser |

@@ -18,7 +18,7 @@ The thing I got wrong: I was treating "ask Claude to review my code" as a free o
 
 **How `/revue` fixes this**
 
-Run it inside your Claude Code session, before you commit. It reads your staged diff and runs six specialised agents in parallel:
+Run it inside your Claude Code session, before you commit. It reads your staged diff and runs six agents in parallel:
 
 - Security (injection, auth, supply-chain)
 - Performance (O(n²), memory, queries)  
@@ -50,7 +50,7 @@ claude skill install revue
 
 https://revue.sh
 
-Happy to answer questions about the architecture or the DeepSeek model choice — I know that one comes up.
+Questions about the architecture, the DeepSeek choice, or the false positive rate welcome in the comments.
 
 ---
 

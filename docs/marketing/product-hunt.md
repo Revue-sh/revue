@@ -8,13 +8,13 @@ AI code review that slashes your AI API bill by 79–88%
 
 ## Short Description (260-char pitch)
 
-Revue is a multi-agent AI code reviewer that runs inside Claude Code before every commit. Six specialised agents catch security, performance, and architecture issues in parallel. Default model: DeepSeek-V4-Pro — 87% cheaper than Sonnet 4.5.
+Revue is a multi-agent AI code reviewer that runs inside Claude Code before every commit. Six agents catch security, performance, and architecture issues in parallel. Default model: DeepSeek-V4-Pro — 87% cheaper than Sonnet 4.5.
 
 *(240 chars)*
 
 ## Gallery Captions
 
-1. **The /revue skill** — Run `revue` inside Claude Code on any staged diff. Six agents run in parallel; findings appear in your terminal before you push.
+1. **The /revue skill** — Run `/revue` inside Claude Code on any staged diff. Six agents run in parallel; findings appear in your terminal before you push.
 2. **Six-agent architecture** — Security, Performance, Architecture, Code Quality, Licensing, and Synthesis agents run simultaneously. No single-model bottleneck.
 3. **Cost comparison** — DeepSeek-V4-Pro vs Anthropic Sonnet 4.5: ~87% per-token savings with equivalent code-review quality.
 4. **Platform integrations** — GitHub, GitLab, and Bitbucket. CI sidecar mode for automated PR comments in any pipeline.
@@ -52,9 +52,9 @@ GitHub, GitLab, and Bitbucket. Runs as a local Claude Code skill or as a CI side
 
 Hi PH 👋 — I'm [CONFIRM: maker name], and I built Revue after watching our AI API costs compound every sprint.
 
-The insight: most teams pay for the same code review twice. AI writes code and misses something. A human catches it. Then AI reruns on the full context to fix it. That loop is expensive. Running specialist review before the commit stops it from happening.
+The insight: most teams pay for the same code review twice. AI writes code and misses something. A human catches it. Then AI reruns on the full context to fix it. That loop is expensive. Running review before the commit stops it from happening.
 
-I can walk through the multi-agent architecture, the DeepSeek choice, BYOK setup, or how the synthesis layer deduplicates findings. Questions?
+Questions about the architecture, DeepSeek choice, BYOK setup, or how the synthesis layer handles conflicting findings are welcome.
 
 https://revue.sh
 
