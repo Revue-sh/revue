@@ -18,6 +18,7 @@ from routes.docs_routes import router as docs_router
 from routes.legal_routes import router as legal_router
 from routes.api_routes import router as api_router
 from routes.skills_routes import router as skills_router, make_manifest_builder
+from routes.usage_routes import router as usage_router
 
 # Hosts on which paths are rewritten to add the `/api` prefix internally,
 # letting `api.<env>.revue.sh/<path>` serve the same handlers as
@@ -59,7 +60,7 @@ _UNMATCHED_ROUTE = "__unmatched__"
 #
 # Everything else with an unsafe method is PROTECTED. New form routes are
 # protected automatically (fails-upward), matching the project's posture.
-CSRF_EXEMPT_PATHS = {"/webhooks/stripe", "/api/webhooks/stripe"}
+CSRF_EXEMPT_PATHS = {"/webhooks/stripe", "/api/webhooks/stripe", "/usage/track"}
 
 
 def _is_csrf_exempt_path(path: str) -> bool:
@@ -179,6 +180,7 @@ def create_app() -> FastAPI:
     application.include_router(legal_router)
     application.include_router(skills_router)
     application.include_router(api_router, prefix="/api")
+    application.include_router(usage_router)
 
     @application.get("/health")
     async def health() -> dict:

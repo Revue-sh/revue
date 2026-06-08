@@ -325,6 +325,28 @@ def create_review_run(
     return cur.lastrowid  # type: ignore[return-value]
 
 
+def has_recent_track_event(
+    conn: sqlite3.Connection,
+    license_key_id: int,
+    repo_id: Optional[str],
+    window_seconds: int = 60,
+) -> bool:
+    """Return True if a review_run for this key+repo exists within the last N seconds.
+
+    Empty repo_id normalised to None by callers — consistent with create_review_run.
+    Used by POST /usage/track to deduplicate CLI retries (AC5).
+    """
+    row = conn.execute(
+        """SELECT 1 FROM review_runs
+           WHERE license_key_id = ?
+             AND (repo_id = ? OR (repo_id IS NULL AND ? IS NULL))
+             AND created_at > datetime('now', ?)
+           LIMIT 1""",
+        (license_key_id, repo_id, repo_id, f"-{window_seconds} seconds"),
+    ).fetchone()
+    return row is not None
+
+
 def get_recent_reviews(conn: sqlite3.Connection, user_id: int, limit: int = 10) -> list[ReviewRun]:
     rows = conn.execute(
         """SELECT rr.* FROM review_runs rr
