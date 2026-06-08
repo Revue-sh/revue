@@ -9,7 +9,7 @@ import logging
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from database import REVIEWS_LIMIT_BY_TIER, get_db
 from models import (
@@ -28,7 +28,7 @@ class UsageTrackRequest(BaseModel):
     key: str
     repo_id: str = ""
     agents_used: list[str] = []
-    duration_ms: int = 0
+    duration_ms: int = Field(default=0, ge=0)
 
 
 @router.post("/usage/track")
@@ -61,6 +61,8 @@ async def track_usage(request: Request) -> Response:
     repo_id = body.repo_id or None
 
     with get_db() as conn:
+        # IMMEDIATE lock prevents TOCTOU between the dedup check and the insert.
+        conn.execute("BEGIN IMMEDIATE")
         lic = get_license_by_key(conn, body.key)
         if lic is None:
             return JSONResponse({"error": "unknown_key"}, status_code=401)

@@ -160,6 +160,16 @@ async def test_track_exhausted_free_tier_still_persists_and_increments(client):
 
 
 @pytest.mark.asyncio
+async def test_track_negative_duration_ms_returns_400(client):
+    """duration_ms must be >= 0; negative values are rejected before reaching the DB."""
+    resp = await client.post(
+        "/usage/track",
+        json={**_BASE_PAYLOAD, "key": "test-key", "duration_ms": -1},
+    )
+    assert resp.status_code == 400, resp.text
+
+
+@pytest.mark.asyncio
 async def test_track_non_json_body_returns_400(client):
     """Non-JSON body → 400 (the except-Exception → invalid_payload branch)."""
     resp = await client.post(
