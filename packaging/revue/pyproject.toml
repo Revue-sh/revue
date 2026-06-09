@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "revue"
-version = "0.1.0"
+version = "0.19.0"
 description = "Run the Revue multi-agent code review pipeline locally via a Claude Code skill — no platform APIs, no Anthropic spend by default."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-    "revue_core~=0.1.0",
+    "revue_core~=0.19.0",
     "jsonschema>=4.21",
     "PyYAML>=6.0",
 ]

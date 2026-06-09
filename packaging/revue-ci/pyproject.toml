@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "revue-ci"
-version = "0.1.0"
+version = "0.19.0"
 description = "Revue CI/CLI entry point — runs the multi-agent code review pipeline against GitHub, GitLab, and Bitbucket pull requests."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -27,7 +27,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-    "revue_core~=0.1.0",
+    "revue_core~=0.19.0",
 ]
 
 [project.optional-dependencies]

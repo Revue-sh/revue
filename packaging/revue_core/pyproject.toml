@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "revue_core"
-version = "0.1.0"
+version = "0.19.0"
 description = "Shared orchestration logic for Revue multi-agent code review pipeline — CLI and CI integrations."
 readme = "README.md"
 requires-python = ">=3.9"
