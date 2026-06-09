@@ -394,7 +394,7 @@ async def test_billing_page_renders(client: AsyncClient):
     await _signup(client)
     resp = await client.get("/billing")
     assert resp.status_code == 200
-    assert b"Upgrade your plan" in resp.content
+    assert b"Plans &amp; Billing" in resp.content
     assert b"Indie" in resp.content
     assert b"Pro" in resp.content
     # Enterprise is hidden until a sales process is ready (REVUE-389).
@@ -439,7 +439,7 @@ async def test_billing_page_shows_coming_soon_without_stripe(client: AsyncClient
     monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
     await _signup(client)
     resp = await client.get("/billing")
-    assert b"Coming soon" in resp.content
+    assert b"Unavailable" in resp.content
 
 
 @pytest.mark.asyncio
@@ -516,13 +516,13 @@ async def test_billing_success_leads_with_cli_command_box(client: AsyncClient):
     resp = await client.get("/billing/success")
     body = resp.content
     # Hero command-box, full `revue activate <key>`.
-    assert b'id="activation-command-box"' in body
+    assert b'id="install-command-box"' in body
     assert b"revue activate lic_" in body
     # success-hero AC: the command-box is above all other content — it must come
     # FIRST in document order, ahead of the celebratory confirmation, the share
     # box, and the CI card. Order is keyed off the unique dom_id / link strings,
     # not raw HTML scans, so cosmetic markup changes don't break the assertion.
-    hero_pos = body.index(b'id="activation-command-box"')
+    hero_pos = body.index(b'id="install-command-box"')
     share_pos = body.index(b'id="share-key-box"')
     ci_pos = body.index(b"/docs/ci-setup")
     confirm_pos = body.index(b"You're all set")
@@ -556,7 +556,7 @@ async def test_billing_success_no_key_never_renders_blank_box(
     assert resp.status_code == 200
     body = resp.content
     # No command-box at all when there's no key — never an empty `revue activate`.
-    assert b'id="activation-command-box"' not in body
+    assert b'id="install-command-box"' not in body
     assert b'id="share-key-box"' not in body
     # The only `revue activate` reference allowed on the no-key path is the inert
     # placeholder in the provisioning prompt — never a real pre-filled command.

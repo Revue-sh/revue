@@ -25,20 +25,21 @@
 #}
 {% macro two_mode_block(variant="full", ci_setup_url="/docs/ci-setup") %}
 {% if variant == "compact" %}
-<div class="two-mode-block grid sm:grid-cols-2 gap-4" data-two-mode>
-  <div data-mode="cli" class="bg-gray-900 border border-brand-700 rounded-lg p-4">
-    <p class="text-xs font-semibold text-brand-400 uppercase tracking-wide mb-1">Local &amp; pre-commit · primary</p>
-    <p class="text-sm text-gray-300">
-      Activate the CLI to review code locally — in your terminal, editor, or AI agent — before you commit.
-    </p>
+<div class="two-mode-block grid sm:grid-cols-2 gap-4 pt-3" data-two-mode>
+  <div data-mode="cli" class="glow-card relative bg-gray-900 border border-brand-600 rounded-xl p-5 flex flex-col">
+    <div class="absolute -top-3 left-4 bg-brand-600 text-white text-xs px-3 py-1 rounded-full font-medium">Start here</div>
+    <div class="text-brand-400 text-3xl mb-3">⌨</div>
+    <h3 class="text-sm font-semibold text-white mb-1">In Claude Code: run <code class="text-brand-400 bg-gray-800 px-1.5 py-0.5 rounded">/revue</code></h3>
+    <p class="text-gray-400 text-sm">Type <code class="text-brand-400 bg-gray-800 px-1.5 py-0.5 rounded text-xs">/revue</code> in Claude Code to review your changes locally, before you commit.</p>
   </div>
-  <div data-mode="ci" class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">CI pipeline · team automation</p>
-    <p class="text-sm text-gray-400">
-      Add a <code class="font-mono text-gray-200">REVUE_LICENSE_KEY</code> secret to automate reviews on every PR/MR.
-      <a href="{{ ci_setup_url }}" class="text-brand-400 hover:underline">CI setup &rarr;</a>
-    </p>
-  </div>
+  <a href="{{ ci_setup_url }}" data-mode="ci" class="glow-card flex items-center justify-between bg-gray-900 border border-gray-800 rounded-xl px-5 py-5 hover:border-gray-700">
+    <div class="flex-1">
+      <div class="text-gray-400 text-3xl mb-3">⚙</div>
+      <p class="text-sm font-semibold text-gray-300">CI pipeline</p>
+      <p class="text-gray-500 text-xs mt-0.5">Automate reviews on every PR across GitHub, GitLab, and Bitbucket. Set up when your team is ready.</p>
+    </div>
+    <span class="text-brand-400 text-sm shrink-0 ml-4 self-start mt-1">&rarr;</span>
+  </a>
 </div>
 {% else %}
 <div class="two-mode-block" data-two-mode>
@@ -48,22 +49,23 @@
   </p>
   <div class="grid md:grid-cols-2 gap-8">
     {# CLI / local — primary, listed first #}
-    <div data-mode="cli" class="bg-gray-900 border-2 border-brand-600 rounded-xl p-6 relative">
+    <div data-mode="cli" class="glow-card bg-gray-900 border-2 border-brand-600 rounded-xl p-6 relative">
       <div class="absolute -top-3 left-6 bg-brand-600 text-white text-xs px-3 py-1 rounded-full font-medium">Primary</div>
-      <h3 class="text-lg font-semibold mb-2 mt-2">Local &amp; pre-commit — the command is the hero</h3>
+      <h3 class="text-lg font-semibold mb-2 mt-2">Claude Code skill</h3>
       <p class="text-gray-400 text-sm mb-4">
-        Run <code class="font-mono text-gray-100">revue activate &lt;key&gt;</code>, then review code locally —
-        in your terminal, editor, or AI coding agent — before it ever lands in a commit. This is where Revue
-        catches the most, at the moment of highest leverage.
+        Stage your changes and type <code class="font-mono text-gray-100">/revue</code> in Claude Code.
+        Six agents review in parallel (security, performance, architecture, and code quality)
+        before your code lands in a commit. Fix what they flag, commit clean.
       </p>
-      <a href="/activate" class="text-brand-400 hover:underline text-sm font-medium">Activate the CLI &rarr;</a>
+      <a href="/signup" class="text-brand-400 hover:underline text-sm font-medium">Get started free &rarr;</a>
     </div>
     {# CI / pipeline — complementary team automation #}
-    <div data-mode="ci" class="bg-gray-900 border border-gray-800 rounded-xl p-6">
-      <h3 class="text-lg font-semibold mb-2 mt-2">CI pipeline — automated team reviews</h3>
+    <div data-mode="ci" class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h3 class="text-lg font-semibold mb-2 mt-2">CI pipeline</h3>
       <p class="text-gray-400 text-sm mb-4">
-        Add a <code class="font-mono text-gray-200">REVUE_LICENSE_KEY</code> secret and a pipeline step to run
-        the same multi-agent review automatically on every Pull or Merge Request, posted as inline comments.
+        When a pull request opens, Revue triggers automatically in your pipeline. The same six agents
+        review the diff and post findings as inline comments on the PR, before your team begins the
+        human review. Works on GitHub, GitLab, and Bitbucket.
       </p>
       <a href="{{ ci_setup_url }}" class="text-brand-400 hover:underline text-sm font-medium">CI setup guide &rarr;</a>
     </div>

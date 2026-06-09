@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Revue{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="icon" type="image/png" href="/static/favicon.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
@@ -15,24 +16,25 @@
                         brand: {
                             50: '#f5f3ff',
                             100: '#ede9fe',
-                            200: '#ddd6fe',
-                            300: '#c4b5fd',
-                            400: '#a78bfa',
-                            500: '#8b5cf6',
-                            600: '#7c3aed',
-                            700: '#6d28d9',
+                            200: '#ddd6fe',   // --revue-accent-soft: focus rings, highlights
+                            300: '#c4b5fd',   // code text on dark surfaces
+                            400: '#9D7BF7',   // --revue-dark-tick: accent text on dark bg
+                            500: '#6D28D9',   // --revue-accent: secondary accent, form focus
+                            600: '#4514E0',   // --revue-primary: buttons, active states, links
+                            700: '#3710B8',   // --revue-primary-hover: hover state
                             800: '#5b21b6',
                             900: '#4c1d95',
                             950: '#2e1065',
+                        },
+                        gray: {
+                            950: '#09061D',   // --revue-bg-dark: branded deep background
                         }
                     }
                 }
             }
         }
     </script>
-    <style>
-        .copy-btn:active { transform: scale(0.95); }
-    </style>
+    <link rel="stylesheet" href="/static/revue.css">
 </head>
 <body class="h-full bg-gray-950 text-gray-100">
     {% block body %}{% endblock %}
@@ -69,6 +71,71 @@
             }
         });
     }
+    </script>
+    <script>
+    (function () {
+        var active = null;
+        function closeActive() {
+            if (active) { active.remove(); active = null; }
+        }
+        document.addEventListener('click', function (e) {
+            var trigger = e.target.closest('[data-popover]');
+            if (!trigger) { closeActive(); return; }
+            e.stopPropagation();
+            if (active && active._trigger === trigger) { closeActive(); return; }
+            closeActive();
+            var tip = document.createElement('div');
+            tip.className = 'popover-tip';
+            tip.textContent = trigger.dataset.popover;
+            tip._trigger = trigger;
+            document.body.appendChild(tip);
+            var r = trigger.getBoundingClientRect();
+            tip.style.position = 'fixed';
+            tip.style.zIndex = '9999';
+            tip.style.left = (r.left + r.width / 2) + 'px';
+            tip.style.top = (r.top - 8) + 'px';
+            tip.style.transform = 'translate(-50%, -100%)';
+            active = tip;
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') closeActive();
+        });
+        window.addEventListener('scroll', closeActive, { passive: true });
+    })();
+    </script>
+    <script>
+    (function () {
+        var cards = Array.from(document.querySelectorAll('.glow-card'));
+        var rects = [];
+        var mouseX = -9999, mouseY = -9999;
+        var rafId = null;
+
+        function cacheRects() {
+            rects = cards.map(function (c) { return c.getBoundingClientRect(); });
+        }
+
+        function paint() {
+            rafId = null;
+            cards.forEach(function (card, i) {
+                var r = rects[i];
+                if (!r) return;
+                card.style.setProperty('--glow-x', (mouseX - r.left) + 'px');
+                card.style.setProperty('--glow-y', (mouseY - r.top) + 'px');
+            });
+        }
+
+        document.addEventListener('mousemove', function (e) {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+            if (!rafId) rafId = requestAnimationFrame(paint);
+        });
+
+        // Recache positions after scroll or resize (cards move in the viewport)
+        window.addEventListener('scroll', cacheRects, { passive: true });
+        window.addEventListener('resize', cacheRects);
+
+        cacheRects();
+    })();
     </script>
 </body>
 </html>

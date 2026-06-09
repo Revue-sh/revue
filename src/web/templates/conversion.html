@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Conversion — Revue{% endblock %}
+{% block title %}Conversion | Revue{% endblock %}
 {% block body %}
 <div class="min-h-full">
     <!-- Nav -->
     <nav class="border-b border-gray-800">
         <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="/dashboard" class="text-2xl font-bold text-brand-400">Revue</a>
+            <a href="/dashboard"><img src="/static/logo.svg" alt="Revue" class="h-8 w-auto"></a>
             <div class="flex items-center gap-4">
                 <span class="text-gray-400 text-sm">{{ session.email }}</span>
                 <a href="/logout" class="text-gray-400 hover:text-white text-sm">Log out</a>
@@ -34,31 +34,31 @@
 
         <!-- Summary cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                <p class="text-gray-500 text-xs uppercase tracking-wide">Total users</p>
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs font-semibold">Total users</p>
                 <p class="text-3xl font-bold mt-1">{{ analytics.total_users }}</p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                <p class="text-gray-500 text-xs uppercase tracking-wide">Paid users</p>
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs font-semibold">Paid users</p>
                 <p class="text-3xl font-bold mt-1 {% if analytics.paid_users > 0 %}text-green-400{% endif %}">
                     {{ analytics.paid_users }}
                 </p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                <p class="text-gray-500 text-xs uppercase tracking-wide">Conversion rate</p>
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs font-semibold">Conversion rate</p>
                 <p class="text-3xl font-bold mt-1 {% if analytics.conversion_rate > 0 %}text-green-400{% endif %}">
                     {{ analytics.conversion_rate }}<span class="text-lg font-normal text-gray-400">%</span>
                 </p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                <p class="text-gray-500 text-xs uppercase tracking-wide">Free users</p>
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs font-semibold">Free users</p>
                 <p class="text-3xl font-bold mt-1">{{ analytics.tier_breakdown.free }}</p>
             </div>
         </div>
 
         {% if analytics.total_users == 0 %}
         <!-- Empty state -->
-        <div class="bg-gray-900 border border-gray-800 rounded-xl px-6 py-16 text-center text-gray-500">
+        <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl px-6 py-16 text-center text-gray-500">
             <p class="text-lg mb-2">No users yet.</p>
             <p class="text-sm">Conversion data will appear here once users start signing up.</p>
         </div>
@@ -66,7 +66,7 @@
 
         <div class="grid md:grid-cols-2 gap-6 mb-6">
             <!-- Tier breakdown -->
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-6">
                 <h2 class="font-semibold mb-4">Tier breakdown</h2>
                 {% set tb = analytics.tier_breakdown %}
                 {% set tb_total = analytics.total_users %}
@@ -95,7 +95,7 @@
             </div>
 
             <!-- Reviews/month buckets -->
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-6">
                 <h2 class="font-semibold mb-4">Reviews per month (user activity)</h2>
                 {% set bk = analytics.reviews_per_month_buckets %}
                 {% set bk_total = analytics.total_users %}
@@ -125,7 +125,7 @@
 
         <!-- Referral sources -->
         {% if analytics.referral_sources %}
-        <div class="bg-gray-900 border border-gray-800 rounded-xl mb-6">
+        <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl mb-6">
             <div class="px-6 py-4 border-b border-gray-800">
                 <h2 class="font-semibold">Referral sources</h2>
             </div>
@@ -156,7 +156,7 @@
 
         <!-- Signups over time -->
         {% if analytics.signups_over_time %}
-        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-6">
             <h2 class="font-semibold mb-4">Signups over time</h2>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm">

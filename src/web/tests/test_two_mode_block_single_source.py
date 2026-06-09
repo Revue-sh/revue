@@ -56,11 +56,10 @@ def test_full_variant_cli_listed_before_ci():
     assert html.index('data-mode="cli"') < html.index('data-mode="ci"')
 
 
-def test_full_variant_references_revue_activate():
-    # The FULL variant (landing) carries the explicit `revue activate` command
-    # (REVUE-408 AC: landing.html contains >=1 reference to `revue activate`).
+def test_full_variant_references_revue_skill():
+    # The FULL variant (landing) references the /revue Claude Code skill invocation.
     html = _render(variant="full")
-    assert "revue activate" in html
+    assert "/revue" in html
 
 
 def test_compact_variant_cli_block_describes_local_without_bare_command():

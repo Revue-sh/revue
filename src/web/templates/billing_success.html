@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/command_box.html" import command_box %}
-{% block title %}Subscription activated — Revue{% endblock %}
+{% block title %}Subscription activated | Revue{% endblock %}
 {% block body %}
 <div class="min-h-full px-6 py-12">
   <div class="w-full max-w-2xl mx-auto">
@@ -17,7 +17,7 @@
          No heading, banner, or copy precedes the command-box. -->
     <section class="mb-6">
       {{ command_box(
-           dom_id="activation-command-box",
+           dom_id="install-command-box",
            command="revue activate " ~ _key,
            caption="Writes your licence so Revue runs offline.",
          ) }}
@@ -35,7 +35,7 @@
     <section class="mb-6">
       <h2 class="text-base font-semibold mb-3">Two ways to use Revue</h2>
       <p class="text-gray-400 text-sm mb-4">
-        The command above runs Revue locally and in your pre-commit flow — no CI needed.
+        The command above runs Revue locally and in your pre-commit flow. No CI needed.
         Working with a developer who runs the pipeline? Hand them your key, or set up CI.
       </p>
 

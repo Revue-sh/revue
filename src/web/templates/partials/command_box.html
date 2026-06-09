@@ -35,7 +35,7 @@
 {% set _payload = copy_payload if copy_payload is not none else command %}
 {% set _visible = masked_display if masked else command %}
 <div id="{{ dom_id }}"
-     class="command-box bg-gray-950 border border-purple-500/60 rounded-lg p-4"
+     class="command-box bg-gray-950 border border-gray-800 rounded-lg p-4"
      data-copy-payload="{{ _payload }}"
      {% if masked %}data-masked="true"{% endif %}>
   <div class="flex items-center justify-between gap-3">
@@ -46,11 +46,11 @@
        never enters a JS-string literal, so a hostile dom_id cannot break out. #}
     <button id="{{ dom_id }}-copy"
             type="button"
-            class="copy-btn shrink-0 bg-purple-600 hover:bg-purple-500 text-white text-xs px-3 py-1.5 rounded-lg"
+            class="copy-btn shrink-0 bg-gray-800 hover:bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg"
             onclick="copyToClipboard(this.closest('.command-box').dataset.copyPayload, this.id, 'Copied! ✓')">Copy</button>
   </div>
-  {% if caption %}
-  <p class="command-box-caption text-xs text-gray-500 mt-2">{{ caption }}</p>
-  {% endif %}
 </div>
+{% if caption %}
+<p class="command-box-caption text-xs text-gray-500 mt-2">{{ caption }}</p>
+{% endif %}
 {% endmacro %}

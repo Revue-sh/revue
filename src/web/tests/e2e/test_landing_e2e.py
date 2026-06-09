@@ -44,8 +44,8 @@ def test_landing_both_modes_cli_first(page, base_url):
     ci = page.locator('[data-mode="ci"]')
     assert cli.count() >= 1
     assert ci.count() >= 1
-    # Landing carries the explicit `revue activate` reference (full variant).
-    assert "revue activate" in page.content()
+    # Landing carries the /revue skill invocation reference (full variant).
+    assert "/revue" in page.content()
     # Every CI-mode CTA links to /docs/ci-setup.
     ci_link = ci.first.locator('a[href$="/docs/ci-setup"]')
     assert ci_link.count() >= 1
@@ -61,7 +61,7 @@ def test_landing_no_ci_only_regression(page, base_url):
 def test_landing_cost_beat_below_hero(page, base_url):
     page.goto(base_url + "/")
     content = page.content()
-    assert "The expensive part is CI, not you." in content
+    assert "The bill is cycles" in content
     assert content.index("Real review at AI speed") < content.index(
-        "The expensive part is CI, not you."
+        "The bill is cycles"
     )

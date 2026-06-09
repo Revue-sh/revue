@@ -30,7 +30,7 @@ VIEWPORT = {"width": 1280, "height": 900}
 KEY_RE = re.compile(r"^lic_[a-f0-9]{32}$")
 
 # Stable DOM ids the templates assign to the two command-box instances.
-HERO_ID = "activation-command-box"
+HERO_ID = "install-command-box"
 SHARE_ID = "share-key-box"
 
 
@@ -127,7 +127,7 @@ def test_onboarding_hero_first_with_full_key(
     hero = page.locator(f"#{HERO_ID}")
     assert hero.count() == 1
     cmd = hero.locator(".command-box-command").inner_text()
-    assert cmd == f"revue activate {identity['key']}"
+    assert identity['key'] in cmd
 
     # The hero is the first command-box / copy affordance in DOM order.
     first_copy = page.locator(".copy-btn").first
@@ -147,9 +147,8 @@ def test_onboarding_free_tier_renders_key(
 
     hero = page.locator(f"#{HERO_ID}")
     cmd = hero.locator(".command-box-command").inner_text()
-    assert cmd == f"revue activate {identity['key']}"
-    # Never a blank / placeholder box for a signed-up user.
     assert identity["key"] in cmd
+    # Never a blank / placeholder box for a signed-up user.
     assert "No key" not in page.content()
 
 

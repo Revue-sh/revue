@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/command_box.html" import command_box %}
-{% block title %}Get started — Revue{% endblock %}
+{% block title %}Get started | Revue{% endblock %}
 {% block body %}
 <!-- Stable, layout-neutral marker exposing the authenticated user id. Consumed by
      the staging-E2E provisioner (scripts/provision_staging_e2e.py:_resolve_user_id)
@@ -12,7 +12,7 @@
     <!-- Nav -->
     <nav class="border-b border-gray-800">
         <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="/dashboard" class="text-2xl font-bold text-brand-400">Revue</a>
+            <a href="/dashboard"><img src="/static/logo.svg" alt="Revue" class="h-8 w-auto"></a>
             <div class="flex items-center gap-4">
                 <span class="text-gray-400 text-sm">{{ session.email }}</span>
                 <a href="/logout" class="text-gray-400 hover:text-white text-sm">Log out</a>
@@ -31,104 +31,98 @@
         {% if license_key %}
         <!-- Step 1 — Install + activate in one command -->
         <section class="mb-8">
-            <div class="flex items-center gap-3 mb-3">
-                <span class="flex items-center justify-center w-6 h-6 rounded-full bg-purple-600 text-white text-xs font-bold shrink-0">1</span>
-                <h2 class="text-sm font-semibold uppercase tracking-wide text-purple-300">Install Revue</h2>
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="flex items-center justify-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">1</span>
+                    <h2 class="text-base font-semibold">Install Revue</h2>
+                </div>
+                {{ command_box(
+                     dom_id="install-command-box",
+                     command="curl -fsSL https://raw.githubusercontent.com/Revue-sh/revue/main/scripts/install.sh | bash -s -- --key " ~ license_key.key,
+                     caption="Installs Revue, adds /revue to Claude Code, and activates your licence in one step. Run from your project directory.",
+                   ) }}
             </div>
-            {{ command_box(
-                 dom_id="install-command-box",
-                 command="curl -fsSL https://raw.githubusercontent.com/Revue-sh/revue/main/scripts/install.sh | bash -s -- --key " ~ license_key.key,
-                 caption="Installs Revue, adds /revue to Claude Code, and activates your licence — all in one step. Run from your project directory.",
-               ) }}
         </section>
 
         <!-- Step 2 — Use it -->
         <section class="mb-8">
             <div class="flex items-center gap-3 mb-4">
-                <span class="flex items-center justify-center w-6 h-6 rounded-full bg-purple-600 text-white text-xs font-bold shrink-0">2</span>
+                <span class="flex items-center justify-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">2</span>
                 <h2 class="text-base font-semibold">Two ways to use Revue</h2>
             </div>
 
-            <!-- Way 1: Claude Code (primary) -->
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-3">
-                <div class="flex items-start gap-3 mb-3">
-                    <span class="text-purple-400 text-lg mt-0.5">⌨</span>
-                    <div>
-                        <h3 class="text-sm font-semibold text-white mb-1">In Claude Code — review before you commit</h3>
-                        <p class="text-gray-400 text-sm">Stage your changes, then run <code class="text-purple-300 bg-gray-800 px-1.5 py-0.5 rounded text-xs">/revue</code> in your Claude Code session. Six agents analyse your diff in parallel and surface findings inline — before the code ever reaches CI.</p>
-                    </div>
+            <div class="grid sm:grid-cols-2 gap-4 pt-3">
+                <!-- Way 1: Claude Code (primary) -->
+                <div class="glow-card relative bg-gray-900 border border-brand-600 rounded-lg p-5 flex flex-col">
+                    <div class="absolute -top-3 left-4 bg-brand-600 text-white text-xs px-3 py-1 rounded-full font-medium">Start here</div>
+                    <div class="text-brand-400 text-3xl mb-3">⌨</div>
+                    <h3 class="text-sm font-semibold text-white mb-1">In Claude Code: run <code class="text-brand-400 bg-gray-800 px-1.5 py-0.5 rounded">/revue</code></h3>
+                    <p class="text-gray-400 text-sm">Stage your changes and type <code class="text-brand-400 bg-gray-800 px-1.5 py-0.5 rounded text-xs">/revue</code>. Findings appear inline before you commit.</p>
                 </div>
-                <div class="flex gap-3 text-xs text-gray-500 font-mono pl-8">
-                    <span>git add -p</span>
-                    <span class="text-gray-700">→</span>
-                    <span class="text-purple-300">/revue</span>
-                </div>
-            </div>
 
-            <!-- Way 2: CI (secondary) -->
-            <a href="{{ url_for('ci_setup') }}"
-               class="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-lg px-5 py-4 hover:border-gray-700">
-                <div class="flex items-start gap-3">
-                    <span class="text-gray-400 text-lg mt-0.5">⚙</span>
-                    <div>
-                        <p class="text-sm font-semibold text-gray-300">In CI — review every Pull Request automatically</p>
-                        <p class="text-gray-500 text-xs mt-0.5">GitHub, GitLab, and Bitbucket. Findings post as inline PR comments.</p>
+                <!-- Way 2: CI (secondary) -->
+                <a href="{{ url_for('ci_setup') }}"
+                   class="glow-card flex items-center justify-between bg-gray-900 border border-gray-800 rounded-lg px-5 py-5 hover:border-gray-700">
+                    <div class="flex-1">
+                        <div class="text-gray-400 text-3xl mb-3">⚙</div>
+                        <p class="text-sm font-semibold text-gray-300">CI pipeline</p>
+                        <p class="text-gray-500 text-xs mt-0.5">Automate reviews on every PR across GitHub, GitLab, and Bitbucket. Set up when your team is ready.</p>
                     </div>
-                </div>
-                <span class="text-brand-400 text-sm shrink-0 ml-4">&rarr;</span>
-            </a>
+                    <span class="text-brand-400 text-sm shrink-0 ml-4 self-start mt-1">&rarr;</span>
+                </a>
+            </div>
         </section>
         {% else %}
         <!-- Step 1 — Install (keyless: no licence key on account yet) -->
         <section class="mb-8">
-            <div class="flex items-center gap-3 mb-3">
-                <span class="flex items-center justify-center w-6 h-6 rounded-full bg-purple-600 text-white text-xs font-bold shrink-0">1</span>
-                <h2 class="text-sm font-semibold uppercase tracking-wide text-purple-300">Install Revue</h2>
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="flex items-center justify-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">1</span>
+                    <h2 class="text-base font-semibold">Install Revue</h2>
+                </div>
+                {{ command_box(
+                     dom_id="install-command-box",
+                     command="curl -fsSL https://raw.githubusercontent.com/Revue-sh/revue/main/scripts/install.sh | bash",
+                     caption="Installs Revue and adds /revue to Claude Code. Run from your project directory. Activate your licence key separately once you have one.",
+                   ) }}
+                <p class="text-gray-500 text-xs mt-3">
+                    No licence key yet?
+                    <a href="/dashboard" class="text-brand-400 hover:underline">Go to your dashboard</a>
+                    to pick a plan. Your personalised one-command install will appear here automatically.
+                </p>
             </div>
-            {{ command_box(
-                 dom_id="install-command-box",
-                 command="curl -fsSL https://raw.githubusercontent.com/Revue-sh/revue/main/scripts/install.sh | bash",
-                 caption="Installs Revue and adds /revue to Claude Code. Run from your project directory. Activate your licence key separately once you have one.",
-               ) }}
-            <p class="text-gray-500 text-xs mt-3">
-                No licence key yet?
-                <a href="/dashboard" class="text-brand-400 hover:underline">Go to your dashboard</a>
-                to pick a plan — your personalised one-command install will appear here automatically.
-            </p>
         </section>
 
         <!-- Step 2 — Use it -->
         <section class="mb-8">
             <div class="flex items-center gap-3 mb-4">
-                <span class="flex items-center justify-center w-6 h-6 rounded-full bg-purple-600 text-white text-xs font-bold shrink-0">2</span>
+                <span class="flex items-center justify-center w-6 h-6 rounded-full bg-brand-600 text-white text-xs font-bold shrink-0">2</span>
                 <h2 class="text-base font-semibold">Two ways to use Revue</h2>
             </div>
 
             <div class="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-3">
                 <div class="flex items-start gap-3 mb-3">
-                    <span class="text-purple-400 text-lg mt-0.5">⌨</span>
+                    <span class="text-brand-400 text-lg mt-0.5">⌨</span>
                     <div>
-                        <h3 class="text-sm font-semibold text-white mb-1">In Claude Code — review before you commit</h3>
-                        <p class="text-gray-400 text-sm">Stage your changes, then run <code class="text-purple-300 bg-gray-800 px-1.5 py-0.5 rounded text-xs">/revue</code> in your Claude Code session.</p>
+                        <h3 class="text-sm font-semibold text-white mb-1">Review in Claude Code before you commit</h3>
+                        <p class="text-gray-400 text-sm">Stage your changes, then run <code class="text-brand-400 bg-gray-800 px-1.5 py-0.5 rounded text-xs">/revue</code> in your Claude Code session.</p>
                     </div>
                 </div>
                 <div class="flex gap-3 text-xs text-gray-500 font-mono pl-8">
                     <span>git add -p</span>
                     <span class="text-gray-700">→</span>
-                    <span class="text-purple-300">/revue</span>
+                    <span class="text-brand-400">/revue</span>
                 </div>
             </div>
 
             <a href="{{ url_for('ci_setup') }}"
-               class="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-lg px-5 py-4 hover:border-gray-700">
-                <div class="flex items-start gap-3">
-                    <span class="text-gray-400 text-lg mt-0.5">⚙</span>
-                    <div>
-                        <p class="text-sm font-semibold text-gray-300">In CI — review every Pull Request automatically</p>
-                        <p class="text-gray-500 text-xs mt-0.5">GitHub, GitLab, and Bitbucket. Findings post as inline PR comments.</p>
-                    </div>
+               class="glow-card flex items-center justify-between bg-gray-900 border border-gray-800 rounded-lg px-5 py-5 hover:border-gray-700">
+                <div class="flex-1">
+                    <div class="text-gray-400 text-3xl mb-3">⚙</div>
+                    <p class="text-sm font-semibold text-gray-300">CI pipeline</p>
+                    <p class="text-gray-500 text-xs mt-0.5">Automate reviews on every PR across GitHub, GitLab, and Bitbucket. Set up when your team is ready.</p>
                 </div>
-                <span class="text-brand-400 text-sm shrink-0 ml-4">&rarr;</span>
+                <span class="text-brand-400 text-sm shrink-0 ml-4 self-start mt-1">&rarr;</span>
             </a>
         </section>
         {% endif %}

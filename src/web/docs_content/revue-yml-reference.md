@@ -171,11 +171,11 @@ Controls which review team runs and where custom agents are loaded from.
 | Team name | Description |
 |---|---|
 | `team-full-review` | All specialists: code quality, security, performance, architecture |
-| `team-quick` | Code quality only (Maya) — fast, low cost |
-| `team-security-focus` | Security-first: Zara (security) + Maya (code quality) |
-| `team-performance` | Kai (performance) + Maya (code quality) |
-| `team-swift-ios` | Swift/iOS-specific agents + Zara |
-| `team-kotlin-android` | Kotlin/Android-specific agents + Zara |
+| `team-quick` | Code quality only — fast, low cost |
+| `team-security-focus` | Security-first: Security + Code quality |
+| `team-performance` | Performance + Code quality |
+| `team-swift-ios` | Swift/iOS-specific rules + Security |
+| `team-kotlin-android` | Kotlin/Android-specific rules + Security |
 | `team-python` | Python-focused agents |
 | `team-typescript` | TypeScript-focused agents |
 
@@ -284,8 +284,6 @@ ai:
   model: gpt-4o-mini
   api_key_env: MY_CORP_AI_KEY   # reads $MY_CORP_AI_KEY instead of $OPENAI_API_KEY
 ```
-
-> **Multi-provider key support (post-MVP):** When Revue adds fallback provider support (REVUE-147, REVUE-148), each provider in the chain will have its own `api_key_env` field. Until then, `api_key_env` applies to the single configured provider.
 
 ---
 

@@ -6,19 +6,22 @@
 
 ### What is Revue?
 
-Revue is a multi-agent AI code review tool that runs inside your CI pipeline. When a pull request or merge request is opened, Revue fetches the diff, runs a team of specialist AI agents (security, performance, code quality, architecture), consolidates their findings, and posts inline comments directly on the PR.
+Revue is a multi-agent AI code reviewer with two modes:
 
-Your source code never leaves your CI runner — only the review output (findings and suggestions) is handled by Revue's backend.
+**Claude Code skill (primary):** Install `/revue` in Claude Code and run it on your staged diff before you commit. Six specialist agents review your code inline, before it ever reaches CI.
+
+**CI pipeline (secondary):** Add Revue to your GitHub Actions, GitLab CI, or Bitbucket Pipelines to automatically review every pull request or merge request.
 
 ### What platforms does Revue support?
 
-- **GitHub** — GitHub Actions, via `revue-io/action@v1`
-- **GitLab** — GitLab CI/CD, via the Revue CI template
-- **Bitbucket** — Bitbucket Pipelines, via the Revue Pipe
+- **Claude Code** (primary) — via the `/revue` skill, installed with one command
+- **GitHub** — GitHub Actions
+- **GitLab** — GitLab CI/CD
+- **Bitbucket** — Bitbucket Pipelines
 
-### Does Revue send my code to an external server?
+### Does Revue read my code?
 
-No. Revue runs entirely inside your CI runner. The diff is processed locally; only findings and metadata (review count, agents used) are sent to the Revue API for license validation and usage tracking. Your source code is never transmitted.
+No. Revue never reads your code. Your code diff goes directly to the AI provider you configure, using your own API key. Revue's servers only handle licence validation and usage counts. No source code is ever transmitted to Revue.
 
 ---
 
@@ -26,7 +29,7 @@ No. Revue runs entirely inside your CI runner. The diff is processed locally; on
 
 ### What is the diff limit?
 
-By default, Revue stops reviewing if the diff exceeds 2,000 lines and suggests breaking the PR into smaller pieces. This is to keep AI costs predictable and reviews fast.
+By default, Revue stops reviewing if the diff exceeds 2,000 lines and suggests breaking the PR into smaller pieces. This keeps AI costs predictable and reviews fast.
 
 You can raise the limit in `.revue.yml`:
 
@@ -37,7 +40,7 @@ review:
 
 ### What counts toward the diff limit?
 
-Every line in the unified diff — context lines, additions, and deletions across all changed files.
+Every line in the unified diff: context lines, additions, and deletions across all changed files.
 
 ### What happens when the limit is exceeded?
 
@@ -51,7 +54,7 @@ Revue posts a summary comment explaining that the diff is too large and suggesti
 
 Yes. Revue uses your own AI provider key — it does not have a shared AI backend. This means:
 - Your code never leaves your infrastructure
-- You choose your AI provider (Anthropic, OpenAI, Azure, etc.)
+- You choose your AI provider (OpenRouter, Anthropic, OpenAI, Azure, etc.)
 - You control costs directly
 
 ### Which AI providers are supported?
@@ -68,12 +71,12 @@ Set the API key as a CI secret and reference it in `.revue.yml`:
 
 ```yaml
 ai:
-  provider: openrouter              # default — cheapest reliable reviewer pair
+  provider: openrouter              # default — most cost-efficient
   model: deepseek/deepseek-v4-pro
   api_key_env: OPENROUTER_API_KEY   # name of your CI secret
 ```
 
-To opt into Anthropic Sonnet instead, set `provider: anthropic`, `model: claude-sonnet-4-5-20250929`, `api_key_env: ANTHROPIC_API_KEY`.
+To use Anthropic instead, set `provider: anthropic`, `model: claude-sonnet-4-6`, `api_key_env: ANTHROPIC_API_KEY`.
 
 ---
 
@@ -88,7 +91,7 @@ Yes. Set `fail_on_critical: true` in your CI configuration and Revue will exit w
 - uses: revue-io/action@v1
   with:
     fail_on_critical: "true"
-    ai_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+    ai_api_key: ${{ secrets.OPENROUTER_API_KEY }}
 ```
 
 **GitLab CI:**
@@ -108,26 +111,26 @@ variables:
 
 ---
 
-## Sage fix suggestions
+## Fix suggestions
 
-### What is Sage?
+### How do fix suggestions work?
 
-Sage is Revue's resolver agent. After the specialist agents find issues, Sage evaluates each finding and, where it can generate a safe, scoped fix, posts a platform-native code suggestion (1-click accept in GitHub/GitLab/Bitbucket).
+After the specialist reviewers surface findings, a resolver step evaluates each one and, where it can generate a safe scoped fix, posts a platform-native code suggestion (1-click accept in GitHub/GitLab/Bitbucket).
 
-### How do I control Sage's confidence threshold?
+### How do I control the confidence threshold?
 
 Set `min_confidence` in `.revue.yml`:
 
 ```yaml
 review:
-  min_confidence: 70  # 0–100, default 70
+  min_confidence: 70  # 0-100, default 70
 ```
 
-Sage will only post suggestions for findings where its confidence score is at or above this value. Setting it higher (e.g. 85) means fewer but higher-quality suggestions.
+Only suggestions above this confidence score are posted. Setting it higher (e.g. 85) means fewer but higher-quality suggestions.
 
-### Can I disable Sage?
+### Can I disable fix suggestions?
 
-Yes — use `team-quick` or any team that doesn't include Sage in the pipeline. Alternatively, set `min_confidence: 100` to suppress all suggestions.
+Yes. Use `team-quick` or any team that does not include the resolver step. Alternatively, set `min_confidence: 100` to suppress all suggestions.
 
 ---
 
@@ -135,7 +138,7 @@ Yes — use `team-quick` or any team that doesn't include Sage in the pipeline. 
 
 ### How many reviews do I get on the Free tier?
 
-25 reviews per month. A "review" is one PR/MR diff processed by the review pipeline.
+25 reviews per month. A "review" is one diff processed by the review pipeline, whether run locally via `/revue` or in CI.
 
 ### What happens when I hit the limit?
 
@@ -143,7 +146,7 @@ Revue returns a 429 response and posts a comment on the PR explaining that the l
 
 ### Does the counter reset monthly?
 
-Yes — on the first day of each calendar month.
+Yes, on the first day of each calendar month.
 
 ---
 
@@ -158,14 +161,13 @@ Yes — on the first day of each calendar month.
 
 ### "License key is invalid"
 
-- Copy your key fresh from the [dashboard](/dashboard) — keys are long and easy to truncate.
+- Copy your key fresh from the [dashboard](/dashboard): keys are long and easy to truncate.
 - Check for leading/trailing whitespace in the CI secret value.
 - If the key was recently regenerated, update the secret.
 
 ### The review is very slow
 
 - Increase `agent_timeout_seconds` to 120 in `.revue.yml`.
-- Switch to a faster model (e.g. `claude-haiku` or `gpt-4o-mini`) for large diffs.
 - Use `team-quick` for rapid feedback on small changes.
 
 ### I'm getting "diff too large" on every PR

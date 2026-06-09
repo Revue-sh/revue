@@ -1,17 +1,17 @@
 {% extends "base.html" %}
-{% block title %}CI Setup — Revue Docs{% endblock %}
+{% block title %}CI Setup | Revue Docs{% endblock %}
 {% block body %}
 <div class="min-h-full">
     <!-- Top nav (mirrors docs.html) -->
     <nav class="border-b border-gray-800 sticky top-0 bg-gray-950 z-10">
         <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
             <div class="flex items-center gap-6">
-                <a href="/" class="text-xl font-bold text-brand-400">Revue</a>
+                <a href="/"><img src="/static/logo.svg" alt="Revue" class="h-8 w-auto"></a>
                 <span class="text-gray-700">|</span>
                 <span class="text-gray-400 text-sm font-medium">Documentation</span>
             </div>
             <div class="flex items-center gap-4">
-                <a href="/dashboard" class="text-gray-400 hover:text-white text-sm">Dashboard</a>
+                <a href="/login" class="text-gray-400 hover:text-white text-sm">Log in</a>
                 <a href="/signup" class="bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg">
                     Get started free
                 </a>
@@ -24,7 +24,7 @@
         <aside class="w-56 flex-shrink-0 sticky top-20 self-start">
             {% for section in nav %}
             <div class="mb-6">
-                <p class="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2">{{ section.section }}</p>
+                <p class="text-xs font-semibold text-gray-500 mb-2">{{ section.section }}</p>
                 <ul class="space-y-1">
                     {% for page in section.pages %}
                     <li>
@@ -46,7 +46,7 @@
             <!-- Two-mode framing (AC2) -->
             <div class="bg-brand-600/10 border border-brand-600/30 rounded-xl p-5 mb-8">
                 <p class="text-gray-200 leading-relaxed">
-                    This page covers <strong class="text-white">CI mode</strong> — automated reviews on PRs/MRs.
+                    This page covers <strong class="text-white">CI mode</strong>: automated reviews on PRs/MRs.
                     For local/pre-commit reviews use the CLI:
                     <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">revue activate &lt;key&gt;</code>.
                 </p>
@@ -61,9 +61,9 @@
             <p class="text-gray-300 leading-relaxed mb-6">
                 CI mode needs four pieces: your Revue licence key, an AI-provider API key, a pipeline
                 YAML step, and provider/model config. Across all three platforms Revue uses
-                <strong class="text-white">one</strong> provider-key variable name —
-                <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_API_KEY</code> —
-                so the setup is identical regardless of which AI provider you pick.
+                <strong class="text-white">one</strong> provider-key variable name:
+                <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_API_KEY</code>.
+                The setup is identical regardless of which AI provider you pick.
             </p>
 
             <!-- Platform tabs (AC3) -->
@@ -143,7 +143,7 @@
 
             <div class="mt-10 pt-6 border-t border-gray-800 text-sm text-gray-400">
                 Prefer local reviews? Run <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">revue activate &lt;key&gt;</code>
-                and review before you even open a PR — see the
+                and review before you even open a PR. See the
                 <a href="/activate" class="text-brand-400 hover:underline">CLI activation guide</a>.
             </div>
         </main>
@@ -202,25 +202,41 @@ function switchPlatform(platform) {
 </div>
 {% endmacro %}
 
+{% macro provider_card(platform, pid, label, recommended, provider, model, note) %}
+{% set snippet = "AI_PROVIDER=" ~ provider ~ "\nAI_MODEL=" ~ model %}
+<div class="bg-gray-900 border {% if recommended %}border-brand-600{% else %}border-gray-800{% endif %} rounded-xl p-5 relative">
+    {% if recommended %}
+    <div class="absolute -top-3 left-4 bg-brand-600 text-white text-xs font-semibold px-3 py-1 rounded-full">Recommended</div>
+    {% endif %}
+    <p class="text-sm font-semibold text-white mb-3 {% if recommended %}mt-1{% endif %}">{{ label }}</p>
+    <div class="relative">
+        <pre class="bg-gray-950 border border-gray-700 rounded-lg px-4 py-3 text-sm text-brand-300 font-mono overflow-x-auto">{{ snippet }}</pre>
+        <button id="copy-{{ platform }}-{{ pid }}"
+                onclick="copyToClipboard(document.getElementById('src-{{ platform }}-{{ pid }}').textContent, 'copy-{{ platform }}-{{ pid }}')"
+                class="copy-btn absolute top-2 right-2 bg-gray-800 hover:bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg">Copy</button>
+        <pre id="src-{{ platform }}-{{ pid }}" class="hidden">{{ snippet }}</pre>
+    </div>
+    {% if note %}<p class="text-gray-500 text-xs mt-2">{{ note }}</p>{% endif %}
+</div>
+{% endmacro %}
+
 {% macro provider_step(num, platform, default_provider, default_model) %}
 <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
-    <div class="flex items-center gap-3 mb-3">
+    <div class="flex items-center gap-3 mb-4">
         <span class="bg-brand-600 text-white text-sm font-bold w-8 h-8 flex items-center justify-center rounded-full">{{ num }}</span>
-        <h2 class="font-semibold text-lg text-white">Choose your provider &amp; model</h2>
+        <h2 class="font-semibold text-lg text-white">Choose your AI provider</h2>
     </div>
-    <p class="text-gray-400 text-sm mb-3">
-        Set <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_PROVIDER</code> and
-        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_MODEL</code> as variables
-        (or pass <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">--provider</code> /
-        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">--model</code> on the
-        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">revue-ci review</code> command).
+    <p class="text-gray-400 text-sm mb-5">
+        Add <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_PROVIDER</code> and
+        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_MODEL</code> as repository
+        variables alongside your <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_API_KEY</code>.
+        Copy the snippet for your provider:
     </p>
-    <p class="text-gray-500 text-sm">
-        Sensible default for {{ platform | capitalize }}:
-        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_PROVIDER={{ default_provider }}</code>,
-        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_MODEL={{ default_model }}</code>.
-        This is only a default — any supported provider works with the same
-        <code class="text-brand-300 bg-gray-800 px-1.5 py-0.5 rounded">AI_API_KEY</code> variable.
-    </p>
+    <div class="grid sm:grid-cols-2 gap-4 pt-3">
+        {{ provider_card(platform, "openrouter", "OpenRouter (DeepSeek-V4-Pro)", true,  "openrouter", "deepseek/deepseek-v4-pro", "Most cost-efficient. Get a key at openrouter.ai.") }}
+        {{ provider_card(platform, "anthropic",  "Anthropic (Claude)",           false, "anthropic",  "claude-sonnet-4-6",         "Highest quality. Uses your Anthropic API key.") }}
+        {{ provider_card(platform, "openai",     "OpenAI",                       false, "openai",     "gpt-4o",                    "Use your OpenAI API key.") }}
+        {{ provider_card(platform, "azure",      "Azure OpenAI",                 false, "azure",      "gpt-4o",                    "Set AI_API_KEY to your Azure endpoint key.") }}
+    </div>
 </div>
 {% endmacro %}

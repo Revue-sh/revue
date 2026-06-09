@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Analytics — Revue{% endblock %}
+{% block title %}Analytics | Revue{% endblock %}
 {% block body %}
 <div class="min-h-full">
     <!-- Nav -->
     <nav class="border-b border-gray-800">
         <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="/dashboard" class="text-2xl font-bold text-brand-400">Revue</a>
+            <a href="/dashboard"><img src="/static/logo.svg" alt="Revue" class="h-8 w-auto"></a>
             <div class="flex items-center gap-4">
                 <span class="text-gray-400 text-sm">{{ session.email }}</span>
                 <a href="/logout" class="text-gray-400 hover:text-white text-sm">Log out</a>
@@ -34,26 +34,26 @@
 
         <!-- Summary cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                <p class="text-gray-500 text-xs uppercase tracking-wide">Total reviews</p>
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs font-semibold">Total reviews</p>
                 <p class="text-3xl font-bold mt-1">{{ analytics.total_reviews }}</p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                <p class="text-gray-500 text-xs uppercase tracking-wide">Total findings</p>
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs font-semibold">Total findings</p>
                 <p class="text-3xl font-bold mt-1 {% if analytics.total_findings > 0 %}text-yellow-400{% else %}text-green-400{% endif %}">
                     {{ analytics.total_findings }}
                 </p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                <p class="text-gray-500 text-xs uppercase tracking-wide">Avg duration</p>
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs font-semibold">Avg duration</p>
                 <p class="text-3xl font-bold mt-1">
                     {% if analytics.avg_duration_ms %}
                     {{ (analytics.avg_duration_ms / 1000) | round(1) }}<span class="text-lg font-normal text-gray-400">s</span>
                     {% else %}—{% endif %}
                 </p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                <p class="text-gray-500 text-xs uppercase tracking-wide">Failed reviews</p>
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <p class="text-gray-500 text-xs font-semibold">Failed reviews</p>
                 <p class="text-3xl font-bold mt-1 {% if analytics.status_breakdown.failed > 0 %}text-red-400{% endif %}">
                     {{ analytics.status_breakdown.failed }}
                 </p>
@@ -62,7 +62,7 @@
 
         {% if analytics.total_reviews == 0 %}
         <!-- Empty state -->
-        <div class="bg-gray-900 border border-gray-800 rounded-xl px-6 py-16 text-center text-gray-500">
+        <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl px-6 py-16 text-center text-gray-500">
             <p class="text-lg mb-2">No reviews in the last {{ days }} days.</p>
             <p class="text-sm">Run a review via GitHub Actions, GitLab CI, or the Bitbucket Pipe to see analytics here.</p>
             <a href="/onboarding" class="text-brand-400 hover:underline text-sm mt-3 inline-block">Setup guide →</a>
@@ -71,12 +71,12 @@
 
         <div class="grid md:grid-cols-2 gap-6 mb-6">
             <!-- Severity breakdown -->
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-6">
                 <h2 class="font-semibold mb-4">Findings by severity</h2>
                 {% set sev = analytics.severity_totals %}
                 {% set sev_total = sev.critical + sev.high + sev.medium + sev.low %}
                 {% if sev_total == 0 %}
-                <p class="text-gray-500 text-sm">No severity data yet — pass <code class="text-brand-400">findings_by_severity</code> in your track payload.</p>
+                <p class="text-gray-500 text-sm">No severity data yet. Pass <code class="text-brand-400">findings_by_severity</code> in your track payload.</p>
                 {% else %}
                 <div class="space-y-3">
                     {% for label, key, colour in [
@@ -102,7 +102,7 @@
             </div>
 
             <!-- Status breakdown -->
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-6">
                 <h2 class="font-semibold mb-4">Review status</h2>
                 {% set st = analytics.status_breakdown %}
                 {% set st_total = st.completed + st.failed + st.skipped %}
@@ -130,7 +130,7 @@
 
         <!-- Top repos -->
         {% if analytics.top_repos %}
-        <div class="bg-gray-900 border border-gray-800 rounded-xl mb-6">
+        <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl mb-6">
             <div class="px-6 py-4 border-b border-gray-800">
                 <h2 class="font-semibold">Top repositories by findings</h2>
             </div>
@@ -165,7 +165,7 @@
 
         <!-- Reviews over time -->
         {% if analytics.reviews_over_time %}
-        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-6">
             <h2 class="font-semibold mb-4">Reviews &amp; findings over time</h2>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm">

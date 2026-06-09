@@ -1,24 +1,23 @@
-# Agent Catalogue
+# How Revue reviews code
 
-Revue uses a multi-agent architecture. Each specialist agent reviews the diff from a different angle, then Nova consolidates their findings into a single prioritised output.
-
----
-
-## Cleo — Orchestrator & Router
-
-**Role:** Analyses the diff and decides which specialist agents to run, and in what team configuration.
-
-Cleo reads the diff, classifies its complexity and risk level, and selects the appropriate team. For small diffs, it may route to `team-quick`; for security-sensitive changes it routes to `team-security-focus`.
-
-**Cleo does not post findings directly** — it routes and coordinates.
+Revue uses a multi-agent architecture. Each specialist reviews the diff from a different angle, then a consolidation step deduplicates and prioritises findings into a single output.
 
 ---
 
-## Zara — Security Analyst
+## Orchestration
+
+An orchestrator analyses the diff, classifies its complexity and risk level, and routes it to the appropriate specialist team. For small diffs it may use a fast-review team; for security-sensitive changes it routes to a security-focused team.
+
+The orchestrator does not post findings directly. It coordinates.
+
+---
+
+## Security
 
 **Role:** Identifies security vulnerabilities and risks.
 
 **Checks:**
+
 - SQL injection, XSS, CSRF, path traversal, SSRF
 - Hardcoded secrets and API keys
 - Insecure deserialization
@@ -32,11 +31,12 @@ Cleo reads the diff, classifies its complexity and risk level, and selects the a
 
 ---
 
-## Kai — Performance Expert
+## Performance
 
 **Role:** Identifies performance bottlenecks and inefficiencies.
 
 **Checks:**
+
 - N+1 query patterns
 - Missing database indexes for queried columns
 - Inefficient loops (O(n²) that could be O(n))
@@ -49,11 +49,12 @@ Cleo reads the diff, classifies its complexity and risk level, and selects the a
 
 ---
 
-## Maya — Code Quality Expert
+## Code Quality
 
 **Role:** Reviews code quality, maintainability, and best practices.
 
 **Checks:**
+
 - Long functions and classes (complexity)
 - Missing error handling and edge cases
 - Code duplication (DRY violations)
@@ -67,11 +68,12 @@ Cleo reads the diff, classifies its complexity and risk level, and selects the a
 
 ---
 
-## Leo — Architecture Reviewer
+## Architecture
 
 **Role:** Reviews structural and architectural concerns.
 
 **Checks:**
+
 - Circular dependencies
 - Layering violations (e.g. business logic in routes)
 - Tight coupling between modules
@@ -84,45 +86,47 @@ Cleo reads the diff, classifies its complexity and risk level, and selects the a
 
 ---
 
-## Nova — Consolidator
+## Synthesis
 
-**Role:** Deduplicates and prioritises findings from all specialist agents.
+**Role:** Deduplicates and prioritises findings from all specialist reviewers.
 
-Nova receives findings from Zara, Kai, Maya, and Leo, deduplicates them, and produces a single ranked list ordered by severity and confidence. It also generates the summary comment posted to the PR.
-
-**Nova does not post independent findings** — it synthesises and ranks.
+The synthesis step receives findings from all specialists, deduplicates them, and produces a single ranked list ordered by severity and confidence. It also generates the summary comment posted to the PR.
 
 ---
 
-## Sage — The Resolver
+## Fix Suggestions
 
 **Role:** Generates code fixes for self-contained findings.
 
-After Nova consolidates findings, Sage classifies each one as:
-- **Fixable** — a safe, scoped code fix can be generated
-- **Needs human** — too complex, too risky, or requires context Sage doesn't have
+After synthesis, the resolver evaluates each finding and classifies it as:
 
-For fixable findings, Sage generates a fix and posts it as a platform-native suggestion:
+- **Fixable**: a safe, scoped code fix can be generated
+- **Needs human review**: too complex, too risky, or requires context not available in the diff
+
+For fixable findings, it generates a fix and posts it as a platform-native suggestion:
+
 - **GitHub:** Suggested Change (1-click accept in the PR UI)
 - **GitLab:** Apply Suggestion
 - **Bitbucket:** Inline comment with code block
 
-Sage only posts suggestions above the configured `min_confidence` threshold (default: 70).
+Only suggestions above the configured `min_confidence` threshold are posted (default: 70).
 
 ---
 
 ## Built-in Teams
 
-| Team | Agents | Best for |
+These are starting-point configurations. You can customise any team or create your own in `.revue.yml`.
+
+| Team | Specialists included | Best for |
 |---|---|---|
-| `team-full-review` | Zara, Kai, Maya, Leo, Nova, Sage | General-purpose — all checks |
-| `team-quick` | Maya, Nova | Fast reviews of small changes |
-| `team-security-focus` | Zara, Maya, Nova, Sage | Security-sensitive changes |
-| `team-performance` | Kai, Maya, Nova | Database / algorithm changes |
-| `team-swift-ios` | Zara, Maya + iOS-specific rules | Swift / iOS projects |
-| `team-kotlin-android` | Zara, Maya + Android-specific rules | Kotlin / Android projects |
-| `team-python` | Zara, Maya, Leo, Nova | Python codebases |
-| `team-typescript` | Zara, Maya, Leo, Nova | TypeScript / Node.js codebases |
+| `team-full-review` | All 6 specialists + resolver | General-purpose: all checks |
+| `team-quick` | Code quality + synthesis only | Fast reviews of small changes |
+| `team-security-focus` | Security, code quality, synthesis + resolver | Security-sensitive changes |
+| `team-performance` | Performance, code quality, synthesis | Database / algorithm changes |
+| `team-swift-ios` | Security, code quality + iOS-specific rules | Swift / iOS projects |
+| `team-kotlin-android` | Security, code quality + Android-specific rules | Kotlin / Android projects |
+| `team-python` | Security, code quality, architecture, synthesis | Python codebases |
+| `team-typescript` | Security, code quality, architecture, synthesis | TypeScript / Node.js codebases |
 
 Configure your team in `.revue.yml`:
 

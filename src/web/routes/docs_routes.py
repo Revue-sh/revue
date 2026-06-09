@@ -31,7 +31,6 @@ NAV = [
         "section": "Reference",
         "pages": [
             {"slug": "revue-yml-reference", "title": ".revue.yml Reference"},
-            {"slug": "agents", "title": "Agent Catalogue"},
         ],
     },
     {
@@ -167,6 +166,8 @@ _SLUG_TITLES: dict[str, str] = {
     for section in NAV
     for page in section["pages"]
 }
+# Hidden pages — accessible by direct URL but not linked from the sidebar.
+_SLUG_TITLES["agents"] = "How Revue reviews code"
 
 _MD = markdown.Markdown(
     extensions=["fenced_code", "tables", "toc", "attr_list"],

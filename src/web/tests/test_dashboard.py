@@ -85,7 +85,7 @@ async def test_onboarding_demotes_ci_to_linkout_card(client: AsyncClient):
     assert b"switchTab" not in body
     # CI mode is a link-out to the consolidated CI-setup page.
     assert b"/docs/ci-setup" in body
-    assert b"In CI" in body
+    assert b"CI pipeline" in body
 
 
 @pytest.mark.asyncio

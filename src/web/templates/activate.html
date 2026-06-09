@@ -5,11 +5,24 @@
 {% block title %}Activate Revue{% endblock %}
 
 {% block body %}
-<section class="activate-section" style="max-width: 640px; margin: 4rem auto; padding: 2rem;">
+<nav class="border-b border-gray-800">
+  <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+    <a href="/"><img src="/static/logo.svg" alt="Revue" class="h-8 w-auto"></a>
+    <div class="flex items-center gap-4">
+      <a href="/login" class="text-gray-300 hover:text-white px-4 py-2">Log in</a>
+      <a href="/signup" class="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-lg font-medium">Sign up free</a>
+    </div>
+  </div>
+</nav>
+
+<section class="activate-section glow-card bg-gray-900 border border-gray-800 rounded-xl" style="max-width: 640px; margin: 4rem auto; padding: 2rem;">
   <h1 class="text-2xl font-semibold mb-2">Activate Revue</h1>
 
-  <p class="text-gray-400 mb-6">
+  <p class="text-gray-400 mb-2">
     Paste your licence key to get the one command to run in your terminal.
+  </p>
+  <p class="text-gray-500 text-sm mb-6">
+    No key yet? <a href="/signup" class="text-brand-400 hover:underline">Get started free &rarr;</a>
   </p>
 
   {# Step 1 — the single paste input. The command-box and mint form stay hidden
@@ -23,7 +36,7 @@
       placeholder="lic_…"
       autocomplete="off"
       spellcheck="false"
-      class="w-full font-mono bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100"
+      class="w-full font-mono bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-gray-100"
     />
     <p id="licence-key-error" role="alert" class="text-sm text-red-400 mt-1" hidden></p>
   </div>
@@ -34,7 +47,7 @@
     {{ command_box(
          dom_id="activation-command-box",
          command="",
-         caption="Run this in your terminal — no browser needed.",
+         caption="Run this in your terminal. No browser needed.",
     ) }}
   </div>
 
@@ -62,14 +75,14 @@
         pattern="^lic_[a-f0-9]{32}$"
         autocomplete="off"
         spellcheck="false"
-        class="w-full font-mono bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-gray-100"
+        class="w-full font-mono bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-gray-100"
       />
       <input type="hidden" id="machine-fingerprint" name="machine_fingerprint" value="browser" />
       <p class="text-sm text-gray-400 my-4">
         By activating, you agree to our
-        <a href="/terms" class="text-purple-400 underline">Terms of Service</a>
+        <a href="/terms" class="text-brand-400 hover:underline">Terms of Service</a>
         and
-        <a href="/privacy" class="text-purple-400 underline">Privacy Policy</a>.
+        <a href="/privacy" class="text-brand-400 hover:underline">Privacy Policy</a>.
       </p>
       <button type="submit" class="bg-gray-800 hover:bg-gray-700 text-white text-sm px-4 py-2 rounded-lg">Activate in browser</button>
     </form>

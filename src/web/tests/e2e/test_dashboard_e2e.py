@@ -31,11 +31,11 @@ def test_onboarding_shows_license_key(logged_in_page, base_url):
     logged_in_page.goto(base_url + "/onboarding")
     page = logged_in_page
 
-    # REVUE-361: onboarding now leads with the Activation Command-Box hero,
-    # which renders the user's key inside `revue activate <key>`.
-    hero = page.locator("#activation-command-box")
+    # Onboarding leads with the install command-box hero,
+    # which renders the user's key inside the one-line install command.
+    hero = page.locator("#install-command-box")
     assert hero.count() == 1
-    assert "revue activate lic_" in hero.locator(".command-box-command").inner_text()
+    assert "lic_" in hero.locator(".command-box-command").inner_text()
 
 
 def test_dashboard_shows_both_modes(logged_in_page, base_url):
@@ -51,7 +51,8 @@ def test_dashboard_shows_both_modes(logged_in_page, base_url):
     # CLI block describes the local/pre-commit primary mode.
     assert "before you commit" in cli.first.inner_text().lower()
     # Every CI reference links to the canonical CI setup page.
-    ci_link = ci.first.locator('a[href$="/docs/ci-setup"]')
+    # In compact mode the data-mode="ci" element IS the <a>; in full mode it wraps one.
+    ci_link = page.locator('[data-mode="ci"][href$="/docs/ci-setup"], [data-mode="ci"] a[href$="/docs/ci-setup"]')
     assert ci_link.count() >= 1
 
 

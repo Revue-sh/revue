@@ -91,12 +91,12 @@ async def test_docs_revue_yml_reference_content(client: AsyncClient):
 async def test_docs_agents_content(client: AsyncClient):
     resp = await client.get("/docs/agents")
     assert resp.status_code == 200
-    assert b"Zara" in resp.content
-    assert b"Kai" in resp.content
-    assert b"Maya" in resp.content
-    assert b"Leo" in resp.content
-    assert b"Nova" in resp.content
-    assert b"Sage" in resp.content
+    assert b"Security" in resp.content
+    assert b"Performance" in resp.content
+    assert b"Architecture" in resp.content
+    assert b"Code Quality" in resp.content
+    assert b"Synthesis" in resp.content
+    assert b"Fix Suggestions" in resp.content
 
 
 @pytest.mark.asyncio
@@ -105,7 +105,7 @@ async def test_docs_faq_content(client: AsyncClient):
     assert resp.status_code == 200
     assert b"BYOK" in resp.content
     assert b"diff limit" in resp.content or b"Diff limit" in resp.content
-    assert b"Sage" in resp.content
+    assert b"fix suggestion" in resp.content or b"Fix suggestion" in resp.content
 
 
 # =====================================================================
@@ -117,8 +117,8 @@ async def test_docs_has_sidebar_nav(client: AsyncClient):
     resp = await client.get("/docs/ci-setup")
     assert b"Getting Started" in resp.content
     assert b"Reference" in resp.content
-    assert b"Agent Catalogue" in resp.content
     assert b"FAQ" in resp.content
+    # agents page is hidden from sidebar — not expected in nav
 
 
 @pytest.mark.asyncio
@@ -130,18 +130,18 @@ async def test_docs_has_revue_branding(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_docs_active_page_highlighted(client: AsyncClient):
-    resp = await client.get("/docs/agents")
-    # Active page should have brand colour class
+    # ci-setup is in the nav; its sidebar link should carry the active brand colour
+    resp = await client.get("/docs/ci-setup")
     assert b"text-brand-400" in resp.content
 
 
 @pytest.mark.asyncio
 async def test_docs_has_prev_next_nav(client: AsyncClient):
     # Markdown docs still carry prev/next links. revue-yml-reference sits between
-    # ci-setup (prev) and agents (next) in the NAV order.
+    # ci-setup (prev) and faq (next) in the NAV order (agents is hidden).
     resp = await client.get("/docs/revue-yml-reference")
     assert b"CI Setup" in resp.content        # prev
-    assert b"Agent Catalogue" in resp.content  # next
+    assert b"FAQ" in resp.content             # next
 
 
 @pytest.mark.asyncio
@@ -156,7 +156,7 @@ async def test_docs_markdown_rendered_as_html(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_docs_page_title_set(client: AsyncClient):
     resp = await client.get("/docs/agents")
-    assert b"Agent Catalogue" in resp.content
+    assert b"How Revue reviews code" in resp.content
     assert b"Revue Docs" in resp.content
 
 

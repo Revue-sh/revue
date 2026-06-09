@@ -1,0 +1,197 @@
+.copy-btn:active { transform: scale(0.95); }
+
+/* Click-triggered popover — positioned via JS using fixed+getBoundingClientRect */
+.popover-tip {
+    position: fixed;
+    z-index: 9999;
+    width: max-content;
+    max-width: 280px;
+    background: #1a1333;
+    border: 1px solid #4514E0;
+    border-radius: 0.5rem;
+    padding: 0.625rem 0.875rem;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: #d1d5db;
+    pointer-events: none;
+    white-space: normal;
+}
+.popover-tip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: #4514E0;
+}
+
+/* ─── Docs content typography ─────────────────────────────────────────────── */
+.docs-content {
+    color: #d1d5db;
+    line-height: 1.75;
+    font-size: 0.9375rem;
+}
+
+.docs-content p {
+    margin: 0.75rem 0;
+}
+
+.docs-content h1 {
+    font-size: 2rem;
+    font-weight: 800;
+    color: #f9fafb;
+    margin-bottom: 1.5rem;
+    letter-spacing: -0.025em;
+}
+
+.docs-content h2 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #f9fafb;
+    margin-top: 2.5rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #1f2937;
+}
+
+.docs-content h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #e5e7eb;
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.docs-content strong,
+.docs-content b {
+    color: #f9fafb;
+    font-weight: 600;
+}
+
+.docs-content a {
+    color: #9D7BF7;
+    text-decoration: none;
+}
+.docs-content a:hover {
+    text-decoration: underline;
+}
+
+.docs-content ul {
+    list-style: disc;
+    margin: 0.75rem 0;
+    padding-left: 1.5rem;
+}
+.docs-content ol {
+    list-style: decimal;
+    margin: 0.75rem 0;
+    padding-left: 1.5rem;
+}
+.docs-content li {
+    margin: 0.375rem 0;
+    color: #d1d5db;
+}
+
+.docs-content code {
+    font-family: monospace;
+    font-size: 0.875em;
+    color: #9D7BF7;
+    background: #1f2937;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+}
+
+.docs-content pre {
+    background: #111827;
+    border: 1px solid #374151;
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    overflow-x: auto;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    margin: 1.25rem 0;
+}
+.docs-content pre code {
+    color: #e5e7eb;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    font-size: inherit;
+}
+
+.docs-content blockquote {
+    border-left: 3px solid #4514E0;
+    background: #111827;
+    padding: 0.75rem 1rem;
+    border-radius: 0 0.5rem 0.5rem 0;
+    color: #9ca3af;
+    margin: 1rem 0;
+    font-style: normal;
+}
+
+.docs-content hr {
+    border: none;
+    border-top: 1px solid #1f2937;
+    margin: 2.5rem 0;
+}
+
+/* Tables */
+.docs-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1.5rem 0;
+    font-size: 0.875rem;
+}
+
+.docs-content thead th {
+    background: #1f2937;
+    color: #f9fafb;
+    font-weight: 700;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid #374151;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.docs-content tbody td {
+    padding: 0.5rem 0.875rem;
+    border: 1px solid #374151;
+    color: #d1d5db;
+    vertical-align: top;
+}
+
+.docs-content tbody tr:nth-child(even) td {
+    background: rgba(17, 24, 39, 0.5);
+}
+
+.docs-content tbody tr:hover td {
+    background: rgba(31, 41, 55, 0.5);
+}
+
+.docs-content td code,
+.docs-content th code {
+    font-family: monospace;
+    font-size: 0.8125em;
+    color: #9D7BF7;
+    background: #1f2937;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    white-space: nowrap;
+}
+
+/* ─── Cursor-following gradient border glow ──────────────────────────────── */
+.glow-card { position: relative; }
+.glow-card::before {
+    content: '';
+    position: absolute;
+    inset: -5px;
+    border-radius: calc(0.75rem + 5px);
+    background: radial-gradient(
+        150px circle at var(--glow-x, -9999px) var(--glow-y, -9999px),
+        rgba(69, 20, 224, 0.85),
+        rgba(157, 123, 247, 0.0) 60%,
+        transparent 80%
+    );
+    pointer-events: none;
+    z-index: -1;
+}

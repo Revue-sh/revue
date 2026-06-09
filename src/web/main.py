@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.routing import Match
 
 from csrf import CSRFMiddleware
@@ -172,6 +174,8 @@ def create_app() -> FastAPI:
             if raw_path is not None:
                 request.scope["raw_path"] = b"/api" + raw_path
         return await call_next(request)
+
+    application.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
     application.include_router(auth_router)
     application.include_router(billing_router)

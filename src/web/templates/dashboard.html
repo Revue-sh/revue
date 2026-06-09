@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% from "partials/_two_mode_block.html" import two_mode_block %}
-{% block title %}Dashboard — Revue{% endblock %}
+{% block title %}Dashboard | Revue{% endblock %}
 {% block body %}
 <div class="min-h-full">
     <!-- Nav -->
     <nav class="border-b border-gray-800">
         <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="/dashboard" class="text-2xl font-bold text-brand-400">Revue</a>
+            <a href="/dashboard"><img src="/static/logo.svg" alt="Revue" class="h-8 w-auto"></a>
             <div class="flex items-center gap-4">
                 <span class="text-gray-400 text-sm">{{ session.email }}</span>
                 <a href="/logout" class="text-gray-400 hover:text-white text-sm">Log out</a>
@@ -20,7 +20,7 @@
             <div>
                 <h1 class="text-2xl font-bold">Dashboard</h1>
                 <div class="flex items-center gap-3 mt-2">
-                    <span class="inline-block bg-brand-600/20 text-brand-400 text-xs font-semibold px-3 py-1 rounded-full uppercase">{{ tier_label }}</span>
+                    <span class="inline-block bg-brand-600/20 text-brand-400 text-xs font-semibold px-3 py-1 rounded-full">{{ tier_label }}</span>
                     <span class="text-gray-500 text-sm">{{ tier_price }}</span>
                 </div>
             </div>
@@ -29,7 +29,7 @@
                     Analytics
                 </a>
                 <a href="/onboarding" class="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
-                    Setup guide
+                    Get started
                 </a>
             </div>
         </div>
@@ -41,13 +41,13 @@
 
         <div class="grid md:grid-cols-2 gap-6 mb-8">
             <!-- License key card -->
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6"
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-6"
                  hx-get="/partials/license_card" hx-trigger="load" hx-swap="innerHTML">
                 {% include "partials/license_card.html" %}
             </div>
 
             <!-- Usage bar -->
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6"
+            <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl p-6"
                  hx-get="/partials/usage_bar" hx-trigger="every 60s" hx-swap="innerHTML">
                 {% include "partials/usage_bar.html" %}
             </div>
@@ -55,35 +55,35 @@
 
         <!-- Upgrade CTA -->
         {% if session.tier == 'free' %}
-        <div class="bg-brand-950 border border-brand-800 rounded-xl p-6 mb-8">
+        <div class="glow-card bg-brand-950 border border-brand-800 rounded-xl p-6 mb-8">
             <div class="flex items-center justify-between">
                 <div>
-                    <h3 class="font-semibold text-brand-300">Upgrade to Indie</h3>
+                    <h3 class="text-base font-semibold text-white">Upgrade to Indie</h3>
                     <p class="text-gray-400 text-sm mt-1">Get 100 reviews/month and all 6 specialised agents for {{ currency_symbol }}9/mo</p>
                 </div>
                 <a href="/billing" class="bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold px-4 py-2 rounded-lg">
-                    Upgrade →
+                    Upgrade
                 </a>
             </div>
         </div>
         {% elif session.tier == 'indie' %}
-        <div class="bg-brand-950 border border-brand-800 rounded-xl p-6 mb-8">
+        <div class="glow-card bg-brand-950 border border-brand-800 rounded-xl p-6 mb-8">
             <div class="flex items-center justify-between">
                 <div>
-                    <h3 class="font-semibold text-brand-300">Upgrade to Pro</h3>
+                    <h3 class="text-base font-semibold text-white">Upgrade to Pro</h3>
                     <p class="text-gray-400 text-sm mt-1">Unlimited reviews and priority support for {{ currency_symbol }}29/mo</p>
                 </div>
                 <a href="/billing" class="bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold px-4 py-2 rounded-lg">
-                    Upgrade →
+                    Upgrade
                 </a>
             </div>
         </div>
         {% endif %}
 
         <!-- Recent reviews -->
-        <div class="bg-gray-900 border border-gray-800 rounded-xl">
+        <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl">
             <div class="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
-                <h2 class="font-semibold">Recent reviews</h2>
+                <h2 class="text-base font-semibold">Recent reviews</h2>
                 <a href="/runs" class="text-brand-400 hover:underline text-sm">View all →</a>
             </div>
             {% if reviews %}

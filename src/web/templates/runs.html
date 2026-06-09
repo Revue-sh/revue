@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Run History — Revue{% endblock %}
+{% block title %}Run History | Revue{% endblock %}
 {% block body %}
 <div class="min-h-full">
     <!-- Nav -->
     <nav class="border-b border-gray-800">
         <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="/dashboard" class="text-2xl font-bold text-brand-400">Revue</a>
+            <a href="/dashboard"><img src="/static/logo.svg" alt="Revue" class="h-8 w-auto"></a>
             <div class="flex items-center gap-4">
                 <span class="text-gray-400 text-sm">{{ session.email }}</span>
                 <a href="/logout" class="text-gray-400 hover:text-white text-sm">Log out</a>
@@ -45,7 +45,7 @@
         </form>
 
         <!-- Table -->
-        <div class="bg-gray-900 border border-gray-800 rounded-xl">
+        <div class="glow-card bg-gray-900 border border-gray-800 rounded-xl">
             {% if runs %}
             <div class="overflow-x-auto">
                 <table class="w-full text-sm">
@@ -74,7 +74,7 @@
                             <td class="px-6 py-3 text-gray-300 max-w-xs truncate">
                                 {% if run.pr_title %}
                                 <span title="{{ run.pr_title }}">
-                                    {% if run.pr_number %}#{{ run.pr_number }} — {% endif %}
+                                    {% if run.pr_number %}#{{ run.pr_number }}: {% endif %}
                                     {{ run.pr_title[:50] }}{% if run.pr_title|length > 50 %}…{% endif %}
                                 </span>
                                 {% elif run.pr_number %}
@@ -106,7 +106,7 @@
                                 {% elif run.status == 'failed' %}
                                 <span class="text-red-400 text-xs font-medium">✗ failed</span>
                                 {% elif run.status == 'skipped' %}
-                                <span class="text-gray-500 text-xs font-medium">— skipped</span>
+                                <span class="text-gray-500 text-xs font-medium">skipped</span>
                                 {% else %}
                                 <span class="text-gray-400 text-xs">{{ run.status }}</span>
                                 {% endif %}

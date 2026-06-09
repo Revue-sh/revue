@@ -64,9 +64,9 @@ async def test_landing_cost_demoted_to_second_beat(client: AsyncClient):
     resp = await client.get("/")
     html = resp.content.decode()
     # The cost beat heading is present...
-    assert "The expensive part is CI, not you." in html
+    assert "The bill is cycles" in html
     # ...and appears AFTER the H1 (cost is demoted, not the headline).
-    assert html.index("Real review at AI speed") < html.index("The expensive part is CI, not you.")
+    assert html.index("Real review at AI speed") < html.index("The bill is cycles")
 
 
 @pytest.mark.asyncio
@@ -101,8 +101,8 @@ async def test_landing_shows_both_modes(client: AsyncClient):
     assert 'data-mode="cli"' in html
     assert 'data-mode="ci"' in html
     assert html.index('data-mode="cli"') < html.index('data-mode="ci"')
-    # Landing carries the explicit `revue activate` reference (AC).
-    assert "revue activate" in html
+    # Landing carries the /revue skill invocation reference (AC).
+    assert "/revue" in html
     # Every CI reference links to the canonical CI setup page.
     assert "/docs/ci-setup" in html
 
