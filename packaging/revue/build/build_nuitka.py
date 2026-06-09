@@ -69,6 +69,10 @@ COMPILE_ROOTS = [
     # invocation would ImportError at startup. Caught by the extended
     # test_compile_roots_cover_modules guard.
     SRC_DIR / "skill" / "post_review_signals.py",
+    # REVUE-364: anonymous funnel telemetry. Imported by cli.py (install),
+    # activate.py, and post_review_signals.py — must ship compiled so the
+    # FUNNEL_URL constant is baked in and the install_id path is not user-editable.
+    SRC_DIR / "funnel_telemetry.py",
 ]
 
 VENDORED_DIR = SRC_DIR / "vendored"

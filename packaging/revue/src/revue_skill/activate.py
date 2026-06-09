@@ -315,4 +315,7 @@ def activate(key: str) -> int:
         )
         return 7
     print(f"activated: tier={tier}; licence written to {licence_file}")
+    # AC1: best-effort funnel event; never blocks activation (REVUE-364).
+    from .funnel_telemetry import emit_funnel_event
+    emit_funnel_event("activate", key=key)
     return 0

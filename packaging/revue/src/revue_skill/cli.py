@@ -79,6 +79,14 @@ def cmd_install_skill(args: argparse.Namespace) -> int:
 
     result = install(target_dir=target_dir, overwrite=args.overwrite)
     print(f"installed skill at {result.skill_dir} ({result.files_written} files)")
+    # AC1/AC2: disclosure + funnel event. F4: only print when telemetry is on.
+    from .funnel_telemetry import emit_funnel_event, is_telemetry_enabled
+    if is_telemetry_enabled():
+        print(
+            "Analytics: Revue collects anonymous install analytics to measure activation rates. "
+            "Set REVUE_TELEMETRY_OFF=1 to opt out."
+        )
+    emit_funnel_event("install")
     return 0
 
 

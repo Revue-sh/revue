@@ -136,6 +136,34 @@ CREATE TABLE IF NOT EXISTS activation_flood_events (
 
 CREATE INDEX IF NOT EXISTS idx_activation_flood_events_key
     ON activation_flood_events(license_key_id);
+
+-- REVUE-364: anonymous install→activate→review conversion funnel.
+-- ``install_id`` is a UUID4 minted by the CLI at install time (stored in
+-- ~/.config/revue/install_id). It is NOT PII — no email, name, or repo.
+-- ``license_key_hash`` is SHA-256(raw_key)[:16] — never stores the raw key.
+-- ``ip_hash`` is SHA-256(client_ip)[:16] used only for per-IP rate limiting;
+-- not exposed in any user-facing query. Both hashes prevent raw-key/IP
+-- exposure while still supporting correlation and abuse prevention.
+-- ``ts`` is client-supplied epoch seconds (untrusted); ``received_at`` is
+-- server-stamped and used for conversion window queries.
+-- Separate table so billing paths (review_runs, usage_events) are
+-- completely unaffected by REVUE_TELEMETRY_OFF.
+CREATE TABLE IF NOT EXISTS funnel_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL CHECK (event_type IN ('install', 'activate', 'review')),
+    install_id TEXT NOT NULL,
+    license_key_hash TEXT,
+    ip_hash TEXT,
+    ts INTEGER,
+    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_funnel_events_install_id
+    ON funnel_events(install_id, received_at);
+CREATE INDEX IF NOT EXISTS idx_funnel_events_type_received
+    ON funnel_events(event_type, received_at);
+CREATE INDEX IF NOT EXISTS idx_funnel_events_ip_hash
+    ON funnel_events(ip_hash, received_at);
 """
 
 REVIEWS_LIMIT_BY_TIER: dict[str, int | None] = {
@@ -243,3 +271,117 @@ def init_db(db_path: str | None = None) -> None:
     with get_db(db_path) as conn:
         conn.executescript(SCHEMA_SQL)
         _run_migrations(conn)
+
+
+# ── REVUE-364: funnel event helpers ─────────────────────────────────────────
+
+# F3: constants used in SQL queries — changing these changes enforcement.
+FUNNEL_RATE_LIMIT_MAX = 10
+FUNNEL_RATE_LIMIT_WINDOW_SECONDS = 60          # per install_id, sliding window
+FUNNEL_IP_RATE_LIMIT_MAX = 50                  # F2: per-IP abuse guard
+FUNNEL_IP_RATE_LIMIT_WINDOW_SECONDS = 3600     # F2: per-IP window (1 hour)
+
+VALID_FUNNEL_EVENT_TYPES = {"install", "activate", "review"}
+
+
+def check_funnel_rate_limit(
+    conn: sqlite3.Connection,
+    install_id: str,
+    ip_hash: str | None = None,
+) -> bool:
+    """Return True if within rate limits, False if either limit is exceeded.
+
+    Two independent checks:
+    - Per install_id: max FUNNEL_RATE_LIMIT_MAX events in FUNNEL_RATE_LIMIT_WINDOW_SECONDS.
+    - Per IP (F2): max FUNNEL_IP_RATE_LIMIT_MAX events in FUNNEL_IP_RATE_LIMIT_WINDOW_SECONDS.
+      Only checked when ip_hash is provided.
+
+    Constants drive both windows (F3) — no hardcoded literals in SQL."""
+    id_window = f"-{FUNNEL_RATE_LIMIT_WINDOW_SECONDS} seconds"
+    count = conn.execute(
+        """SELECT COUNT(*) FROM funnel_events
+           WHERE install_id = ?
+             AND received_at >= datetime('now', ?)""",
+        (install_id, id_window),
+    ).fetchone()[0]
+    if count >= FUNNEL_RATE_LIMIT_MAX:
+        return False
+
+    if ip_hash:
+        ip_window = f"-{FUNNEL_IP_RATE_LIMIT_WINDOW_SECONDS} seconds"
+        ip_count = conn.execute(
+            """SELECT COUNT(*) FROM funnel_events
+               WHERE ip_hash = ?
+                 AND received_at >= datetime('now', ?)""",
+            (ip_hash, ip_window),
+        ).fetchone()[0]
+        if ip_count >= FUNNEL_IP_RATE_LIMIT_MAX:
+            return False
+
+    return True
+
+
+def record_funnel_event(
+    conn: sqlite3.Connection,
+    event_type: str,
+    install_id: str,
+    license_key_hash: str | None = None,
+    ip_hash: str | None = None,
+    ts: int | None = None,
+) -> None:
+    """Persist one funnel event row. Caller must commit (via get_db context).
+
+    license_key_hash: SHA-256(raw_key)[:16] — raw key must NOT be passed here.
+    ip_hash: SHA-256(client_ip)[:16] — raw IP must NOT be passed here.
+    """
+    conn.execute(
+        """INSERT INTO funnel_events (event_type, install_id, license_key_hash, ip_hash, ts)
+           VALUES (?, ?, ?, ?, ?)""",
+        (event_type, install_id, license_key_hash, ip_hash, ts),
+    )
+
+
+def get_weekly_conversion(conn: sqlite3.Connection, weeks: int = 12) -> list[dict]:
+    """Return weekly install→activate→first-review conversion funnel.
+
+    Groups by ISO week (YYYY-WW). Returns up to ``weeks`` most recent weeks,
+    newest first. Each row contains:
+        install_week, installs, activates, first_reviews,
+        install_to_activate_pct, install_to_review_pct
+    """
+    rows = conn.execute(
+        """
+        WITH installs AS (
+            SELECT install_id,
+                   strftime('%Y-%W', received_at) AS install_week
+              FROM funnel_events
+             WHERE event_type = 'install'
+             GROUP BY install_id
+        ),
+        activates AS (
+            SELECT DISTINCT install_id FROM funnel_events WHERE event_type = 'activate'
+        ),
+        reviews AS (
+            SELECT DISTINCT install_id FROM funnel_events WHERE event_type = 'review'
+        )
+        SELECT
+            i.install_week,
+            COUNT(i.install_id)                      AS installs,
+            COUNT(a.install_id)                      AS activates,
+            COUNT(r.install_id)                      AS first_reviews,
+            CASE WHEN COUNT(i.install_id) = 0 THEN 0.0
+                 ELSE ROUND(100.0 * COUNT(a.install_id) / COUNT(i.install_id), 1)
+            END AS install_to_activate_pct,
+            CASE WHEN COUNT(i.install_id) = 0 THEN 0.0
+                 ELSE ROUND(100.0 * COUNT(r.install_id) / COUNT(i.install_id), 1)
+            END AS install_to_review_pct
+          FROM installs i
+          LEFT JOIN activates a ON i.install_id = a.install_id
+          LEFT JOIN reviews r ON i.install_id = r.install_id
+         GROUP BY i.install_week
+         ORDER BY i.install_week DESC
+         LIMIT ?
+        """,
+        (weeks,),
+    ).fetchall()
+    return [dict(row) for row in rows]

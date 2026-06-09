@@ -32,3 +32,7 @@ def emit_post_review_signals(
 	render_upgrade_prompt_if_exhausted()
 	render_cost_footer(no_footer=no_footer)
 	emit_usage(findings_count=findings_count, emitted_at=invocation_ts)
+	# REVUE-364: funnel review event. Separate from emit_usage (billing) — gated
+	# by REVUE_TELEMETRY_OFF; billing counter always fires regardless of opt-out.
+	from revue_skill.funnel_telemetry import emit_funnel_event
+	emit_funnel_event("review")

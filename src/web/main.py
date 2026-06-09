@@ -60,7 +60,7 @@ _UNMATCHED_ROUTE = "__unmatched__"
 #
 # Everything else with an unsafe method is PROTECTED. New form routes are
 # protected automatically (fails-upward), matching the project's posture.
-CSRF_EXEMPT_PATHS = {"/webhooks/stripe", "/api/webhooks/stripe", "/usage/track"}
+CSRF_EXEMPT_PATHS = {"/webhooks/stripe", "/api/webhooks/stripe", "/usage/track", "/funnel/event"}
 
 
 def _is_csrf_exempt_path(path: str) -> bool:

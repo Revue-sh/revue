@@ -1,17 +1,27 @@
-"""REVUE-127 — POST /usage/track endpoint.
+"""REVUE-127/REVUE-364 — POST /usage/track and /funnel/event endpoints.
 
 Key-based (not JWT) usage tracking for the CLI fire-and-forget path.
 Mounted at the ROOT level (no /api prefix) to match the CLI's TRACK_URL.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
-from database import REVIEWS_LIMIT_BY_TIER, get_db
+from auth import get_session
+from database import (
+    REVIEWS_LIMIT_BY_TIER,
+    VALID_FUNNEL_EVENT_TYPES,
+    check_funnel_rate_limit,
+    get_db,
+    get_weekly_conversion,
+    record_funnel_event,
+)
 from models import (
     create_review_run,
     get_license_by_key,
@@ -22,6 +32,9 @@ from models import (
 _LOG = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# REVUE-364: install_id pattern — UUID4 hex+hyphens, 4–64 chars.
+_INSTALL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{4,64}$")
 
 
 class UsageTrackRequest(BaseModel):
@@ -87,3 +100,85 @@ async def track_usage(request: Request) -> Response:
             increment_usage(conn, lic.id)
 
     return Response(status_code=204)
+
+
+# ── REVUE-364: funnel telemetry ──────────────────────────────────────────────
+
+class FunnelEventRequest(BaseModel):
+    event_type: str = Field(max_length=32)
+    install_id: str = Field(max_length=64)
+    key: str = Field(default="", max_length=128)
+    ts: int = 0
+
+
+def _hash16(value: str) -> str:
+    """Return SHA-256(value)[:16] — 8 bytes of entropy, sufficient for rate-limit
+    correlation without storing the raw value (F1/F2)."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+@router.post("/funnel/event")
+async def record_funnel_telemetry(request: Request) -> Response:
+    """REVUE-364 AC1/AC3: accept install/activate/review funnel events.
+
+    Unauthenticated — install events arrive before any credential exists.
+    CSRF-exempt (see main.py CSRF_EXEMPT_PATHS).
+    Rate-limited: per install_id (10/60s) + per IP (50/1h) — F2.
+    Raw licence key and client IP are hashed before storage — F1.
+    Billing paths (review_runs, usage_events) are completely unaffected.
+    """
+    try:
+        raw = await request.json()
+        body = FunnelEventRequest(**raw)
+    except Exception:
+        return JSONResponse({"error": "invalid_payload"}, status_code=400)
+
+    if body.event_type not in VALID_FUNNEL_EVENT_TYPES:
+        return JSONResponse(
+            {"error": "invalid_event_type", "valid": sorted(VALID_FUNNEL_EVENT_TYPES)},
+            status_code=400,
+        )
+
+    if not _INSTALL_ID_PATTERN.match(body.install_id):
+        return JSONResponse({"error": "invalid_install_id"}, status_code=400)
+
+    # F1: hash before storage — raw key never touches the DB regardless of
+    # what the client sends. IP is also hashed here (server-supplied).
+    license_key_hash = _hash16(body.key) if body.key else None
+    client_ip = request.client.host if request.client else None
+    ip_hash = _hash16(client_ip) if client_ip else None
+
+    with get_db() as conn:
+        # F5: IMMEDIATE lock prevents concurrent requests from both passing the
+        # rate-limit check before either insert (same pattern as /usage/track).
+        conn.execute("BEGIN IMMEDIATE")
+        if not check_funnel_rate_limit(conn, body.install_id, ip_hash=ip_hash):  # F2
+            return JSONResponse({"error": "rate_limited"}, status_code=429)
+
+        record_funnel_event(
+            conn,
+            event_type=body.event_type,
+            install_id=body.install_id,
+            license_key_hash=license_key_hash,  # F1
+            ip_hash=ip_hash,                     # F2
+            ts=body.ts or None,
+        )
+
+    return Response(status_code=204)
+
+
+@router.get("/funnel/weekly-conversion")
+async def funnel_weekly_conversion(request: Request) -> JSONResponse:
+    """REVUE-364 AC4: weekly install→activate→first-review conversion %.
+
+    Requires session auth (operator — not exposed to end users).
+    Returns up to 12 weeks, newest first.
+    """
+    session = get_session(request)
+    if not session:
+        return JSONResponse({"error": "Unauthorised"}, status_code=401)
+
+    with get_db() as conn:
+        weeks = get_weekly_conversion(conn)
+
+    return JSONResponse({"weeks": weeks})
