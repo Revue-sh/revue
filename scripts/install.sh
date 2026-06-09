@@ -254,7 +254,7 @@ TTY_OPEN=""
 # mode is fixed at open() time, so it must be `<>` here regardless of the tty
 # device being writable.
 open_tty() {
-  if exec 3<>/dev/tty 2>/dev/null; then
+  if { exec 3<>/dev/tty; } 2>/dev/null; then
     TTY_OPEN="1"
     return 0
   fi

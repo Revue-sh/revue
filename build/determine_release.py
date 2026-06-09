@@ -4,6 +4,10 @@
 Handles the project's commit format: type(scope)[TICKET]!: description
 
 Outputs one of: major  minor  patch  none
+
+Optional positional args after the commit message are changed file paths.
+If the message-based bump is "none" but any file is under packaging/, the
+bump is upgraded to "patch" so wheel changes always reach PyPI.
 """
 import re
 import sys
@@ -12,7 +16,7 @@ import sys
 _COMMIT_RE = re.compile(r"^([a-z]+)(?:\([^)]*\))?(?:\[[^\]]*\])?(!)?\s*:")
 
 
-def determine_bump(commit_msg: str) -> str:
+def determine_bump(commit_msg: str, changed_files: list[str] | None = None) -> str:
     first_line = commit_msg.strip().split("\n")[0]
 
     if "BREAKING CHANGE" in commit_msg:
@@ -20,19 +24,26 @@ def determine_bump(commit_msg: str) -> str:
 
     m = _COMMIT_RE.match(first_line)
     if not m:
-        return "none"
+        msg_bump = "none"
+    else:
+        commit_type, breaking = m.group(1), m.group(2)
+        if breaking == "!":
+            return "major"
+        if commit_type == "feat":
+            msg_bump = "minor"
+        elif commit_type in ("fix", "perf", "refactor"):
+            msg_bump = "patch"
+        else:
+            msg_bump = "none"
 
-    commit_type, breaking = m.group(1), m.group(2)
+    if msg_bump == "none" and changed_files:
+        if any(f.startswith("packaging/") for f in changed_files):
+            return "patch"
 
-    if breaking == "!":
-        return "major"
-    if commit_type == "feat":
-        return "minor"
-    if commit_type in ("fix", "perf", "refactor"):
-        return "patch"
-    return "none"
+    return msg_bump
 
 
 if __name__ == "__main__":
     msg = sys.argv[1] if len(sys.argv) > 1 else ""
-    print(determine_bump(msg))
+    files = sys.argv[2:] if len(sys.argv) > 2 else []
+    print(determine_bump(msg, files))

@@ -243,8 +243,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          apt-get update -qq && apt-get install -y --no-install-recommends git
-          BUMP=$(python3 build/determine_release.py "$(git log -1 --format='%s' HEAD)")
+          mapfile -t CHANGED < <(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+          BUMP=$(python3 build/determine_release.py "$(git log -1 --format='%s' HEAD)" "${CHANGED[@]}")
           echo "Commit type → bump: $BUMP"
           if [ "$BUMP" = "none" ]; then
             echo "No release for this commit type — skipping tag"
