@@ -50,14 +50,13 @@ Six agents run in parallel:
 
 **Tweet 5 — The cost breakdown**
 
-Default model: DeepSeek-V4-Pro via OpenRouter.
+Local `/revue`: runs in your Claude session. Uses your subscription. No API charge.
 
-~87% cheaper per token than Anthropic Sonnet 4.5.
-Code-review quality: on par.
+CI pipeline reviews do bill your API wallet — that's where model choice matters. Default: DeepSeek-V4-Pro via OpenRouter, 87% cheaper per token than Sonnet 4.5.
 
-5-engineer team, daily reviews:
-• Without Revue (Sonnet 4.5): $850–$1,200/month
-• With Revue (DeepSeek default): $100–$250/month
+5-engineer team, daily CI reviews:
+• Sonnet 4.5: $850–$1,200/month
+• DeepSeek default: $100–$250/month
 
 ---
 
@@ -89,7 +88,7 @@ Free: 25 reviews/month, $0, no credit card
 Indie: 100 reviews/month, $9/month
 Pro: Unlimited, $29/month
 
-At $9/month you're saving $600–$1,000/month if you're currently running Sonnet 4.5.
+At $9/month you're saving $600–$1,000/month if you're currently running CI reviews on Sonnet 4.5.
 
 ---
 
