@@ -1,6 +1,6 @@
 # MVP Compass — /revue-local public launch
 
-**Last updated:** 2026-06-10 (REVUE-435 **Done** — position-fixtures mode removed from /revue skill. **0 hard launch blockers · 0 pre-launch polish items remaining.**) Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
+**Last updated:** 2026-06-10 (REVUE-436 **Done** — packaging/ file-change guard + tag-release hardening; install.sh /dev/tty fix. **0 hard launch blockers · 0 pre-launch polish items remaining.**) Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
 **Source of truth for "next pick."** Jira's priority field ≠ launch-path order; *this doc* is the launch-path order.
 
 ---
@@ -17,11 +17,11 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The full activation-UX cluster Lane 1 (361 + 413 + 382) and Lane 2 (408 + 409) are done. REVUE-409 (staging E2E gate) is **Done** — validated on a green main run (#1122) with the full state matrix (active/lapsed/free/not-activated) converged and the suite green against staging; the gate now blocks prod promotion at runtime. Launch is gated only on the pre-launch polish items below.
 
 **Recently shipped (last 5):**
+- **REVUE-436** — packaging/ file-change guard + tag-release hardening; install.sh /dev/tty fix *(Done)*
 - **REVUE-435** — remove position-fixtures mode from /revue skill *(Done)*
 - **REVUE-431** — web UI design standards (brand colours, glow-card, copy/layout rules) *(Done)*
 - **REVUE-364** — install → first-review activation telemetry *(Done)*
 - **REVUE-363** — launch comms across HN/PH/Reddit/Twitter/blog *(Done)*
-- **REVUE-127** — POST /usage/track live on production; free-tier enforcement active *(Done)*
 
 ---
 
