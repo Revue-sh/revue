@@ -1,6 +1,6 @@
 # MVP Compass — /revue-local public launch
 
-**Last updated:** 2026-06-08 (REVUE-363 **Done** — launch comms complete. **0 hard launch blockers.**) Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
+**Last updated:** 2026-06-09 (REVUE-364 **Done** — activation telemetry shipped. **0 hard launch blockers · 0 pre-launch polish items remaining.**) Forward-looking only — the full Done history and authoritative status live in **Jira**; run `/epic-progress REVUE-269` for the live tally.
 **Source of truth for "next pick."** Jira's priority field ≠ launch-path order; *this doc* is the launch-path order.
 
 ---
@@ -13,15 +13,15 @@ Ship **/revue-local** as a publicly installable, licence-gated Claude Code skill
 
 ## Progress
 
-**~76 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
+**~77 done · 0 hard launch blockers · run `/epic-progress REVUE-269` for the live tally.**
 The narrative critical path (REVUE-275 → 280 → 281) and the launch spine — install path (354/395), platform guard (360), legal pages (357), billing config in test mode (315), activation hardening + observability (325/362), licence-path robustness (369/370/371/397) — are shipped. The full activation-UX cluster Lane 1 (361 + 413 + 382) and Lane 2 (408 + 409) are done. REVUE-409 (staging E2E gate) is **Done** — validated on a green main run (#1122) with the full state matrix (active/lapsed/free/not-activated) converged and the suite green against staging; the gate now blocks prod promotion at runtime. Launch is gated only on the pre-launch polish items below.
 
 **Recently shipped (last 5):**
+- **REVUE-364** — install → first-review activation telemetry *(Done)*
 - **REVUE-363** — launch comms across HN/PH/Reddit/Twitter/blog *(Done)*
 - **REVUE-127** — POST /usage/track live on production; free-tier enforcement active *(Done)*
 - **REVUE-428** — combined install+activate command; Revue-sh distribution URL *(Done)*
 - **REVUE-341** — per-surface default agent_timeout_seconds (/revue-local=1200s, CI=600s, CLI=600s) *(Done)*
-- **REVUE-405** — pin hatchling+editables; --no-build-isolation on editable installs *(Done)*
 
 ---
 
@@ -30,12 +30,6 @@ The narrative critical path (REVUE-275 → 280 → 281) and the launch spine —
 ### 🔴 Hard launch blockers
 
 **None.** The last hard blocker (REVUE-409 — post-merge staging E2E gate) is **Done**: the gate is live and validated on a green main run (#1122) — full state matrix converged in the Provision step, suite green against staging — and TC-7 (a red E2E run blocks prod promotion) was reproduced in Docker. Launch is now gated only on the pre-launch polish items below.
-
-### 🟡 Important pre-launch polish — ship before public launch, not a hard technical gate
-
-| Jira | Story | Why it's not a hard blocker |
-|------|-------|-----------------|
-| REVUE-364 | Install → first-review activation telemetry | Conversion-funnel measurement; REVUE-127 (`/usage/track`) now shipped — implementation can start. Backfillable from week-2 cohort |
 
 ### ⚪ Post-launch deferred
 
@@ -55,12 +49,6 @@ The narrative critical path (REVUE-275 → 280 → 281) and the launch spine —
 ## Parallelism — same-file collisions (NEVER run these in parallel)
 
 Jira `Blocks` links tell you *order*; same-file edits are the real parallel killer and live nowhere else. Only open-ticket collisions are listed: **none currently.**
-
-**Pre-launch polish execution lanes:**
-
-| Lane | Tickets | Execution rule |
-|---|---|---|
-| **E — activation telemetry** | REVUE-364 | REVUE-127 (`/usage/track`) is now shipped — blocker lifted. Reconcile `/usage/track` vs `/api/v2/usage/emit` and the telemetry opt-out contract before coding. |
 
 ---
 
