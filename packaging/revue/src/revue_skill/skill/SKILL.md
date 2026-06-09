@@ -2,53 +2,25 @@
 name: revue
 model: haiku
 description: >
-  Run Revue's pipeline locally — no real PR, no platform APIs, no Anthropic SDK calls.
-  Mode 1 "position": pure-Python fixture testing, zero AI calls.
-  Mode 2 "dry-run": native Claude Code Task-based review pipeline — agents run in the
-  current session, never via subprocess or the Anthropic SDK.
+  Run Revue's AI code review pipeline locally — no real PR, no platform APIs, no Anthropic SDK calls.
+  Agents run in the current session, never via subprocess or the Anthropic SDK.
 allowed-tools: Bash Task Read
 ---
 
 # revue
 
-Local sandbox for Revue orchestration. All AI steps use native Claude Code Tasks
-(Task tool); all platform-posting steps write to local output. Nothing calls
-the Anthropic SDK directly and nothing posts to GitHub / GitLab / Bitbucket.
+Runs Revue's code review pipeline locally. All AI steps use native Claude Code Agent
+tool forks inside the current session — no Anthropic SDK calls, no platform APIs, no
+posting to GitHub / GitLab / Bitbucket.
 
 Agent definitions live in `_revue/agents/` — independently editable copies of
 `src/revue/agents/`, never imported by production code.
 
 ---
 
-## Mode 1 — Position (fast, zero AI calls)
+## Pipeline — full review (Task-based, three phases)
 
-**Invocation patterns:**
-- `/revue position` — run all fixtures, show pass/fail summary
-- `/revue position github 01` — single fixture by platform + number
-- `/revue position <path>` — fixture by explicit path
-- `/revue position --platform gitlab` — filter to one platform
-
-**Dispatch:** Run `revue local-run position` with the appropriate args:
-
-```bash
-# All fixtures
-revue local-run position --all
-
-# Single fixture by platform + number (e.g. "github 01")
-revue local-run position <fixture-path>
-
-# Platform filter
-revue local-run position --all --platform github
-```
-
-Parse the user's argument to determine which variant to run, then execute and
-display the output verbatim.
-
----
-
-## Mode 2 — Full pipeline dry-run (Task-based, three phases)
-
-**Invocation:** `/revue run [--base <branch>] [--platform <P>] [--files <glob> ...]`
+**Invocation:** `/revue [--base <branch>] [--platform <P>] [--files <glob> ...]`
 
 **CRITICAL: No subprocess calls, no `claude --print`, no Anthropic SDK.** Agents run as
 Agent tool forks inside the current Claude Code session — they consume this session's
@@ -173,7 +145,7 @@ Each fork must:
 - Do NOT post anything anywhere.
 - Reasoning happens in the fork; the only side-effect is the single Write call.
 
-**Tool allowlist for the fork** (mirrors Phase 1's reviewer-tool restriction):
+**Tool allowlist for the fork** (mirrors the reviewer-tool restriction):
 The fork must be spawned with `allowed-tools: Read Write` — only these two tools
 are necessary to read the job file and emit the verdict JSON. Specifically:
 - No `Bash` — the fork has nothing to execute; reasoning is in-context.
@@ -223,21 +195,15 @@ quick smoke tests without Vex. New work should use 3a → 3b → 3c.
 
 ---
 
-## Routing logic (parse user input, then dispatch)
+## Routing logic
 
 ```
-/revue                         → Mode 2, full pipeline (default)
-/revue run [args]              → Mode 2, full pipeline
-/revue position                → Mode 1, all fixtures
-/revue position --all          → Mode 1, all fixtures
-/revue position --platform P   → Mode 1, one platform
-/revue position github 01      → Mode 1, single fixture
+/revue           → run the full review pipeline (default)
+/revue [args]    → run the full review pipeline with args
 ```
 
 **Default (no args):** run the full pipeline on the diff between the current
 branch and `main`. No `--files` filter — all changed files are reviewed.
-
-When the user explicitly says "position" or "fixtures", dispatch to Mode 1.
 
 ---
 
