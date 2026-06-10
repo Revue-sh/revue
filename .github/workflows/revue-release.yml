@@ -1,25 +1,24 @@
-name: revue-local release
+name: revue release
 
-# Build, sign, and publish the revue-local wheel + sdist when a tag like
-# `revue-local-v0.1.0` is pushed. Sigstore signatures are emitted as
+# Build, sign, and publish the revue wheel + sdist when a tag like
+# `revue-v0.1.0` is pushed. Sigstore signatures are emitted as
 # `.sigstore` bundles and attached to the GitHub release alongside the
 # artefacts. PyPI publish uses OIDC (PyPI Trusted Publishing) — no API token
 # stored in the repo.
 #
 # Required pre-reqs (external setup, tracked in MVP_COMPASS.md):
-#   - PyPI Trusted Publisher entry for `revue-local` package owned by the team
-#   - GitHub repo `revue-io/revue-local` (or this repo, as an interim home)
+#   - PyPI Trusted Publisher entry for `revue` package owned by the team
 #   - `Releases` write permission for GITHUB_TOKEN (default scope is enough)
 
 on:
   push:
     tags:
-      - 'revue-local-v*'
+      - 'revue-v*'
 
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build (e.g. revue-local-v0.1.0)'
+        description: 'Tag to build (e.g. revue-v0.1.0)'
         required: true
 
 permissions:
@@ -42,22 +41,22 @@ jobs:
         run: python -m pip install --upgrade pip build pyyaml
 
       - name: Vendor sources
-        run: python packaging/revue-local/tools/vendor_sources.py --clean
+        run: python packaging/revue/tools/vendor_sources.py --clean
 
       - name: Build wheel + sdist
-        run: python -m build packaging/revue-local --outdir packaging/revue-local/dist
+        run: python -m build packaging/revue --outdir packaging/revue/dist
 
       - name: Capture version
         id: metadata
         run: |
-          VERSION=$(grep '^version =' packaging/revue-local/pyproject.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          VERSION=$(grep '^version =' packaging/revue/pyproject.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artefacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: packaging/revue-local/dist/*
+          path: packaging/revue/dist/*
 
   sign:
     needs: build
@@ -113,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/revue-local
+      url: https://pypi.org/p/revue
     permissions:
       id-token: write
     steps:
