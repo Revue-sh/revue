@@ -214,6 +214,7 @@ jobs:
     name: Publish revue_core → PyPI
     needs: [build-revue-core-linux, build-revue-core-macos]
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -241,6 +242,7 @@ jobs:
     name: Publish revue-ci → PyPI
     needs: [publish-revue-core, build-revue-ci-linux, build-revue-ci-macos]
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -268,6 +270,7 @@ jobs:
     name: Publish revue skill → PyPI
     needs: [publish-revue-ci, build-skill-linux, build-skill-macos]
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/download-artifact@v4
         with:
